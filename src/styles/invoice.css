@@ -1,0 +1,873 @@
+/* =========================================================
+   Invoice Create — Premium UI + Print Only Invoice
+   File: src/style/invoice.css
+========================================================= */
+
+:root{
+  --inv-bg: #ffffff;
+  --inv-ink: #0b1220;
+  --inv-muted: rgba(11,18,32,.64);
+  --inv-hair: rgba(15,23,42,.12);
+  --inv-soft: rgba(15,23,42,.06);
+  --inv-card: #ffffff;
+  --inv-shadow: 0 18px 50px rgba(2, 6, 23, .08);
+  --inv-shadow2: 0 10px 24px rgba(2, 6, 23, .08);
+
+  --inv-radius: 18px;
+  --inv-radius2: 14px;
+
+  --inv-accent: #b90f0f; /* Ram red */
+  --inv-accent2:#7f0a0a;
+
+  --inv-focus: rgba(185, 15, 15, .22);
+}
+
+/* Page shell */
+.inv-page{
+  background: linear-gradient(180deg, #ffffff 0%, #fbfbfd 100%);
+  color: var(--inv-ink);
+  min-height: 100vh;
+}
+
+.inv-screen{
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 14px 18px;
+}
+
+/* Top actions row */
+.inv-actions{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.inv-actions-right{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+/* Make sure the form starts right under buttons */
+.inv-form-shell{
+  padding-top: 0;
+}
+
+.inv-form-card{
+  background: var(--inv-card);
+  border: 1px solid var(--inv-hair);
+  border-radius: 22px;
+  box-shadow: var(--inv-shadow);
+  overflow:hidden;
+}
+
+/* Header inside card */
+.inv-form-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding: 16px 18px 10px 18px;
+  border-bottom: 1px solid var(--inv-soft);
+}
+
+.inv-form-title{
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+
+.inv-form-sub{
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--inv-muted);
+}
+
+.inv-form-meta{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding-top: 2px;
+}
+
+.inv-meta-row{
+  display:flex;
+  gap:8px;
+  justify-content:flex-end;
+  font-size: 12px;
+}
+
+.inv-meta-k{ color: var(--inv-muted); }
+.inv-meta-v{ font-weight: 700; }
+
+/* Form grid */
+.inv-form-grid{
+  display:grid;
+  grid-template-columns: 1.4fr 1.2fr 1fr 1fr 0.9fr 0.9fr;
+  gap: 12px;
+  padding: 12px 18px 16px 18px;
+}
+
+@media (max-width: 1100px){
+  .inv-form-grid{
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.inv-field label{
+  display:block;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(11,18,32,.78);
+  margin: 0 0 6px 2px;
+}
+
+.inv-help{
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--inv-muted);
+  padding-left: 2px;
+}
+
+/* Inputs */
+.inv-input{
+  width:100%;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--inv-hair);
+  background: #fff;
+  padding: 10px 12px;
+  outline: none;
+  box-shadow: 0 1px 0 rgba(0,0,0,.02);
+  transition: box-shadow .15s ease, border-color .15s ease;
+}
+
+.inv-input:focus{
+  border-color: rgba(185, 15, 15, .45);
+  box-shadow: 0 0 0 4px var(--inv-focus);
+}
+
+.inv-input--right{ text-align:right; }
+.inv-center{ text-align:center; }
+.inv-right{ text-align:right; }
+
+/* Items section */
+.inv-items{
+  padding: 8px 18px 18px 18px;
+}
+
+.inv-items-head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap: 10px;
+  padding: 6px 0 10px 0;
+}
+
+.inv-items-title{
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.inv-items-sub{
+  font-size: 13px;
+  color: var(--inv-muted);
+  margin-top: 4px;
+}
+
+.inv-items-actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+/* Table wrap */
+.inv-table-wrap{
+  margin-top: 8px;
+  background: #fff;
+  border: 1px solid var(--inv-hair);
+  border-radius: 18px;
+  overflow:hidden;
+  box-shadow: var(--inv-shadow2);
+}
+
+.inv-table{
+  width:100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.inv-table thead th{
+  background: #fafbff;
+  border-bottom: 1px solid var(--inv-soft);
+  padding: 12px 10px;
+  font-size: 12px;
+  letter-spacing: .5px;
+  color: rgba(11,18,32,.68);
+  text-transform: uppercase;
+}
+
+.inv-th-center{ text-align:center; }
+.inv-th-right{ text-align:right; }
+
+.inv-td{
+  padding: 10px;
+  border-bottom: 1px solid rgba(15,23,42,.06);
+  background:#fff;
+}
+
+.inv-table tbody tr:last-child .inv-td{
+  border-bottom: none;
+}
+
+.inv-input--prod{
+  height: 44px;
+}
+
+/* BOX/PCS cell */
+.inv-boxcell{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.inv-input--uom{
+  width: 110px;
+}
+
+.inv-input--qtywide{
+  width: 120px;
+}
+
+.inv-input--total{
+  font-weight: 900;
+}
+
+/* Remove button */
+.inv-xmini{
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--inv-hair);
+  background: #fff;
+  cursor:pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.inv-xmini:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(2, 6, 23, .10);
+}
+
+/* Totals tiles row (like your screenshot) */
+.inv-totalsbar{
+  margin-top: 14px;
+  background: #fff;
+  border: 1px solid rgba(185,15,15,.20);
+  border-radius: 20px;
+  padding: 14px;
+}
+
+.inv-totalsbar--premium{
+  display:grid;
+  grid-template-columns: repeat(6, minmax(0,1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1100px){
+  .inv-totalsbar--premium{
+    grid-template-columns: repeat(2, minmax(0,1fr));
+  }
+}
+
+.inv-totalsbar__cell{
+  border: 1px solid var(--inv-hair);
+  border-radius: 16px;
+  padding: 14px 14px 12px 14px;
+  background: #fff;
+}
+
+.inv-totalsbar__cell .k{
+  display:block;
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(11,18,32,.62);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+.inv-totalsbar__cell .v{
+  display:block;
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.inv-totalsbar__cell--balance{
+  border-color: rgba(31,60,136,.25);
+}
+
+/* Print-only container (hidden on screen) */
+.inv-printonly{
+  display:none;
+}
+
+/* =========================================================
+   PRINT: show ONLY invoice component, hide everything else
+========================================================= */
+@media print{
+  @page{
+    size: A4;
+    margin: 10mm;
+  }
+
+  html, body{
+    background:#fff !important;
+  }
+
+  /* Hide all app UI */
+  body *{
+    visibility: hidden !important;
+  }
+
+  /* Show only print area */
+  .inv-printonly,
+  .inv-printonly *{
+    visibility: visible !important;
+  }
+
+  .inv-printonly{
+    display:block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  /* Ensure no shadows/borders from screen cards leak */
+  .inv-form-card,
+  .inv-table-wrap,
+  .inv-totalsbar{
+    box-shadow:none !important;
+  }
+}
+
+
+/* =========================================================
+   PATCH: Fix table figure clipping + smaller BOX/PCS controls
+   Paste at END of src/style/invoice.css
+========================================================= */
+
+/* Make all numeric text use equal-width digits + slightly smaller font */
+.inv-table,
+.inv-table input,
+.inv-table select{
+  font-variant-numeric: tabular-nums;
+}
+
+/* Table inputs: smaller padding + smaller height so values fit */
+.inv-table .inv-input{
+  height: 40px;                 /* was 44 */
+  padding: 8px 10px;            /* reduce padding so numbers don't clip */
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* Product select can stay normal */
+.inv-table .inv-input--prod{
+  height: 40px;
+  font-size: 14px;
+}
+
+/* BOX/PCS select: make narrower */
+.inv-table .inv-input--uom{
+  width: 88px;                  /* was 110 */
+  padding-left: 10px;
+  padding-right: 26px;
+}
+
+/* Qty box: narrower so UNIT/VAT/TOTAL have space */
+.inv-table .inv-input--qtywide{
+  width: 92px;                  /* was 120 */
+}
+
+/* Ensure TOTAL cell input never cuts off */
+.inv-table .inv-input--total{
+  min-width: 110px;             /* guarantees room for 1,293.75 */
+  font-weight: 900;
+}
+
+/* Reduce cell padding a bit to free space */
+.inv-table .inv-td{
+  padding: 8px 8px;
+}
+
+/* Prevent the inputs from shrinking too much in flex */
+.inv-boxcell{
+  gap: 8px;
+}
+.inv-boxcell > *{
+  flex: 0 0 auto;
+}
+
+/* Make right columns a bit more readable */
+.inv-table .inv-input--right{
+  text-align: right;
+}
+
+/* On small screens, allow horizontal scroll instead of clipping */
+.inv-table-wrap{
+  overflow-x: auto;
+}
+.inv-table{
+  min-width: 980px;             /* keeps columns stable; scrolls if needed */
+}
+
+.inv-table .inv-input--total{
+  min-width: 120px;
+  font-weight: 900;
+}
+.inv-table .inv-input{
+  padding: 8px 10px; /* slightly smaller so values fit */
+}
+.inv-table .inv-input--uom{ width: 88px; }
+.inv-table .inv-input--qtywide{ width: 92px; }
+
+
+/* =========================================================
+   PREMIUM 2-ROW HEADER FORM (alignment fix)
+   Paste at END of src/styles/invoice.css
+========================================================= */
+
+.inv-form-2rows{
+  padding: 12px 18px 10px 18px;
+  display: grid;
+  gap: 16px;
+  border-bottom: 1px solid var(--inv-soft);
+}
+
+/* ROWS */
+.inv-form-row{
+  display: grid;
+  gap: 14px;
+  align-items: start;
+}
+
+/* Row 1: PrintName | ClientName | Customer(big) | Date | PO */
+.inv-form-row--top{
+  grid-template-columns: 1.25fr 1.15fr 1.55fr 0.95fr 1.1fr;
+}
+
+/* Row 2: Sales reps | VAT | Discount | Prev | Paid | Remaining */
+.inv-form-row--bottom{
+  grid-template-columns: 1.35fr 0.75fr 0.75fr 0.9fr 0.9fr 0.95fr;
+}
+
+@media (max-width: 1100px){
+  .inv-form-row--top,
+  .inv-form-row--bottom{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Print name radio field: make it compact and aligned */
+.inv-field--printname .inv-radioRow{
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--inv-hair);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.inv-radioOpt{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(11,18,32,.84);
+  white-space: nowrap;
+}
+.inv-radioOpt input{
+  transform: translateY(1px);
+}
+
+/* Client name disabled look */
+.inv-input--disabled{
+  background: rgba(15,23,42,.03);
+  color: rgba(11,18,32,.55);
+}
+
+/* Customer big row: select + small search button */
+.inv-field--customerBig .inv-customerRow{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.inv-input--customerSelect{
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.inv-miniSearchBtn{
+  height: 36px;                 /* ✅ smaller */
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--inv-hair);
+  background: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 8px 18px rgba(2,6,23,.06);
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.inv-miniSearchBtn:hover{
+  transform: translateY(-1px);
+  border-color: rgba(15,23,42,.18);
+  box-shadow: 0 12px 24px rgba(2,6,23,.10);
+}
+
+/* Make small numeric fields smaller & premium */
+.inv-input--sm{
+  height: 40px;                 /* ✅ smaller */
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+/* Force consistent label spacing so columns align */
+.inv-field label{
+  margin-bottom: 6px;
+}
+.inv-help{
+  min-height: 18px;             /* ✅ stops uneven card height jumping */
+}
+
+/* Multi-select (Sales reps) premium look */
+.inv-form-row--bottom select[multiple]{
+  height: 40px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  line-height: 20px;
+}
+
+/* Optional: tighten overall form head so it feels premium */
+.inv-form-head{
+  padding-bottom: 12px;
+}
+
+
+/* =========================================================
+   PREMIUM PATCH — InvoiceCreate 2-row alignment + luxury UI
+   Paste at END of src/styles/invoice.css
+========================================================= */
+
+/* tighten top area (remove empty gap between buttons & header) */
+.inv-actions--tight{
+  padding-top: 8px;
+  padding-bottom: 6px;
+}
+.inv-form-shell--tight{
+  padding-top: 0;
+}
+.inv-form-head--tight{
+  padding: 14px 18px 10px 18px;
+}
+
+/* 2 rows container */
+.inv-form-2rows{
+  padding: 12px 18px 14px 18px;
+  border-bottom: 1px solid rgba(15,23,42,.06);
+}
+
+/* Row 1 layout: Print | Client | Customer(big) | Date | PO */
+.inv-form-row{
+  display:grid;
+  gap: 12px;
+  align-items:start;
+}
+.inv-form-row--top{
+  grid-template-columns: 1.05fr 1.05fr 1.70fr .85fr .95fr;
+}
+.inv-form-row--bottom{
+  margin-top: 10px;
+  grid-template-columns: 1.55fr repeat(5, .85fr);
+}
+
+/* Responsive fallback */
+@media (max-width: 1100px){
+  .inv-form-row--top,
+  .inv-form-row--bottom{
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Customer field bigger + stronger presence */
+.inv-field--customerBig .inv-input--customerSelect{
+  height: 48px;
+  border-radius: 16px;
+  font-weight: 700;
+}
+
+/* small inputs for VAT / Discount / balances */
+.inv-input--sm{
+  height: 40px;
+  border-radius: 14px;
+  font-size: 14px;
+  padding: 8px 10px;
+}
+
+/* customer select row */
+.inv-customerRow{
+  display:flex;
+  gap: 10px;
+  align-items:center;
+}
+
+/* product select row */
+.inv-prodRow{
+  display:flex;
+  gap: 10px;
+  align-items:center;
+}
+
+/* small premium icon button (used for customer/product search) */
+.inv-iconBtn{
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(15,23,42,.14);
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(2,6,23,.06);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  user-select:none;
+}
+.inv-iconBtn:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 16px 36px rgba(2,6,23,.10);
+  border-color: rgba(185,15,15,.35);
+}
+.inv-iconBtn--table{
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+/* ===== Luxury sales rep dropdown (chips + popover) ===== */
+.inv-field--salesrep{ position: relative; }
+
+.inv-rep{
+  position: relative;
+}
+.inv-rep-btn{
+  width: 100%;
+  min-height: 48px;
+  border-radius: 16px;
+  border: 1px solid rgba(15,23,42,.14);
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(2,6,23,.06);
+  padding: 10px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 10px;
+  cursor:pointer;
+  transition: box-shadow .12s ease, border-color .12s ease, transform .12s ease;
+}
+.inv-rep-btn:hover{
+  transform: translateY(-1px);
+  border-color: rgba(185,15,15,.35);
+  box-shadow: 0 16px 40px rgba(2,6,23,.10);
+}
+
+.inv-rep-chips{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 8px;
+  align-items:center;
+  min-height: 24px;
+}
+.inv-rep-placeholder{
+  color: rgba(11,18,32,.55);
+  font-weight: 700;
+}
+
+.inv-chip{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15,23,42,.14);
+  background: rgba(15,23,42,.03);
+  font-weight: 800;
+  font-size: 12px;
+}
+.inv-chip-x{
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border: 1px solid rgba(15,23,42,.16);
+  background:#fff;
+  cursor:pointer;
+  font-weight: 900;
+}
+.inv-chip-x:hover{
+  border-color: rgba(185,15,15,.35);
+}
+
+.inv-rep-caret{
+  color: rgba(11,18,32,.55);
+  font-weight: 900;
+  padding-right: 2px;
+}
+
+.inv-rep-pop{
+  position:absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+  background:#fff;
+  border: 1px solid rgba(15,23,42,.12);
+  border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(2,6,23,.16);
+  overflow:hidden;
+}
+
+.inv-rep-item{
+  width: 100%;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 12px;
+  padding: 12px 12px;
+  background:#fff;
+  border: 0;
+  border-bottom: 1px solid rgba(15,23,42,.06);
+  cursor:pointer;
+}
+.inv-rep-item:hover{
+  background: rgba(185,15,15,.04);
+}
+.inv-rep-item.is-active{
+  background: rgba(185,15,15,.07);
+}
+.inv-rep-name{
+  font-weight: 900;
+}
+.inv-rep-phone{
+  font-weight: 800;
+  color: rgba(11,18,32,.62);
+}
+.inv-rep-check{
+  width: 22px;
+  text-align:right;
+  font-weight: 900;
+  color: #0c7a35;
+}
+.inv-rep-hint{
+  padding: 10px 12px;
+  font-size: 12px;
+  color: rgba(11,18,32,.62);
+  background: rgba(15,23,42,.03);
+}
+
+/* ===== Premium small modal ===== */
+.inv-modal-backdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(2,6,23,.40);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index: 80;
+  padding: 18px;
+}
+
+.inv-modal{
+  width: min(720px, 100%);
+  background:#fff;
+  border-radius: 18px;
+  border: 1px solid rgba(15,23,42,.12);
+  box-shadow: 0 30px 90px rgba(2,6,23,.22);
+  overflow:hidden;
+}
+.inv-modal--sm{
+  width: min(620px, 100%);
+}
+
+.inv-modal-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(15,23,42,.08);
+  background: linear-gradient(180deg, rgba(15,23,42,.02) 0%, rgba(255,255,255,1) 100%);
+}
+.inv-modal-title{
+  font-weight: 900;
+  letter-spacing: .2px;
+}
+.inv-modal-x{
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(15,23,42,.12);
+  background: #fff;
+  cursor:pointer;
+}
+.inv-modal-x:hover{
+  border-color: rgba(185,15,15,.35);
+}
+
+.inv-modal-body{
+  padding: 12px 14px 14px 14px;
+}
+
+.inv-modal-list{
+  margin-top: 12px;
+  max-height: 360px;
+  overflow:auto;
+  border: 1px solid rgba(15,23,42,.08);
+  border-radius: 14px;
+}
+
+.inv-modal-item{
+  width:100%;
+  text-align:left;
+  padding: 12px 12px;
+  border:0;
+  background:#fff;
+  border-bottom: 1px solid rgba(15,23,42,.06);
+  cursor:pointer;
+}
+.inv-modal-item:hover{
+  background: rgba(185,15,15,.04);
+}
+.inv-modal-item-title{
+  font-size: 13px;
+}
+.inv-modal-item-sub{
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(11,18,32,.62);
+}
+
+.inv-muted{ color: rgba(11,18,32,.62); }
+
+
