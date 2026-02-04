@@ -11,7 +11,7 @@ import { listCustomers, listProducts, getInvoiceById, createInvoice } from "@/li
 
 /* ============================
    Types
-============================ */
+============================= */
 type CustomerRow = {
   id: number;
   name: string;
@@ -35,7 +35,7 @@ type ProductRow = {
   selling_price: number; // VAT-exclusive
 };
 
-type Uom = "BOX" | "PCS";
+type Uom = "BOX" | "PCS" | "KG";
 
 type InvoiceLine = {
   id: string;
@@ -45,27 +45,41 @@ type InvoiceLine = {
   description: string;
 
   uom: Uom;
+
+  // qty input (BOX/PCS integer, KG decimal)
   box_qty: number;
+
+  // for BOX only (editable)
   units_per_box: number;
+
+  // computed final qty (PCS count / BOX*UPB / KG)
   total_qty: number;
 
   vat_rate: number;
+
+  // product base unit ex (used for discount calc)
   base_unit_price_excl_vat: number;
+
+  // editable (either ex OR inc)
   unit_price_excl_vat: number;
 
   unit_vat: number;
   unit_price_incl_vat: number;
+
   line_total: number;
+
+  // if user edits unit ex/inc, discount % should NOT overwrite this line
+  price_overridden?: boolean;
 };
 
 type PrintNameMode = "CUSTOMER" | "CLIENT";
 
 /* ============================
    Sales reps (static for now)
-============================ */
+============================= */
 const SALES_REPS = [
   { name: "Mr Koushal", phone: "59193239" },
-  { name: "Mr Akash", phone: "58060268" },
+  { name: "Mr Akash", phone: "59194918" },
   { name: "Mr Manish", phone: "57788884" },
   { name: "Mr Adesh", phone: "57788884" },
 ] as const;
@@ -79,7 +93,7 @@ function repPhoneByName(name: string) {
 
 /* ============================
    Helpers
-============================ */
+============================= */
 function n2(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
@@ -102,14 +116,37 @@ function money(v: any) {
 function intFmt(v: any) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(n2(v)));
 }
+function qtyFmt(uom: Uom, v: any) {
+  const x = n2(v);
+  if (uom === "KG") {
+    // show up to 3 decimals (0.02 / 0.45 / 0.58 etc.)
+    return new Intl.NumberFormat("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 3 }).format(x);
+  }
+  return intFmt(x);
+}
+function roundKg(v: number) {
+  // keep stable math (3 decimals)
+  return Math.round(n2(v) * 1000) / 1000;
+}
+function safeUpb(v: any) {
+  return Math.max(1, Math.trunc(n2(v) || 1));
+}
 
 function recalc(row: InvoiceLine): InvoiceLine {
-  const qtyInput = Math.max(0, Math.trunc(n2(row.box_qty)));
-  const uom: Uom = row.uom === "PCS" ? "PCS" : "BOX";
-  const upb = uom === "PCS" ? 1 : Math.max(1, Math.trunc(n2(row.units_per_box) || 1));
-  const totalQty = uom === "PCS" ? qtyInput : qtyInput * upb;
+  const uom: Uom = row.uom === "PCS" ? "PCS" : row.uom === "KG" ? "KG" : "BOX";
+
+  // Qty rules:
+  // - BOX/PCS => integer
+  // - KG => decimal (3dp)
+  const rawQty = n2(row.box_qty);
+  const qtyInput = uom === "KG" ? Math.max(0, roundKg(rawQty)) : Math.max(0, Math.trunc(rawQty));
+
+  const upb = uom === "BOX" ? safeUpb(row.units_per_box) : 1;
+  const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
 
   const rate = clampPct(row.vat_rate);
+
+  // Prices: keep ex as source-of-truth in recalc
   const unitEx = Math.max(0, n2(row.unit_price_excl_vat));
   const unitVat = unitEx * (rate / 100);
   const unitInc = unitEx + unitVat;
@@ -117,12 +154,13 @@ function recalc(row: InvoiceLine): InvoiceLine {
   return {
     ...row,
     uom,
+    box_qty: qtyInput,
     units_per_box: upb,
     total_qty: totalQty,
     vat_rate: rate,
     unit_vat: unitVat,
     unit_price_incl_vat: unitInc,
-    line_total: totalQty * unitInc,
+    line_total: n2(totalQty) * n2(unitInc),
   };
 }
 
@@ -142,12 +180,13 @@ function blankLine(defaultVat: number): InvoiceLine {
     unit_vat: 0,
     unit_price_incl_vat: 0,
     line_total: 0,
+    price_overridden: false,
   });
 }
 
 /* ============================
    Page
-============================ */
+============================= */
 export default function InvoiceCreate() {
   const nav = useNavigate();
   const [params] = useSearchParams();
@@ -320,12 +359,14 @@ export default function InvoiceCreate() {
 
   /* ============================
      Discount recalculates unit_ex from base
+     - BUT: do not overwrite manually edited lines
   ============================ */
   useEffect(() => {
     const dp = clampPct(discountPercent);
     setLines((prev) =>
       prev.map((r) => {
         if (!r.product_id) return r;
+        if (r.price_overridden) return r;
         const base = n2(r.base_unit_price_excl_vat);
         const discounted = base * (1 - dp / 100);
         return recalc({ ...r, unit_price_excl_vat: discounted } as InvoiceLine);
@@ -373,17 +414,18 @@ export default function InvoiceCreate() {
             product_id: it.product_id,
             item_code: it.item_code || it.product?.item_code || it.product?.sku || "",
             description: it.description || it.product?.name || "",
-            uom: it.uom === "PCS" ? "PCS" : "BOX",
-            box_qty: n2(it.box_qty || it.pcs_qty || 0),
-            units_per_box: Math.max(1, Math.trunc(n2(it.units_per_box || 1))),
-            total_qty: Math.trunc(n2(it.total_qty || 0)),
+            uom: it.uom === "PCS" ? "PCS" : it.uom === "KG" ? "KG" : "BOX",
+            box_qty: n2(it.box_qty ?? it.pcs_qty ?? 0),
+            units_per_box: safeUpb(it.units_per_box ?? 1),
+            total_qty: n2(it.total_qty ?? 0),
             vat_rate: clampPct(it.vat_rate ?? inv.vat_percent ?? 15),
             base_unit_price_excl_vat: n2(it.base_unit_price_excl_vat ?? it.unit_price_excl_vat ?? 0),
             unit_price_excl_vat: n2(it.unit_price_excl_vat ?? 0),
             unit_vat: n2(it.unit_vat || 0),
             unit_price_incl_vat: n2(it.unit_price_incl_vat || 0),
             line_total: n2(it.line_total || 0),
-          })
+            price_overridden: !!it.price_overridden,
+          } as InvoiceLine)
         );
 
         setLines(cloned.length ? cloned : [blankLine(15)]);
@@ -445,6 +487,28 @@ export default function InvoiceCreate() {
     setLines((prev) => prev.map((r) => (r.id === id ? recalc({ ...r, ...patch } as InvoiceLine) : r)));
   }
 
+  function setLinePriceEx(id: string, unitEx: number) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        return recalc({ ...r, unit_price_excl_vat: Math.max(0, n2(unitEx)), price_overridden: true } as InvoiceLine);
+      })
+    );
+  }
+
+  function setLinePriceInc(id: string, unitInc: number) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const rate = clampPct(r.vat_rate);
+        const inc = Math.max(0, n2(unitInc));
+        const denom = 1 + rate / 100;
+        const ex = denom > 0 ? inc / denom : inc;
+        return recalc({ ...r, unit_price_excl_vat: Math.max(0, ex), price_overridden: true } as InvoiceLine);
+      })
+    );
+  }
+
   function addRowAndFocus() {
     const newRow = blankLine(vatPercent);
     setLines((prev) => [...prev, newRow]);
@@ -475,12 +539,16 @@ export default function InvoiceCreate() {
             vat_rate: clampPct(vatPercent),
             uom: "BOX",
             box_qty: 0,
-          });
+            price_overridden: false,
+          } as InvoiceLine);
         }
 
         const dp = clampPct(discountPercent);
         const baseEx = n2((product as any).selling_price || 0);
         const discountedEx = baseEx * (1 - dp / 100);
+
+        // Keep current uom if already chosen, else default BOX
+        const nextUom: Uom = r.uom === "KG" ? "KG" : r.uom === "PCS" ? "PCS" : "BOX";
 
         return recalc({
           ...r,
@@ -491,9 +559,14 @@ export default function InvoiceCreate() {
           base_unit_price_excl_vat: baseEx,
           unit_price_excl_vat: discountedEx,
           vat_rate: clampPct(vatPercent),
-          uom: "BOX",
-          box_qty: Math.max(1, Math.trunc(n2(r.box_qty || 1))),
-        });
+          uom: nextUom,
+          // sensible qty
+          box_qty:
+            nextUom === "KG"
+              ? Math.max(0, roundKg(n2(r.box_qty || 0)))
+              : Math.max(1, Math.trunc(n2(r.box_qty || 1))),
+          price_overridden: false,
+        } as InvoiceLine);
       })
     );
 
@@ -519,12 +592,18 @@ export default function InvoiceCreate() {
   /* ============================
      Save / Print
   ============================ */
+  function isQtyValid(l: InvoiceLine) {
+    const q = n2(l.box_qty);
+    if (l.uom === "KG") return q > 0;
+    return Math.trunc(q) > 0;
+  }
+
   async function onSave() {
     if (!customerId) return toast.error("Please select a customer.");
     if (!invoiceDate) return toast.error("Please select invoice date.");
     if (!salesReps.length) return toast.error("Please select at least one sales rep.");
     if (realLines.length === 0) return toast.error("Please add at least one item.");
-    if (realLines.some((l) => Math.trunc(n2(l.box_qty)) <= 0)) return toast.error("Qty must be at least 1.");
+    if (realLines.some((l) => !isQtyValid(l))) return toast.error("Qty must be greater than 0.");
 
     // If CLIENT mode, require a client name (still editable anytime)
     if (printNameMode === "CLIENT" && !clientName.trim()) {
@@ -551,13 +630,14 @@ export default function InvoiceCreate() {
         salesRepPhone: salesReps.map(repPhoneByName).filter(Boolean).join(", "),
 
         items: realLines.map((l) => {
-          const qtyInput = Math.trunc(n2(l.box_qty));
-          const uom: Uom = l.uom === "PCS" ? "PCS" : "BOX";
-          const upb = uom === "PCS" ? 1 : Math.max(1, Math.trunc(n2(l.units_per_box) || 1));
-          const totalQty = uom === "PCS" ? qtyInput : qtyInput * upb;
+          const uom: Uom = l.uom === "PCS" ? "PCS" : l.uom === "KG" ? "KG" : "BOX";
+
+          const qtyInput = uom === "KG" ? Math.max(0, roundKg(n2(l.box_qty))) : Math.max(0, Math.trunc(n2(l.box_qty)));
+          const upb = uom === "BOX" ? safeUpb(l.units_per_box) : 1;
+          const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
 
           const rate = clampPct(l.vat_rate);
-          const unitEx = n2(l.unit_price_excl_vat);
+          const unitEx = Math.max(0, n2(l.unit_price_excl_vat));
           const unitVat = unitEx * (rate / 100);
           const unitInc = unitEx + unitVat;
 
@@ -565,15 +645,25 @@ export default function InvoiceCreate() {
             product_id: l.product_id,
             description: l.description || null,
             uom,
-            box_qty: uom === "BOX" ? qtyInput : null,
+
+            // ✅ keep DB compatible:
+            // - BOX => box_qty integer
+            // - PCS => pcs_qty integer
+            // - KG  => store in box_qty (numeric) + uom="KG"
+            box_qty: uom === "BOX" || uom === "KG" ? qtyInput : null,
             pcs_qty: uom === "PCS" ? qtyInput : null,
+
             units_per_box: upb,
             total_qty: totalQty,
+
             unit_price_excl_vat: unitEx,
             vat_rate: rate,
             unit_vat: unitVat,
             unit_price_incl_vat: unitInc,
             line_total: totalQty * unitInc,
+
+            price_overridden: !!l.price_overridden,
+            base_unit_price_excl_vat: n2(l.base_unit_price_excl_vat),
           };
         }),
       };
@@ -661,11 +751,7 @@ export default function InvoiceCreate() {
                   </label>
 
                   <label className="inv-radioOpt">
-                    <input
-                      type="radio"
-                      checked={printNameMode === "CLIENT"}
-                      onChange={() => setPrintNameMode("CLIENT")}
-                    />
+                    <input type="radio" checked={printNameMode === "CLIENT"} onChange={() => setPrintNameMode("CLIENT")} />
                     <span>Client Name</span>
                   </label>
                 </div>
@@ -682,9 +768,7 @@ export default function InvoiceCreate() {
                   onChange={(e) => setClientName(e.target.value)}
                   placeholder="Type a client name (optional)"
                 />
-                <div className="inv-help">
-                  If “Client Name” is selected, this prints as the invoice customer name.
-                </div>
+                <div className="inv-help">If “Client Name” is selected, this prints as the invoice customer name.</div>
               </div>
 
               {/* Customer (account) BIG + small search icon */}
@@ -736,12 +820,7 @@ export default function InvoiceCreate() {
               {/* Date */}
               <div className="inv-field">
                 <label>Invoice Date</label>
-                <input
-                  className="inv-input"
-                  type="date"
-                  value={invoiceDate}
-                  onChange={(e) => setInvoiceDate(e.target.value)}
-                />
+                <input className="inv-input" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
               </div>
 
               {/* PO */}
@@ -806,7 +885,6 @@ export default function InvoiceCreate() {
                             onClick={() => {
                               const next = active ? salesReps.filter((x) => x !== r.name) : [...salesReps, r.name];
                               setSalesReps(next);
-                              // Optional UX: close after selection
                               setRepOpen(false);
                             }}
                           >
@@ -906,8 +984,8 @@ export default function InvoiceCreate() {
               <table className="inv-table inv-table--invoiceCols">
                 <colgroup>
                   <col style={{ width: "4%" }} />
-                  <col style={{ width: "32%" }} />
-                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "30%" }} />
+                  <col style={{ width: "16%" }} />
                   <col style={{ width: "7%" }} />
                   <col style={{ width: "8%" }} />
                   <col style={{ width: "10%" }} />
@@ -921,7 +999,7 @@ export default function InvoiceCreate() {
                   <tr>
                     <th className="inv-th inv-th-center">#</th>
                     <th className="inv-th">PRODUCT</th>
-                    <th className="inv-th inv-th-center">BOX / PCS</th>
+                    <th className="inv-th inv-th-center">QTY</th>
                     <th className="inv-th inv-th-center">UNIT</th>
                     <th className="inv-th inv-th-center">TOTAL QTY</th>
                     <th className="inv-th inv-th-right">UNIT EX</th>
@@ -981,6 +1059,7 @@ export default function InvoiceCreate() {
                             >
                               <option value="BOX">BOX</option>
                               <option value="PCS">PCS</option>
+                              <option value="KG">Kg</option>
                             </select>
 
                             <input
@@ -995,30 +1074,55 @@ export default function InvoiceCreate() {
                                 focusNextQty(r.id);
                               }}
                               disabled={!isReal}
-                              inputMode="numeric"
-                              placeholder="0"
+                              inputMode={r.uom === "KG" ? "decimal" : "numeric"}
+                              placeholder={r.uom === "KG" ? "0.000" : "0"}
                             />
                           </div>
                         </td>
 
+                        {/* UNIT (UPB for BOX only) */}
                         <td className="inv-td inv-center">
-                          <input className="inv-input inv-center" value={r.uom === "PCS" ? "" : intFmt(r.units_per_box)} readOnly />
+                          {r.uom === "BOX" ? (
+                            <input
+                              className="inv-input inv-center"
+                              value={intFmt(r.units_per_box)}
+                              onChange={(e) => setLine(r.id, { units_per_box: n2(e.target.value) })}
+                              disabled={!isReal}
+                              inputMode="numeric"
+                            />
+                          ) : (
+                            <input className="inv-input inv-center" value={r.uom === "KG" ? "Kg" : ""} readOnly />
+                          )}
                         </td>
 
                         <td className="inv-td inv-center">
-                          <input className="inv-input inv-center" value={intFmt(r.total_qty)} readOnly />
+                          <input className="inv-input inv-center" value={qtyFmt(r.uom, r.total_qty)} readOnly />
                         </td>
 
+                        {/* ✅ UNIT EX editable */}
                         <td className="inv-td inv-right">
-                          <input className="inv-input inv-input--right" value={money(r.unit_price_excl_vat)} readOnly />
+                          <input
+                            className="inv-input inv-input--right"
+                            value={money(r.unit_price_excl_vat)}
+                            onChange={(e) => setLinePriceEx(r.id, n2(e.target.value))}
+                            disabled={!isReal}
+                            inputMode="decimal"
+                          />
                         </td>
 
                         <td className="inv-td inv-right">
                           <input className="inv-input inv-input--right" value={money(r.unit_vat)} readOnly />
                         </td>
 
+                        {/* ✅ UNIT INC editable */}
                         <td className="inv-td inv-right">
-                          <input className="inv-input inv-input--right" value={money(r.unit_price_incl_vat)} readOnly />
+                          <input
+                            className="inv-input inv-input--right"
+                            value={money(r.unit_price_incl_vat)}
+                            onChange={(e) => setLinePriceInc(r.id, n2(e.target.value))}
+                            disabled={!isReal}
+                            inputMode="decimal"
+                          />
                         </td>
 
                         <td className="inv-td inv-right">
@@ -1043,7 +1147,7 @@ export default function InvoiceCreate() {
               </table>
             </div>
 
-            {/* Premium tiles row */}
+            {/* Premium tiles row (✅ removed "Total after discount") */}
             <div className="inv-totalsbar inv-totalsbar--premium">
               <div className="inv-totalsbar__cell">
                 <span className="k">VAT</span>
@@ -1060,10 +1164,6 @@ export default function InvoiceCreate() {
               <div className="inv-totalsbar__cell">
                 <span className="k">Discount</span>
                 <span className="v">Rs {money(discountAmount)}</span>
-              </div>
-              <div className="inv-totalsbar__cell">
-                <span className="k">Total after discount</span>
-                <span className="v">Rs {money(totalAmount)}</span>
               </div>
               <div className="inv-totalsbar__cell inv-totalsbar__cell--balance">
                 <span className="k">Balance</span>
@@ -1192,9 +1292,9 @@ export default function InvoiceCreate() {
             sn: i + 1,
             item_code: r.item_code,
             uom: r.uom,
-            box_qty: Math.trunc(n2(r.box_qty)),
-            units_per_box: Math.trunc(n2(r.units_per_box)),
-            total_qty: Math.trunc(n2(r.total_qty)),
+            box_qty: r.uom === "PCS" ? Math.trunc(n2(r.box_qty)) : n2(r.box_qty),
+            units_per_box: r.uom === "BOX" ? Math.trunc(n2(r.units_per_box)) : 1,
+            total_qty: n2(r.total_qty),
             description: r.description,
             unit_price_excl_vat: n2(r.unit_price_excl_vat),
             unit_vat: n2(r.unit_vat),
@@ -1219,4 +1319,5 @@ export default function InvoiceCreate() {
     </div>
   );
 }
+
 

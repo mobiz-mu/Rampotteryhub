@@ -1,0 +1,196 @@
+/* ===========================================
+   InvoiceView — Premium Light CSS Overrides
+   Paste into: src/styles/invoiceview.css
+   Then import in main.tsx:  import "./styles/invoiceview.css";
+   (This fixes the “white text on white cards” look in your screenshot)
+=========================================== */
+
+/* Attach this to the InvoiceView page root:
+   <div className="iv-root space-y-5"> ... */
+.iv-root{
+  --iv-bg: #f6f7fb;
+  --iv-card: rgba(255,255,255,.92);
+  --iv-border: rgba(15,23,42,.08);
+  --iv-ink: #0b1220;
+  --iv-muted: rgba(11,18,32,.62);
+  --iv-muted2: rgba(11,18,32,.46);
+  --iv-shadow: 0 18px 55px rgba(2,6,23,.10);
+  --iv-shadow2: 0 10px 30px rgba(2,6,23,.08);
+  --iv-radius: 22px;
+  --iv-radius2: 16px;
+  --iv-focus: 0 0 0 4px rgba(185,28,28,.12);
+
+  background: transparent;
+}
+
+/* ---------- Fix Tailwind “text-white” used in your component ---------- */
+.iv-root .text-white{ color: var(--iv-ink) !important; }
+.iv-root .text-white\/80,
+.iv-root .text-white\/70,
+.iv-root .text-white\/60,
+.iv-root .text-white\/55,
+.iv-root .text-white\/50,
+.iv-root .text-white\/45{
+  color: var(--iv-muted) !important;
+}
+
+/* Muted utility */
+.iv-root .text-muted-foreground{
+  color: var(--iv-muted) !important;
+}
+
+/* ---------- Premium page backdrop (optional) ---------- */
+.iv-root::before{
+  content:"";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(1000px 420px at 20% -10%, rgba(185,28,28,.10), transparent 55%),
+    radial-gradient(900px 380px at 95% 25%, rgba(15,23,42,.08), transparent 55%),
+    linear-gradient(to bottom, var(--iv-bg), #ffffff 55%, var(--iv-bg));
+}
+
+/* ---------- Cards (shadcn Card) ---------- */
+.iv-root .shadow-premium{
+  background: var(--iv-card) !important;
+  border: 1px solid var(--iv-border) !important;
+  border-radius: var(--iv-radius) !important;
+  box-shadow: var(--iv-shadow) !important;
+}
+
+/* Some of your cards use bg-white/[0.04] etc — neutralize */
+.iv-root .bg-white\/\[0\.04\],
+.iv-root .bg-white\/10,
+.iv-root .bg-white\/5,
+.iv-root .bg-black\/10,
+.iv-root .bg-black\/20{
+  background: var(--iv-card) !important;
+}
+
+/* Borders like border-white/10 become too strong/odd in light mode */
+.iv-root .border-white\/10,
+.iv-root .divide-white\/10{
+  border-color: var(--iv-border) !important;
+}
+.iv-root .divide-white\/10 > * + *{
+  border-top-color: var(--iv-border) !important;
+}
+
+/* ---------- Inputs (shadcn Input) ---------- */
+.iv-root input,
+.iv-root select,
+.iv-root textarea{
+  background: rgba(255,255,255,.96) !important;
+  border: 1px solid rgba(15,23,42,.10) !important;
+  color: var(--iv-ink) !important;
+  border-radius: 14px !important;
+  height: 44px;
+  box-shadow: 0 1px 0 rgba(255,255,255,.85) inset;
+  transition: box-shadow .18s ease, border-color .18s ease, transform .18s ease;
+}
+.iv-root input::placeholder{
+  color: rgba(11,18,32,.40) !important;
+}
+.iv-root input:focus,
+.iv-root select:focus,
+.iv-root textarea:focus{
+  outline: none !important;
+  border-color: rgba(185,28,28,.28) !important;
+  box-shadow: var(--iv-focus), 0 10px 30px rgba(2,6,23,.08) !important;
+}
+
+/* ---------- Buttons ---------- */
+.iv-root .gradient-primary{
+  background: linear-gradient(135deg, rgba(185,28,28,.92), rgba(185,28,28,.68)) !important;
+  box-shadow: 0 18px 45px rgba(185,28,28,.18) !important;
+  border: 1px solid rgba(185,28,28,.25) !important;
+}
+.iv-root .gradient-primary:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 22px 55px rgba(185,28,28,.22) !important;
+}
+.iv-root button[variant="outline"],
+.iv-root .btn-outline,
+.iv-root .variant-outline{
+  background: rgba(255,255,255,.92) !important;
+  border: 1px solid rgba(15,23,42,.12) !important;
+  box-shadow: 0 10px 30px rgba(2,6,23,.06) !important;
+}
+
+/* Shadcn outline button class (common) */
+.iv-root .border-input{
+  border-color: rgba(15,23,42,.12) !important;
+}
+.iv-root .hover\:bg-accent:hover{
+  background: rgba(2,6,23,.04) !important;
+}
+
+/* ---------- Pills (your <Pill/>) ---------- */
+.iv-root .rounded-full.border{
+  border-color: rgba(15,23,42,.12) !important;
+  background: rgba(2,6,23,.03) !important;
+  color: rgba(11,18,32,.72) !important;
+}
+.iv-root .bg-emerald-500\/10{
+  background: rgba(16,185,129,.10) !important;
+  border-color: rgba(16,185,129,.20) !important;
+  color: rgba(5,150,105,.95) !important;
+}
+.iv-root .bg-amber-500\/10{
+  background: rgba(245,158,11,.12) !important;
+  border-color: rgba(245,158,11,.22) !important;
+  color: rgba(217,119,6,.98) !important;
+}
+
+/* ---------- Product results list container ---------- */
+.iv-root .max-h-64{
+  border-radius: var(--iv-radius) !important;
+  background: rgba(255,255,255,.80) !important;
+  box-shadow: var(--iv-shadow2) !important;
+}
+.iv-root .max-h-64 > button{
+  border-radius: 0;
+}
+.iv-root .max-h-64 > button:first-child{
+  border-top-left-radius: var(--iv-radius);
+  border-top-right-radius: var(--iv-radius);
+}
+.iv-root .max-h-64 > button:last-child{
+  border-bottom-left-radius: var(--iv-radius);
+  border-bottom-right-radius: var(--iv-radius);
+}
+.iv-root .max-h-64 > button:hover{
+  background: rgba(2,6,23,.035) !important;
+}
+
+/* ---------- Items rows (luxury strip look) ---------- */
+.iv-root .divide-y > div{
+  background: rgba(255,255,255,.82);
+}
+.iv-root .divide-y > div:hover{
+  background: rgba(2,6,23,.02);
+}
+
+/* ---------- Totals tiles (StatCard) ---------- */
+.iv-root .ring-1.ring-white\/15{
+  ring-color: rgba(15,23,42,.10) !important;
+}
+.iv-root .tabular-nums{
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Small typography polish ---------- */
+.iv-root .text-2xl,
+.iv-root .text-lg{
+  letter-spacing: -0.02em;
+}
+.iv-root b{
+  color: var(--iv-ink);
+}
+
+/* ---------- Mobile tighten ---------- */
+@media (max-width: 640px){
+  .iv-root .shadow-premium{ border-radius: 18px !important; }
+  .iv-root input, .iv-root select{ height: 42px; }
+}

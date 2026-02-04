@@ -1,5 +1,5 @@
 // src/lib/creditNotes.ts
-import { rpFetch } from "@/lib/rpFetch";
+import { supabase } from "@/integrations/supabase/client";
 
 export type CreditNoteStatus = "ISSUED" | "PENDING" | "REFUNDED" | "VOID";
 
@@ -25,10 +25,14 @@ export type AuditLogRow = {
   meta: any | null;
 };
 
+/* -------------------------
+   Normalizers
+------------------------- */
+
 export function normalizeCustomer(c: CreditNoteRow["customers"]) {
   if (!c) return null;
-  if (Array.isArray(c)) return (c[0] as any) || null;
-  return c as any;
+  if (Array.isArray(c)) return c[0] || null;
+  return c;
 }
 
 export function normalizeCreditStatus(s?: any): CreditNoteStatus {
@@ -39,13 +43,36 @@ export function normalizeCreditStatus(s?: any): CreditNoteStatus {
   return "ISSUED";
 }
 
-export async function listCreditNotes(args: { q?: string; status?: "ALL" | CreditNoteStatus; limit?: number }) {
-  const res = await rpFetch("/api/credit-notes", { method: "GET" });
-  const json = await res.json().catch(() => ({}));
+/* -------------------------
+   Queries
+------------------------- */
 
-  if (!res.ok || json?.ok === false) throw new Error(json?.error || "Failed to load credit notes");
+export async function listCreditNotes(args: {
+  q?: string;
+  status?: "ALL" | CreditNoteStatus;
+  limit?: number;
+}) {
+  const { data, error } = await supabase
+    .from("credit_notes")
+    .select(
+      `
+      id,
+      credit_note_number,
+      credit_note_date,
+      total_amount,
+      status,
+      customers:customer_id (
+        name,
+        customer_code
+      )
+    `
+    )
+    .order("id", { ascending: false })
+    .limit(args.limit && args.limit > 0 ? args.limit : 500);
 
-  let rows: CreditNoteRow[] = Array.isArray(json?.creditNotes) ? json.creditNotes : [];
+  if (error) throw new Error(error.message);
+
+  let rows: CreditNoteRow[] = (data as any) || [];
 
   const q = String(args.q || "").trim().toLowerCase();
   const st = args.status || "ALL";
@@ -55,7 +82,8 @@ export async function listCreditNotes(args: { q?: string; status?: "ALL" | Credi
     if (st !== "ALL" && s !== st) return false;
 
     if (!q) return true;
-    const c = normalizeCustomer(r.customers);
+
+    const c = normalizeCustomer((r as any).customers);
     const hay = [
       r.credit_note_number || "",
       r.credit_note_date || "",
@@ -69,42 +97,56 @@ export async function listCreditNotes(args: { q?: string; status?: "ALL" | Credi
     return hay.includes(q);
   });
 
-  if (args.limit && args.limit > 0) rows = rows.slice(0, args.limit);
-  rows.sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
   return rows;
 }
 
+/* -------------------------
+   Mutations (status updates)
+------------------------- */
+
 export async function voidCreditNote(creditNoteId: number) {
-  const res = await rpFetch(`/api/credit-notes/${creditNoteId}/void`, { method: "POST" });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) throw new Error(json?.error || "Failed to void credit note");
-  return json;
+  const { error } = await supabase
+    .from("credit_notes")
+    .update({ status: "VOID" })
+    .eq("id", creditNoteId);
+
+  if (error) throw new Error(error.message);
+  return { ok: true };
 }
 
 export async function refundCreditNote(creditNoteId: number, note?: string) {
-  const res = await rpFetch(`/api/credit-notes/${creditNoteId}/refund`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ note: note || null }),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) throw new Error(json?.error || "Failed to refund credit note");
-  return json;
+  const { error } = await supabase
+    .from("credit_notes")
+    .update({ status: "REFUNDED" })
+    .eq("id", creditNoteId);
+
+  if (error) throw new Error(error.message);
+  return { ok: true };
 }
 
 export async function restoreCreditNote(creditNoteId: number) {
-  const res = await rpFetch(`/api/credit-notes/${creditNoteId}/restore`, { method: "POST" });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) throw new Error(json?.error || "Failed to restore credit note");
-  return json;
+  const { error } = await supabase
+    .from("credit_notes")
+    .update({ status: "ISSUED" })
+    .eq("id", creditNoteId);
+
+  if (error) throw new Error(error.message);
+  return { ok: true };
 }
 
-/** ✅ New: fetch audit logs */
+/* -------------------------
+   Audit logs (optional)
+------------------------- */
+
 export async function getAuditLogs(args: { entity: string; id: number }) {
-  const qs = new URLSearchParams({ entity: args.entity, id: String(args.id) }).toString();
-  const res = await rpFetch(`/api/audit?${qs}`, { method: "GET" });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json?.ok === false) throw new Error(json?.error || "Failed to load audit logs");
-  return (Array.isArray(json?.logs) ? json.logs : []) as AuditLogRow[];
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("*")
+    .eq("entity_table", args.entity)
+    .eq("entity_id", args.id)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data || []) as AuditLogRow[];
 }
 

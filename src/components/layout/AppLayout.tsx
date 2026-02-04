@@ -1,8 +1,7 @@
-
+// src/components/layout/AppLayout.tsx
 import { Outlet } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
-import WhatsAppFab from "@/components/WhatsAppFab";
 
 export function AppLayout() {
   return (
@@ -16,12 +15,6 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
-
-      {/* ✅ WhatsApp floating action button */}
-      <WhatsAppFab
-        phoneE164="23057276248" // change to your number
-        message="Hello Ram Pottery Hub 👋 I want to send a document."
-      />
     </div>
   );
 }

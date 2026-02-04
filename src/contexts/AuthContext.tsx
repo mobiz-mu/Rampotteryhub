@@ -3,33 +3,25 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 
-/** Your app roles stored in rp_users.role */
 export type AppRole = "admin" | "manager" | "accountant" | "sales" | "viewer";
-
-/** Permissions stored in rp_users.permissions jsonb */
 export type PermissionsMap = Record<string, boolean>;
 
 type AuthCtx = {
   session: Session | null;
   user: User | null;
+
+  /** ✅ single loading flag that prevents flicker */
   loading: boolean;
 
-  /** Raw rp_users row (kept for legacy usages) */
   profile: any | null;
 
-  /** Convenience fields */
   role: AppRole;
   permissions: PermissionsMap;
   isAdmin: boolean;
 
-  /** Permission checker */
   can: (key: string) => boolean;
 
-  signIn: (
-    email: string,
-    password: string
-  ) => Promise<{ ok: true } | { ok: false; error: string }>;
-
+  signIn: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   signOut: () => Promise<void>;
 };
 
@@ -54,7 +46,10 @@ function normPerms(v: any): PermissionsMap {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
+
   const [profile, setProfile] = useState<any>(null);
 
   const user = session?.user ?? null;
@@ -67,20 +62,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data, error } = await supabase.auth.getSession();
         if (!alive) return;
-
         if (error) console.error("getSession error:", error);
         setSession(data.session ?? null);
       } catch (e) {
         console.error("getSession crash:", e);
       } finally {
-        if (alive) setLoading(false);
+        if (alive) setSessionLoading(false);
       }
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession ?? null);
-      setLoading(false);
-    });
+     if (!alive) return;
+     setSession(newSession ?? null);
+     setSessionLoading(false);
+  });
 
     return () => {
       alive = false;
@@ -88,18 +83,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // 2) Load Ram Pottery Hub app user row (rp_users)
+  // 2) Load rp_users (authority for access control)
   useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
         if (!user) {
-          if (alive) setProfile(null);
+          if (alive) {
+            setProfile(null);
+            setProfileLoading(false);
+          }
           return;
         }
 
-        // IMPORTANT: rp_users is your authority for access control
+        if (alive) setProfileLoading(true);
+
         const { data, error } = await supabase
           .from("rp_users")
           .select("*")
@@ -115,13 +114,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (!data) {
-          console.warn("No rp_users row for auth user:", user.id);
+          // user exists but rp_users row not created
           setProfile(null);
           return;
         }
 
         if (data.is_active === false) {
-          // auto-signout inactive users
           await supabase.auth.signOut();
           setProfile(null);
           return;
@@ -131,6 +129,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         console.error("rp_users load crash:", e);
         if (alive) setProfile(null);
+      } finally {
+        if (alive) setProfileLoading(false);
       }
     })();
 
@@ -155,12 +155,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const can = useMemo(() => {
     return (key: string) => {
-      if (isAdmin) return true; // admin full access
+      if (isAdmin) return true;
       const k = String(key || "").trim();
       if (!k) return false;
       return !!permissions[k];
     };
   }, [isAdmin, permissions]);
+
+  // ✅ This is the key fix: prevent ProtectedRoute flicker
+  const loading = sessionLoading || (!!user && profileLoading);
 
   const value = useMemo<AuthCtx>(
     () => ({

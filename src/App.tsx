@@ -1,3 +1,4 @@
+// src/App.tsx
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
@@ -20,9 +21,9 @@ import InvoiceView from "./pages/InvoiceView";
 import InvoicePrint from "./pages/InvoicePrint";
 
 import CreditNotes from "./pages/CreditNotes";
-import CreditNoteCreate from "./pages/CreditNoteCreate"; // ✅ create page
-import CreditNoteView from "./pages/CreditNoteView";     // ✅ optional (add when ready)
-import CreditNotePrint from "./pages/CreditNotePrint";   // ✅ optional (add when ready)
+import CreditNoteCreate from "./pages/CreditNoteCreate";
+import CreditNoteView from "./pages/CreditNoteView";
+import CreditNotePrint from "./pages/CreditNotePrint";
 
 import Quotation from "./pages/Quotation";
 import QuotationCreate from "./pages/QuotationCreate";
@@ -42,7 +43,7 @@ import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import NotFound from "./pages/NotFound";
 
-/** ✅ create once */
+/** Create once */
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -63,9 +64,9 @@ export default function App() {
         <Toaster />
         <Sonner />
 
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthProvider>
-            {/* ✅ inside router context */}
+            {/* Inside router context */}
             <WhatsAppFab />
 
             <Routes>
@@ -94,20 +95,16 @@ export default function App() {
                 {/* Credit Notes */}
                 <Route path="credit-notes" element={<CreditNotes />} />
                 <Route path="credit-notes/create" element={<CreditNoteCreate />} />
-                {/* Optional – enable when you have these pages */}
                 <Route path="credit-notes/:id" element={<CreditNoteView />} />
                 <Route path="credit-notes/:id/print" element={<CreditNotePrint />} />
 
                 {/* Quotations */}
                 <Route path="quotations" element={<Quotation />} />
-
-                {/* ✅ allow both links */}
+                {/* Allow both links */}
                 <Route path="quotations/new" element={<QuotationCreate />} />
                 <Route path="quotations/create" element={<QuotationCreate />} />
-
                 <Route path="quotations/:id" element={<QuotationView />} />
                 <Route path="quotations/:id/print" element={<QuotationPrint />} />
-
 
                 {/* Stock */}
                 <Route path="stock" element={<Stock />} />
@@ -120,10 +117,25 @@ export default function App() {
                 <Route path="ap/bills" element={<SupplierBills />} />
                 <Route path="ap/payments" element={<SupplierPayments />} />
 
+                {/* Reports */}
+                <Route
+                  path="reports"
+                  element={
+                    <ProtectedRoute allowRoles={["admin", "manager", "accountant"]}>
+                      <Reports />
+                    </ProtectedRoute>
+                  }
+                />
 
-                {/* Admin / Reports */}
-                <Route path="reports" element={<Reports />} />
-                <Route path="users" element={<Users />} />
+                {/* Users & Permissions (Admin only) */}
+                <Route
+                  path="users"
+                  element={
+                    <ProtectedRoute allowRoles={["admin"]}>
+                      <Users />
+                    </ProtectedRoute>
+                  }
+                />
               </Route>
 
               <Route path="*" element={<NotFound />} />

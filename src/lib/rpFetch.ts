@@ -13,4 +13,3 @@ export async function rpFetch(input: RequestInfo | URL, init: RequestInit = {}) 
 
   return fetch(input, { ...init, headers });
 }
-

@@ -14,7 +14,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { MoreHorizontal, Eye, Printer, Ban, Undo2, BadgeCheck } from "lucide-react";
+import {
+  MoreHorizontal,
+  Eye,
+  Printer,
+  Ban,
+  Undo2,
+  BadgeCheck,
+  CreditCard,
+  RefreshCw,
+  Search,
+  Filter,
+  FileText,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -28,14 +40,23 @@ import {
 } from "@/lib/creditNotes";
 
 const n = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
 const rs = (v: any) =>
   `Rs ${n(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function statusPillClass(st: CreditNoteStatus) {
-  if (st === "REFUNDED") return "bg-emerald-100 text-emerald-700 border-emerald-200";
-  if (st === "PENDING") return "bg-amber-100 text-amber-700 border-amber-200";
-  if (st === "VOID") return "bg-slate-100 text-slate-600 border-slate-200";
-  return "bg-rose-100 text-rose-700 border-rose-200"; // ISSUED
+  if (st === "REFUNDED") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (st === "PENDING") return "bg-amber-50 text-amber-700 border-amber-200";
+  if (st === "VOID") return "bg-slate-50 text-slate-600 border-slate-200";
+  return "bg-rose-50 text-rose-700 border-rose-200"; // ISSUED
+}
+
+function statusLabel(st: CreditNoteStatus) {
+  if (st === "ISSUED") return "Issued";
+  if (st === "PENDING") return "Pending";
+  if (st === "VOID") return "Voided";
+  if (st === "REFUNDED") return "Refunded";
+  return st;
 }
 
 type Row = any;
@@ -64,7 +85,7 @@ export default function CreditNotes() {
     staleTime: 10_000,
   });
 
-  const rows: Row[] = creditNotesQ.data || [];
+  const rows: Row[] = Array.isArray(creditNotesQ.data) ? creditNotesQ.data : [];
 
   /* KPIs */
   const kpis = useMemo(() => {
@@ -83,7 +104,6 @@ export default function CreditNotes() {
       return old.map((r: any) => (r?.id === cnId ? { ...r, status: newStatus } : r));
     });
 
-    // Your query key includes q/status, so also patch the exact key:
     qc.setQueryData(["credit-notes", q, status], (old: any) => {
       if (!Array.isArray(old)) return old;
       return old.map((r: any) => (r?.id === cnId ? { ...r, status: newStatus } : r));
@@ -98,20 +118,17 @@ export default function CreditNotes() {
 
   // ---- MUTATIONS ----
 
-  // VOID (optimistic + undo window)
   const voidM = useMutation({
     mutationFn: async (creditNoteId: number) => voidCreditNote(creditNoteId),
 
     onMutate: async (creditNoteId: number) => {
       await qc.cancelQueries({ queryKey: ["credit-notes"] });
 
-      // snapshot previous row
       const prev = qc.getQueryData(["credit-notes", q, status]) as any[] | undefined;
       const prevRow = (prev || []).find((x) => x?.id === creditNoteId);
 
       patchRowStatusInCache(creditNoteId, "VOID");
 
-      // undo toast (10s)
       clearUndoTimer(creditNoteId);
       toast("Credit note voided", {
         description: "Undo available for 10 seconds.",
@@ -129,7 +146,6 @@ export default function CreditNotes() {
     },
 
     onError: (err: any, creditNoteId: number, ctx: any) => {
-      // revert
       const prev = ctx?.prevRow;
       if (prev) patchRowStatusInCache(creditNoteId, normalizeCreditStatus(prev.status));
       toast("Void failed", { description: err?.message || "Error" });
@@ -140,7 +156,6 @@ export default function CreditNotes() {
     },
   });
 
-  // REFUND (optimistic + undo window)
   const refundM = useMutation({
     mutationFn: async (creditNoteId: number) => refundCreditNote(creditNoteId),
 
@@ -179,7 +194,6 @@ export default function CreditNotes() {
     },
   });
 
-  // RESTORE (undo)
   const restoreM = useMutation({
     mutationFn: async (creditNoteId: number) => restoreCreditNote(creditNoteId),
 
@@ -221,76 +235,127 @@ export default function CreditNotes() {
     restoreM.mutate(r.id);
   }
 
+  const busy = voidM.isPending || refundM.isPending || restoreM.isPending;
+
   return (
     <div className="space-y-5">
+      {/* Premium background hint (same style you used on invoices) */}
+      <div className="pointer-events-none fixed inset-0 -z-10 opacity-60">
+        <div className="absolute -top-24 left-1/2 h-72 w-[60rem] -translate-x-1/2 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-40 right-[-10rem] h-96 w-96 rounded-full bg-white/5 blur-3xl" />
+      </div>
+
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-2xl font-semibold">Credit Notes</div>
-          <div className="text-sm text-muted-foreground">Reprint • Refunds • Void</div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-2xl border bg-white shadow-sm">
+            <FileText className="h-5 w-5 text-slate-800" />
+          </div>
+
+          <div>
+            <div className="text-2xl font-semibold tracking-tight">Credit Notes</div>
+            <div className="text-sm text-muted-foreground">VAT Credit Notes • Reprint • Refund • Void</div>
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          {/* ✅ Back button (to dashboard) */}
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => nav("/dashboard")}>
             Back
           </Button>
-
           <Button onClick={() => nav("/credit-notes/create")}>+ New Credit Note</Button>
         </div>
       </div>
 
       {/* KPIs */}
       <div className="grid gap-3 sm:grid-cols-4">
-        <Card className="p-4">
-          <b>{kpis.count}</b>
-          <div className="text-xs text-muted-foreground">Credit Notes</div>
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Credit Notes</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <FileText className="h-4 w-4 text-slate-700" />
+            </div>
+          </div>
+          <div className="mt-2 text-2xl font-semibold">{kpis.count}</div>
         </Card>
 
-        <Card className="p-4">
-          <b>{rs(kpis.total)}</b>
-          <div className="text-xs text-muted-foreground">Total Value</div>
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Total Value</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <CreditCard className="h-4 w-4 text-slate-700" />
+            </div>
+          </div>
+          <div className="mt-2 text-2xl font-semibold">{rs(kpis.total)}</div>
         </Card>
 
-        <Card className="p-4">
-          <b>{kpis.refunded}</b>
-          <div className="text-xs text-muted-foreground">Refunded</div>
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Refunded</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <BadgeCheck className="h-4 w-4 text-slate-700" />
+            </div>
+          </div>
+          <div className="mt-2 text-2xl font-semibold">{kpis.refunded}</div>
         </Card>
 
-        <Card className="p-4">
-          <b>{kpis.voided}</b>
-          <div className="text-xs text-muted-foreground">Voided</div>
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Voided</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <Ban className="h-4 w-4 text-slate-700" />
+            </div>
+          </div>
+          <div className="mt-2 text-2xl font-semibold">{kpis.voided}</div>
         </Card>
       </div>
 
       {/* Filters */}
-      <Card className="p-4 flex flex-wrap gap-3 items-center">
-        <Input
-          placeholder="Search credit note / customer / code"
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          className="max-w-[420px]"
-        />
+      <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full max-w-[460px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              placeholder="Search: credit note no • customer • code"
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              className="pl-9"
+            />
+          </div>
 
-        <select
-          className="h-10 rounded-md border px-3 bg-background"
-          value={status}
-          onChange={(e) => setStatus(e.target.value as any)}
-        >
-          <option value="ALL">All</option>
-          <option value="ISSUED">Issued</option>
-          <option value="PENDING">Pending</option>
-          <option value="REFUNDED">Refunded</option>
-          <option value="VOID">Void</option>
-        </select>
+          <div className="inline-flex items-center gap-2">
+            <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white">
+              <Filter className="h-4 w-4 text-slate-700" />
+            </div>
 
-        <Button variant="outline" onClick={() => creditNotesQ.refetch()} disabled={creditNotesQ.isFetching}>
-          {creditNotesQ.isFetching ? "Refreshing..." : "Refresh"}
-        </Button>
+            <select
+              className="h-10 rounded-xl border px-3 bg-white"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as any)}
+            >
+              <option value="ALL">All</option>
+              <option value="ISSUED">Issued</option>
+              <option value="PENDING">Pending</option>
+              <option value="REFUNDED">Refunded</option>
+              <option value="VOID">Void</option>
+            </select>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => creditNotesQ.refetch()}
+              disabled={creditNotesQ.isFetching}
+              className="rounded-xl"
+            >
+              <RefreshCw className={"mr-2 h-4 w-4 " + (creditNotesQ.isFetching ? "animate-spin" : "")} />
+              {creditNotesQ.isFetching ? "Refreshing..." : "Refresh"}
+            </Button>
+          </div>
+        </div>
       </Card>
 
       {/* Table */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden rounded-2xl border bg-white/80 shadow-sm">
         <div className="overflow-auto">
           <table className="w-full min-w-[980px]">
             <thead className="bg-slate-50">
@@ -313,14 +378,15 @@ export default function CreditNotes() {
                 const custCode = c?.customer_code || "";
                 const cnNo = r.credit_note_number || `#${r.id}`;
 
-                const busy = voidM.isPending || refundM.isPending || restoreM.isPending;
-
                 return (
                   <tr key={r.id} className="hover:bg-slate-50/60">
                     <td className="px-4 py-3">
-                      <div className="inline-flex items-center justify-center border rounded-md px-3 py-2 font-semibold text-slate-800 bg-white">
-                        {cnNo}
+                      <div className="inline-flex items-center gap-2">
+                        <div className="inline-flex items-center justify-center rounded-xl border bg-white px-3 py-2 font-semibold tracking-wide text-slate-900 shadow-sm">
+                          {cnNo}
+                        </div>
                       </div>
+                      <div className="mt-1 text-xs text-slate-500">ID: {r.id}</div>
                     </td>
 
                     <td className="px-4 py-3 text-sm text-slate-700">{r.credit_note_date || "—"}</td>
@@ -330,9 +396,9 @@ export default function CreditNotes() {
                       {custCode ? <div className="text-xs text-slate-500">{custCode}</div> : null}
                     </td>
 
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900">{n(r.total_amount).toFixed(2)}</div>
+                    <td className="px-4 py-3">
+                      <div className="text-xs text-slate-500">Total</div>
+                      <div className="text-sm font-semibold text-slate-900">{rs(r.total_amount)}</div>
                     </td>
 
                     <td className="px-4 py-3">
@@ -342,11 +408,11 @@ export default function CreditNotes() {
                           statusPillClass(st)
                         }
                       >
-                        {st === "PENDING" ? "Pending" : st === "ISSUED" ? "Issued" : st}
+                        {statusLabel(st)}
                       </span>
                     </td>
 
-                    {/* 3 dots menu (logic expanded) */}
+                    {/* 3 dots menu */}
                     <td className="px-3 py-3 text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -359,20 +425,21 @@ export default function CreditNotes() {
                           </button>
                         </DropdownMenuTrigger>
 
-                        <DropdownMenuContent align="end" className="w-52">
+                        <DropdownMenuContent align="end" className="w-56">
                           <DropdownMenuItem onClick={() => nav(`/credit-notes/${r.id}`)}>
                             <Eye className="mr-2 h-4 w-4" />
                             Open
                           </DropdownMenuItem>
 
-                          <DropdownMenuItem onClick={() => nav(`/credit-notes/${r.id}/print`)}>
+                          <DropdownMenuItem
+                             onClick={() => window.open(`/credit-notes/${r.id}/print`, "_blank", "noopener,noreferrer")}
+                          >
                             <Printer className="mr-2 h-4 w-4" />
                             Print
                           </DropdownMenuItem>
 
                           <DropdownMenuSeparator />
 
-                          {/* REFUND vs VOID split */}
                           {st !== "REFUNDED" && st !== "VOID" ? (
                             <>
                               <DropdownMenuItem onClick={() => onRefund(r)} disabled={busy}>
@@ -387,7 +454,6 @@ export default function CreditNotes() {
                             </>
                           ) : null}
 
-                          {/* Restore (Undo) if already VOID/REFUNDED */}
                           {st === "VOID" || st === "REFUNDED" ? (
                             <DropdownMenuItem onClick={() => onRestore(r)} disabled={busy}>
                               <Undo2 className="mr-2 h-4 w-4" />
@@ -403,13 +469,50 @@ export default function CreditNotes() {
 
               {!creditNotesQ.isLoading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
-                    No credit notes found.
+                  <td colSpan={6} className="p-10 text-center">
+                    <div className="mx-auto max-w-sm">
+                      <div className="text-base font-semibold text-slate-900">No credit notes found</div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        Try clearing filters or create your first credit note.
+                      </div>
+                      <div className="mt-4 flex items-center justify-center gap-2">
+                        <Button variant="outline" onClick={() => { setQInput(""); setStatus("ALL"); }}>
+                          Clear filters
+                        </Button>
+                        <Button onClick={() => nav("/credit-notes/create")}>+ New Credit Note</Button>
+                      </div>
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t bg-white/70 px-4 py-3 text-xs text-slate-600 flex items-center justify-between">
+          <div>
+            Showing <b>{rows.length}</b> results
+            {status !== "ALL" ? (
+              <>
+                {" "}
+                • Status: <b>{statusLabel(status as CreditNoteStatus)}</b>
+              </>
+            ) : null}
+            {q ? (
+              <>
+                {" "}
+                • Search: <b>{q}</b>
+              </>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-2">
+              <span className={"h-2 w-2 rounded-full " + (creditNotesQ.isFetching ? "bg-amber-500" : "bg-emerald-500")} />
+              {creditNotesQ.isFetching ? "Updating…" : "Live"}
+            </span>
+          </div>
         </div>
       </Card>
     </div>

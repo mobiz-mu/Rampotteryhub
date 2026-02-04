@@ -6,6 +6,7 @@ import App from "./App";
 import "./index.css";
 import "./styles/rpdoc.css";
 import "./styles/invoice.css";
+import "./styles/invoiceview.css";
 
 
 class ErrorBoundary extends React.Component<

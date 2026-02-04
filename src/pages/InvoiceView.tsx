@@ -11,11 +11,12 @@ import { getInvoice, updateInvoiceHeader } from "@/lib/invoices";
 import { listInvoiceItems, insertInvoiceItem, deleteInvoiceItem } from "@/lib/invoiceItems";
 import { listCustomers } from "@/lib/customers";
 import { listProducts } from "@/lib/products";
-import { calcLine, round2 } from "@/lib/invoiceTotals";
+import { round2 } from "@/lib/invoiceTotals";
 
 import type { Invoice } from "@/types/invoice";
 import type { Product } from "@/types/product";
 import { waLink, invoiceShareMessage } from "@/lib/whatsapp";
+
 
 const WA_PHONE = "2307788884";
 
@@ -25,10 +26,6 @@ const WA_PHONE = "2307788884";
 function n2(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
-}
-function int0(v: any) {
-  const x = Math.trunc(n2(v));
-  return x < 0 ? 0 : x;
 }
 function clampPct(v: any) {
   const x = n2(v);
@@ -40,6 +37,16 @@ function money(v: any) {
 }
 function isValidId(v: any) {
   return Number.isFinite(Number(v)) && Number(v) > 0;
+}
+function roundKg(v: any) {
+  return Math.round(n2(v) * 1000) / 1000;
+}
+function fmtQty(uom: string, v: any) {
+  const x = n2(v);
+  if (String(uom || "").toUpperCase() === "KG") {
+    return new Intl.NumberFormat("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 3 }).format(x);
+  }
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(x));
 }
 
 /* simple debounce */
@@ -109,6 +116,36 @@ function computeTotalsWithManualDiscount(params: {
   };
 }
 
+/* =========================
+   Premium tiny UI atoms (no extra libs)
+========================= */
+function Pill(props: { children: React.ReactNode; tone?: "default" | "good" | "warn" }) {
+  const tone = props.tone || "default";
+  const cls =
+    tone === "good"
+      ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+      : tone === "warn"
+      ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+      : "bg-white/5 text-white/80 border-white/10";
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs ${cls}`}>{props.children}</span>
+  );
+}
+
+function StatCard(props: { label: string; value: string; hint?: string; emphasize?: boolean }) {
+  return (
+    <div
+      className={`rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-[0_20px_60px_rgba(0,0,0,.35)] ${
+        props.emphasize ? "ring-1 ring-white/15" : ""
+      }`}
+    >
+      <div className="text-xs text-white/60">{props.label}</div>
+      <div className="mt-1 text-lg font-semibold tracking-tight text-white">{props.value}</div>
+      {props.hint ? <div className="mt-1 text-xs text-white/45">{props.hint}</div> : null}
+    </div>
+  );
+}
+
 export default function InvoiceView() {
   const { id } = useParams();
   const invoiceId = Number(id);
@@ -122,8 +159,11 @@ export default function InvoiceView() {
   const debouncedProductSearch = useDebouncedValue(productSearch, 250);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [boxQty, setBoxQty] = useState<string>("0");
-  const [pcsQty, setPcsQty] = useState<string>("0");
+
+  // qty + uom for add
+  const [addUom, setAddUom] = useState<"BOX" | "PCS" | "KG">("BOX");
+  const [qtyValue, setQtyValue] = useState<string>("0");
+  const [unitsPerBoxOverride, setUnitsPerBoxOverride] = useState<string>(""); // optional for BOX
 
   // local editable header fields (avoid API spam)
   const [hdrInvoiceDate, setHdrInvoiceDate] = useState("");
@@ -180,20 +220,37 @@ export default function InvoiceView() {
     return customersQ.data?.find((c: any) => c.id === inv.customer_id) ?? null;
   }, [customersQ.data, inv?.customer_id, inv]);
 
-  /* =========================
-     WhatsApp share
-  ========================= */
-  const waHref = useMemo(() => {
-    if (!inv) return "#";
-    const msg = invoiceShareMessage({ invoiceNo: inv.invoice_number, invoiceId: inv.id });
-    return waLink(WA_PHONE, msg);
-  }, [inv?.id, inv?.invoice_number]);
+/* =========================
+   WhatsApp share
+========================= */
+const waHref = useMemo(() => {
+  if (!inv) return "#";
+
+  const msg = invoiceShareMessage({
+    companyName: "Ram Pottery Ltd",
+    customerName: customer?.name || "Customer",
+    invoiceNo: inv.invoice_number,
+    invoiceId: inv.id,
+    total: inv.total_amount,
+    paid: inv.amount_paid,
+    balance: inv.balance_remaining,
+    // baseUrl: "https://rampotteryhub.com", // optional override
+  });
+
+  return waLink(WA_PHONE, msg);
+}, [
+  inv?.id,
+  inv?.invoice_number,
+  inv?.total_amount,
+  inv?.amount_paid,
+  inv?.balance_remaining,
+  customer?.name,
+]);
+
 
   /* =========================
      MUTATIONS
   ========================= */
-
-  // Save header fields only (does NOT auto-apply discount to totals)
   const saveHeaderM = useMutation({
     mutationFn: async () => {
       if (!inv) throw new Error("Invoice not loaded");
@@ -201,31 +258,23 @@ export default function InvoiceView() {
       const patch: Partial<Invoice> = {
         invoice_date: hdrInvoiceDate || inv.invoice_date,
         due_date: hdrDueDate ? hdrDueDate : null,
-        vat_percent: clampPct(hdrVatPercent), // ok
-        discount_percent: clampPct(hdrDiscountPercent), // just store it
+        vat_percent: clampPct(hdrVatPercent),
+        discount_percent: clampPct(hdrDiscountPercent),
       } as any;
 
       await updateInvoiceHeader(invoiceId, patch);
-
       await qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
     },
     onSuccess: () => toast.success("Header saved"),
     onError: (e: any) => toast.error(e?.message || "Failed to save header"),
   });
 
-  /**
-   * ✅ APPLY DISCOUNT (Manual button)
-   * - Computes discount totals-level (Option A)
-   * - Writes discount_amount and discounted totals into invoices table
-   * - DOES NOT touch invoice_items
-   */
   const applyDiscountM = useMutation({
     mutationFn: async () => {
       if (!inv) throw new Error("Invoice not loaded");
 
       const dp = clampPct(hdrDiscountPercent);
 
-      // Store the discount_percent first (for audit/printing)
       const updated = await updateInvoiceHeader(invoiceId, {
         discount_percent: dp,
       } as any);
@@ -239,7 +288,6 @@ export default function InvoiceView() {
         amountPaid: n2(updated.amount_paid),
       });
 
-      // Write discounted totals
       await updateInvoiceHeader(invoiceId, {
         subtotal: totals.subtotalAfterDiscount,
         vat_amount: totals.vatAmount,
@@ -261,13 +309,6 @@ export default function InvoiceView() {
     onError: (e: any) => toast.error(e?.message || "Failed to apply discount"),
   });
 
-  /**
-   * Recalculate Totals (NO automatic discount)
-   * - Useful after adding/removing items
-   * - Keeps whatever discount_amount is currently stored (doesn't recompute it)
-   *
-   * If you want: only recalc base totals here, and user clicks Apply Discount again.
-   */
   const recalcBaseTotalsM = useMutation({
     mutationFn: async () => {
       if (!inv) throw new Error("Invoice not loaded");
@@ -305,7 +346,6 @@ export default function InvoiceView() {
         total_excl_vat: subtotalEx,
         total_incl_vat: totalAmount,
 
-        // IMPORTANT: do NOT touch discount_amount here (manual)
         gross_total: grossTotal,
         balance_remaining: balance,
         balance_due: balance,
@@ -313,7 +353,7 @@ export default function InvoiceView() {
 
       await qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
     },
-    onSuccess: () => toast.success("Totals recalculated (base)"),
+    onSuccess: () => toast.success("Totals recalculated"),
     onError: (e: any) => toast.error(e?.message || "Failed to recalculate totals"),
   });
 
@@ -322,56 +362,69 @@ export default function InvoiceView() {
       if (!inv) throw new Error("Invoice not loaded");
       if (!selectedProduct) throw new Error("Select a product");
 
-      const vatRate = clampPct(hdrVatPercent); // use current header vat in UI
+      const vatRate = clampPct(hdrVatPercent);
 
-      const bq = int0(boxQty);
-      const pq = int0(pcsQty);
-      if (bq <= 0 && pq <= 0) throw new Error("Enter BOX or PCS quantity");
+      const uom = addUom;
 
-      const uom: "BOX" | "PCS" = pq > 0 && bq <= 0 ? "PCS" : "BOX";
-      const unitsPerBox = Math.max(1, int0((selectedProduct as any).units_per_box ?? 1));
+      // Qty rules
+      const qty =
+        uom === "KG" ? Math.max(0, roundKg(qtyValue)) : Math.max(0, Math.trunc(n2(qtyValue)));
 
-      // ✅ Option A: DO NOT discount line automatically
+      if (qty <= 0) throw new Error("Quantity must be greater than 0");
+
       const baseEx = n2((selectedProduct as any).selling_price); // EXCL VAT
+      const unitVat = round2((baseEx * vatRate) / 100);
+      const unitInc = round2(baseEx + unitVat);
 
-      const line = calcLine({
-        boxQty: uom === "BOX" ? bq : 0,
-        pcsQty: uom === "PCS" ? pq : 0,
-        unitsPerBox,
-        sellingPriceExclVat: baseEx,
-        vatRate,
-      });
+      const unitsPerBox = Math.max(
+        1,
+        Math.trunc(
+          n2(
+            unitsPerBoxOverride.trim()
+              ? unitsPerBoxOverride
+              : (selectedProduct as any).units_per_box ?? 1
+          )
+        )
+      );
 
-      if (line.total_qty <= 0) throw new Error("Quantity must be greater than zero");
+      const totalQty =
+        uom === "BOX" ? qty * unitsPerBox : qty; // PCS or KG => qty itself
+
+      const lineTotal = round2(n2(totalQty) * n2(unitInc));
 
       await insertInvoiceItem({
         invoice_id: invoiceId,
         product_id: (selectedProduct as any).id,
 
         uom,
-        box_qty: line.box_qty,
-        pcs_qty: line.pcs_qty,
-        units_per_box: line.units_per_box,
-        total_qty: line.total_qty,
 
-        unit_price_excl_vat: line.unit_price_excl_vat,
+        // DB compatibility:
+        // - BOX => box_qty
+        // - PCS => pcs_qty
+        // - KG  => store numeric in box_qty + uom="KG"
+        box_qty: uom === "BOX" || uom === "KG" ? qty : 0,
+        pcs_qty: uom === "PCS" ? qty : 0,
+
+        units_per_box: uom === "BOX" ? unitsPerBox : 1,
+        total_qty: totalQty,
+
+        unit_price_excl_vat: baseEx,
         vat_rate: vatRate,
-        unit_vat: line.unit_vat,
-        unit_price_incl_vat: line.unit_price_incl_vat,
-        line_total: line.line_total,
+        unit_vat: unitVat,
+        unit_price_incl_vat: unitInc,
+        line_total: lineTotal,
 
         description: (selectedProduct as any).name,
       });
 
       await qc.invalidateQueries({ queryKey: ["invoice_items", invoiceId] });
-
-      // After item add: recalc base totals, user can click Apply Discount again if needed
       await recalcBaseTotalsM.mutateAsync();
 
       setSelectedProduct(null);
-      setBoxQty("0");
-      setPcsQty("0");
+      setQtyValue("0");
+      setUnitsPerBoxOverride("");
       setProductSearch("");
+      setAddUom("BOX");
     },
     onSuccess: () => toast.success("Item added"),
     onError: (e: any) => toast.error(e?.message || "Failed to add item"),
@@ -384,9 +437,7 @@ export default function InvoiceView() {
       await deleteInvoiceItem(itemId);
       await qc.invalidateQueries({ queryKey: ["invoice_items", invoiceId] });
 
-      // After delete: recalc base totals, user can click Apply Discount again if needed
       await recalcBaseTotalsM.mutateAsync();
-
       await qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
     },
     onSuccess: () => toast.success("Item removed"),
@@ -404,6 +455,23 @@ export default function InvoiceView() {
   const productsList = productsQ.data || [];
   const hasProductsSearch = debouncedProductSearch.trim().length > 0;
 
+  const statusTone = useMemo(() => {
+    const s = String(inv?.status || "").toLowerCase();
+    if (s.includes("paid")) return "good";
+    if (s.includes("over") || s.includes("due")) return "warn";
+    return "default";
+  }, [inv?.status]);
+
+  const selectedInfo = useMemo(() => {
+    if (!selectedProduct) return null;
+    return {
+      name: (selectedProduct as any).name,
+      sku: (selectedProduct as any).sku || "-",
+      priceEx: money((selectedProduct as any).selling_price),
+      upb: String((selectedProduct as any).units_per_box ?? "-"),
+    };
+  }, [selectedProduct]);
+
   /* =========================
      RENDER
   ========================= */
@@ -416,17 +484,27 @@ export default function InvoiceView() {
   }
 
   return (
-    <div className="space-y-5">
+     <div className="iv-root iv-invoice-view space-y-5">
+      {/* Premium page background hint (works with your existing theme) */}
+      <div className="pointer-events-none fixed inset-0 -z-10 opacity-60">
+        <div className="absolute -top-24 left-1/2 h-72 w-[60rem] -translate-x-1/2 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-40 right-[-10rem] h-96 w-96 rounded-full bg-white/5 blur-3xl" />
+      </div>
+
       {/* HEADER */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-2xl font-semibold truncate">Invoice {inv.invoice_number}</div>
-          <div className="text-sm text-muted-foreground truncate">
-            Status: {inv.status} • Customer: {customer?.name || `#${inv.customer_id}`}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-2xl font-semibold truncate text-white">Invoice {inv.invoice_number}</div>
+            <Pill tone={statusTone as any}>Status: {String(inv.status || "—")}</Pill>
+            <Pill>Customer: {customer?.name || `#${inv.customer_id}`}</Pill>
+          </div>
+          <div className="mt-1 text-sm text-white/55 truncate">
+            Invoice ID #{inv.id} • Created: {String(inv.created_at || "").slice(0, 10)}
           </div>
         </div>
 
-        <div className="flex gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 shrink-0">
           <Button variant="outline" onClick={() => nav("/invoices")}>
             Back
           </Button>
@@ -435,7 +513,7 @@ export default function InvoiceView() {
             Print
           </Button>
 
-          <Button asChild variant="outline">
+          <Button asChild className="gradient-primary text-primary-foreground shadow-[0_18px_45px_rgba(0,0,0,.35)]">
             <a href={waHref} target="_blank" rel="noreferrer">
               Send via WhatsApp
             </a>
@@ -443,129 +521,233 @@ export default function InvoiceView() {
         </div>
       </div>
 
-      {/* INVOICE HEADER */}
-      <Card className="p-4 shadow-premium space-y-3">
+      {/* STATS STRIP */}
+      <div className="grid gap-3 md:grid-cols-5">
+        <StatCard label="Subtotal" value={`Rs ${money(inv.subtotal)}`} />
+        <StatCard label="VAT" value={`Rs ${money(inv.vat_amount)}`} hint={`VAT %: ${money(inv.vat_percent ?? hdrVatPercent)}`} />
+        <StatCard label="Discount" value={`Rs ${money(inv.discount_amount)}`} hint={`Discount %: ${money(inv.discount_percent ?? hdrDiscountPercent)}`} />
+        <StatCard label="Gross" value={`Rs ${money(inv.gross_total)}`} />
+        <StatCard label="Balance" value={`Rs ${money(inv.balance_remaining)}`} emphasize />
+      </div>
+
+      {/* INVOICE HEADER (premium) */}
+      <Card className="p-4 md:p-5 shadow-premium space-y-3 border-white/10 bg-white/[0.04] rounded-2xl">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-white">Invoice Header</div>
+            <div className="text-xs text-white/55">Edit fields, then Save Header. Discount is manual (Apply Discount).</div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              className="gradient-primary text-primary-foreground shadow-[0_18px_45px_rgba(0,0,0,.35)]"
+              onClick={() => saveHeaderM.mutate()}
+              disabled={saveHeaderM.isPending}
+            >
+              {saveHeaderM.isPending ? "Saving..." : "Save Header"}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => applyDiscountM.mutate()}
+              disabled={applyDiscountM.isPending}
+              title="Manual: apply discount to totals only"
+            >
+              {applyDiscountM.isPending ? "Applying..." : "Apply Discount"}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => recalcBaseTotalsM.mutate()}
+              disabled={recalcBaseTotalsM.isPending}
+              title="Recalculate base totals from items (no discount auto)"
+            >
+              {recalcBaseTotalsM.isPending ? "Recalculating..." : "Recalculate Totals"}
+            </Button>
+          </div>
+        </div>
+
         <div className="grid gap-3 md:grid-cols-4">
-          <Input type="date" value={hdrInvoiceDate} onChange={(e) => setHdrInvoiceDate(e.target.value)} />
-          <Input type="date" value={hdrDueDate} onChange={(e) => setHdrDueDate(e.target.value)} placeholder="Due date" />
-          <Input inputMode="decimal" value={hdrVatPercent} onChange={(e) => setHdrVatPercent(e.target.value)} placeholder="VAT %" />
-          <Input
-            inputMode="decimal"
-            value={hdrDiscountPercent}
-            onChange={(e) => setHdrDiscountPercent(e.target.value)}
-            placeholder="Discount %"
-          />
+          <div className="space-y-1">
+            <div className="text-xs text-white/55">Invoice Date</div>
+            <Input type="date" value={hdrInvoiceDate} onChange={(e) => setHdrInvoiceDate(e.target.value)} />
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-xs text-white/55">Due Date</div>
+            <Input type="date" value={hdrDueDate} onChange={(e) => setHdrDueDate(e.target.value)} placeholder="Due date" />
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-xs text-white/55">VAT %</div>
+            <Input inputMode="decimal" value={hdrVatPercent} onChange={(e) => setHdrVatPercent(e.target.value)} placeholder="VAT %" />
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-xs text-white/55">Discount % (manual)</div>
+            <Input inputMode="decimal" value={hdrDiscountPercent} onChange={(e) => setHdrDiscountPercent(e.target.value)} placeholder="Discount %" />
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            className="gradient-primary text-primary-foreground"
-            onClick={() => saveHeaderM.mutate()}
-            disabled={saveHeaderM.isPending}
-          >
-            {saveHeaderM.isPending ? "Saving..." : "Save Header"}
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={() => applyDiscountM.mutate()}
-            disabled={applyDiscountM.isPending}
-            title="Manual: apply discount to totals only"
-          >
-            {applyDiscountM.isPending ? "Applying..." : "Apply Discount"}
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={() => recalcBaseTotalsM.mutate()}
-            disabled={recalcBaseTotalsM.isPending}
-            title="Recalculate base totals from items (no discount auto)"
-          >
-            {recalcBaseTotalsM.isPending ? "Recalculating..." : "Recalculate Totals"}
-          </Button>
-        </div>
-
-        <div className="text-xs text-muted-foreground">
+        <div className="text-xs text-white/50">
           Option A: Items stay at base price. Click <b>Apply Discount</b> to update totals + discount amount.
         </div>
       </Card>
 
-      {/* ADD ITEM */}
-      <Card className="p-4 shadow-premium space-y-3">
+      {/* ADD ITEM (premium) */}
+      <Card className="p-4 md:p-5 shadow-premium space-y-3 border-white/10 bg-white/[0.04] rounded-2xl">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-white">Add Item</div>
+            <div className="text-xs text-white/55">Search product, choose unit (BOX / PCS / Kg), then add quantity.</div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-white/55">Unit</div>
+            <select
+              className="h-10 rounded-xl border border-white/10 bg-white/[0.06] px-3 text-sm text-white outline-none"
+              value={addUom}
+              onChange={(e) => setAddUom(e.target.value as any)}
+            >
+              <option value="BOX">BOX</option>
+              <option value="PCS">PCS</option>
+              <option value="KG">Kg</option>
+            </select>
+          </div>
+        </div>
+
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
           <Input placeholder="Search product…" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} />
-          <Input placeholder="BOX" value={boxQty} onChange={(e) => setBoxQty(e.target.value)} />
-          <Input placeholder="PCS" value={pcsQty} onChange={(e) => setPcsQty(e.target.value)} />
-          <Button className="gradient-primary text-primary-foreground" disabled={!selectedProduct || addItemM.isPending} onClick={() => addItemM.mutate()}>
+
+          <Input
+            placeholder={addUom === "KG" ? "Kg (e.g. 0.45)" : addUom === "PCS" ? "PCS" : "BOX"}
+            value={qtyValue}
+            onChange={(e) => setQtyValue(e.target.value)}
+            inputMode={addUom === "KG" ? "decimal" : "numeric"}
+          />
+
+          <Input
+            placeholder="UPB (optional)"
+            value={unitsPerBoxOverride}
+            onChange={(e) => setUnitsPerBoxOverride(e.target.value)}
+            disabled={addUom !== "BOX"}
+            inputMode="numeric"
+            title="Units per box override (BOX only)"
+          />
+
+          <Button
+            className="gradient-primary text-primary-foreground shadow-[0_18px_45px_rgba(0,0,0,.35)]"
+            disabled={!selectedProduct || addItemM.isPending}
+            onClick={() => addItemM.mutate()}
+          >
             {addItemM.isPending ? "Adding..." : "Add"}
           </Button>
         </div>
 
-        <div className="border rounded-xl max-h-64 overflow-auto divide-y">
-          {!hasProductsSearch ? (
-            <div className="p-4 text-sm text-muted-foreground">Start typing to search products…</div>
-          ) : productsQ.isLoading ? (
-            <div className="p-4 text-sm text-muted-foreground">Searching…</div>
-          ) : productsList.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">No products found.</div>
-          ) : (
-            productsList.map((p: any) => (
-              <button
-                key={p.id}
-                onClick={() => setSelectedProduct(p)}
-                className={`w-full text-left px-4 py-2 hover:bg-accent transition ${
-                  (selectedProduct as any)?.id === p.id ? "bg-accent" : ""
-                }`}
-                type="button"
-              >
-                <div className="font-medium">{p.name}</div>
-                <div className="text-xs text-muted-foreground">
-                  SKU: {p.sku || "-"} • Unit Excl VAT: {money(p.selling_price)} • UPB: {p.units_per_box ?? "-"}
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-      </Card>
-
-      {/* ITEMS */}
-      <Card className="overflow-hidden shadow-premium">
-        <div className="divide-y">
-          {items.map((it: any) => (
-            <div key={it.id} className="px-4 py-3 flex justify-between items-center gap-3">
-              <div className="min-w-0">
-                <div className="font-medium truncate">{it.product?.name || it.description}</div>
-                <div className="text-xs text-muted-foreground">
-                  UOM: {String(it.uom || "BOX").toUpperCase()} • Qty: {it.total_qty} • Unit incl VAT: {money(it.unit_price_incl_vat)}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="font-semibold">{money(it.line_total)}</div>
-                <Button variant="outline" onClick={() => delItemM.mutate(it.id)} disabled={delItemM.isPending}>
-                  Remove
-                </Button>
+        {selectedInfo ? (
+          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-medium text-white">{selectedInfo.name}</div>
+              <div className="flex flex-wrap gap-2">
+                <Pill>SKU: {selectedInfo.sku}</Pill>
+                <Pill>Unit Ex: {selectedInfo.priceEx}</Pill>
+                <Pill>UPB: {selectedInfo.upb}</Pill>
               </div>
             </div>
-          ))}
+          </div>
+        ) : null}
 
-          {!itemsQ.isLoading && items.length === 0 && (
-            <div className="p-6 text-center text-sm text-muted-foreground">No items yet.</div>
+        <div className="border border-white/10 rounded-2xl max-h-64 overflow-auto divide-y divide-white/10 bg-black/10">
+          {!hasProductsSearch ? (
+            <div className="p-4 text-sm text-white/55">Start typing to search products…</div>
+          ) : productsQ.isLoading ? (
+            <div className="p-4 text-sm text-white/55">Searching…</div>
+          ) : productsList.length === 0 ? (
+            <div className="p-4 text-sm text-white/55">No products found.</div>
+          ) : (
+            productsList.map((p: any) => {
+              const active = (selectedProduct as any)?.id === p.id;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setSelectedProduct(p)}
+                  className={`w-full text-left px-4 py-3 transition ${
+                    active ? "bg-white/10" : "hover:bg-white/5"
+                  }`}
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-white truncate">{p.name}</div>
+                      <div className="text-xs text-white/55 truncate">
+                        SKU: {p.sku || "-"} • Unit Excl VAT: {money(p.selling_price)} • UPB: {p.units_per_box ?? "-"}
+                      </div>
+                    </div>
+                    <div className="shrink-0">
+                      <Pill tone={active ? "good" : "default"}>{active ? "Selected" : "Pick"}</Pill>
+                    </div>
+                  </div>
+                </button>
+              );
+            })
           )}
         </div>
       </Card>
 
-      {/* TOTALS */}
-      <Card className="p-4 shadow-premium">
-        <div className="grid md:grid-cols-2 gap-2">
-          <div>Subtotal: {money(inv.subtotal)}</div>
-          <div>VAT: {money(inv.vat_amount)}</div>
-          <div>Discount: {money(inv.discount_amount)}</div>
-          <div>Gross: {money(inv.gross_total)}</div>
-          <div className="md:col-span-2 font-semibold">Total: {money(inv.total_amount)}</div>
+      {/* ITEMS (premium list) */}
+      <Card className="overflow-hidden shadow-premium border-white/10 bg-white/[0.04] rounded-2xl">
+        <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-semibold text-white">Items</div>
+            <div className="text-xs text-white/55">Luxury list view — delete recalculates totals.</div>
+          </div>
+          <Pill>{items.length} item(s)</Pill>
+        </div>
+
+        <div className="divide-y divide-white/10">
+          {items.map((it: any) => {
+            const uom = String(it.uom || "BOX").toUpperCase();
+            const qty = fmtQty(uom, it.total_qty);
+            return (
+              <div key={it.id} className="px-4 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-medium text-white truncate">{it.product?.name || it.description}</div>
+                    <Pill>UOM: {uom}</Pill>
+                    <Pill>Qty: {qty}</Pill>
+                    <Pill>Unit inc: {money(it.unit_price_incl_vat)}</Pill>
+                  </div>
+                  <div className="mt-1 text-xs text-white/55">
+                    Unit ex: {money(it.unit_price_excl_vat)} • VAT rate: {money(it.vat_rate)}% • Line VAT: {money(n2(it.unit_vat) * n2(it.total_qty))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 shrink-0">
+                  <div className="text-white font-semibold text-lg tabular-nums">Rs {money(it.line_total)}</div>
+                  <Button variant="outline" onClick={() => delItemM.mutate(it.id)} disabled={delItemM.isPending}>
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+
+          {!itemsQ.isLoading && items.length === 0 && (
+            <div className="p-8 text-center text-sm text-white/55">No items yet.</div>
+          )}
         </div>
       </Card>
+
+      {/* TOTALS (premium tiles) */}
+      <div className="grid gap-3 md:grid-cols-3">
+        <StatCard label="Subtotal" value={`Rs ${money(inv.subtotal)}`} hint="From items (base totals)" />
+        <StatCard label="VAT Amount" value={`Rs ${money(inv.vat_amount)}`} hint="Mixed VAT lines supported" />
+        <StatCard label="Discount Amount" value={`Rs ${money(inv.discount_amount)}`} hint="Manual (Apply Discount)" />
+        <StatCard label="Total" value={`Rs ${money(inv.total_amount)}`} hint="Subtotal + VAT - discount logic (Option A)" emphasize />
+        <StatCard label="Gross Total" value={`Rs ${money(inv.gross_total)}`} hint={`Prev balance: Rs ${money(inv.previous_balance)}`} />
+        <StatCard label="Balance Remaining" value={`Rs ${money(inv.balance_remaining)}`} hint={`Paid: Rs ${money(inv.amount_paid)}`} emphasize />
+      </div>
     </div>
   );
 }
+
 

@@ -1,13 +1,25 @@
-import React, { useEffect, useMemo, useState } from "react";
+// src/pages/Users.tsx
+import { useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
+import {
+  CheckCircle2,
+  Crown,
+  Lock,
+  MoreHorizontal,
+  Search,
+  Settings2,
+  Shield,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
+
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -23,47 +35,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-
-import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
-import {
-  Search,
-  Shield,
-  MoreHorizontal,
-  UserPlus,
-  KeyRound,
-  Settings2,
-  Crown,
-  Lock,
-  CheckCircle2,
-  Trash2,
-} from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 /* =========================
    Roles + Permissions Model
 ========================= */
 type AppRole = "admin" | "manager" | "accountant" | "sales" | "viewer";
-
-const roleConfig: Record<AppRole, { label: string; className: string; icon?: React.ReactNode }> = {
-  admin: {
-    label: "Admin",
-    className: "bg-amber-500/10 text-amber-700 border-amber-200",
-    icon: <Crown className="h-4 w-4" />,
-  },
-  manager: { label: "Manager", className: "bg-primary/10 text-primary border-primary/20" },
-  accountant: { label: "Accountant", className: "bg-sky-500/10 text-sky-700 border-sky-200" },
-  sales: { label: "Sales", className: "bg-emerald-500/10 text-emerald-700 border-emerald-200" },
-  viewer: { label: "Viewer", className: "bg-muted text-muted-foreground border-slate-200" },
-};
-
 type PermissionKey =
   | "ap.view"
   | "ap.bills"
@@ -78,6 +58,18 @@ type PermissionKey =
   | "settings.view"
   | "settings.edit"
   | "users.manage";
+
+const roleConfig: Record<AppRole, { label: string; className: string; icon?: JSX.Element }> = {
+  admin: {
+    label: "Admin",
+    className: "bg-amber-500/10 text-amber-700 border-amber-200",
+    icon: <Crown className="h-4 w-4" />,
+  },
+  manager: { label: "Manager", className: "bg-primary/10 text-primary border-primary/20" },
+  accountant: { label: "Accountant", className: "bg-sky-500/10 text-sky-700 border-sky-200" },
+  sales: { label: "Sales", className: "bg-emerald-500/10 text-emerald-700 border-emerald-200" },
+  viewer: { label: "Viewer", className: "bg-muted text-muted-foreground border-slate-200" },
+};
 
 const permissionGroups: Array<{
   title: string;
@@ -103,7 +95,7 @@ const permissionGroups: Array<{
   },
   {
     title: "Stock",
-    desc: "Products, warehouses, movement",
+    desc: "Products, movement, adjustments",
     items: [
       { key: "stock.view", label: "View Stock", hint: "Can view stock & products" },
       { key: "stock.edit", label: "Edit Stock", hint: "Can create/edit products and stock adjustments" },
@@ -133,13 +125,8 @@ const permissionGroups: Array<{
   },
 ];
 
-/* =========================
-   DB rows
-   profiles: id(uuid), role(text), full_name(text), created_at(timestamptz)
-   rp_users: user_id(uuid), username(email), permissions(jsonb), is_active(bool)
-========================= */
 type ProfileRow = {
-  id: string; // UUID
+  id: string;
   role: string | null;
   full_name: string | null;
   created_at: string;
@@ -147,7 +134,7 @@ type ProfileRow = {
 
 type RpUserRow = {
   user_id: string | null;
-  username: string | null; // email/login
+  username: string | null;
   name: string | null;
   role: string | null;
   permissions: Record<string, boolean> | null;
@@ -156,7 +143,7 @@ type RpUserRow = {
 };
 
 type UserRow = {
-  user_id: string; // UUID
+  user_id: string;
   full_name: string | null;
   email: string | null;
   role: AppRole;
@@ -165,12 +152,18 @@ type UserRow = {
   created_at: string;
 };
 
+function normalizeRole(v: any): AppRole {
+  const x = String(v || "").toLowerCase();
+  if (x === "admin" || x === "manager" || x === "accountant" || x === "sales" || x === "viewer") return x as AppRole;
+  return "viewer";
+}
+
 function s(v: any) {
   return String(v ?? "").trim();
 }
 
 /* =========================
-   Admin API calls
+   Admin API calls (server routes)
 ========================= */
 async function apiCreateUser(payload: {
   email: string;
@@ -230,9 +223,7 @@ function presetForRole(role: AppRole): Record<string, boolean> {
 
   if (role === "admin") return all;
 
-  if (role === "manager") {
-    return { ...all, "settings.edit": false, "users.manage": false };
-  }
+  if (role === "manager") return { ...all, "settings.edit": false, "users.manage": false };
 
   if (role === "accountant") {
     return {
@@ -270,23 +261,15 @@ function presetForRole(role: AppRole): Record<string, boolean> {
     };
   }
 
-  // viewer
+  // viewer: only *.view
   return Object.fromEntries(permissionGroups.flatMap((g) => g.items.map((i) => [i.key, i.key.endsWith(".view")]))) as Record<
     string,
     boolean
   >;
 }
 
-function normalizeRole(v: any): AppRole {
-  const x = String(v || "").toLowerCase();
-  if (x === "admin" || x === "manager" || x === "accountant" || x === "sales" || x === "viewer") return x as AppRole;
-  return "viewer";
-}
-
 /* =========================
-   Fetch users joined:
-   - profiles.id + profiles.role + profiles.full_name + profiles.created_at
-   - rp_users.user_id + rp_users.username(email) + perms + is_active
+   Fetch users joined
 ========================= */
 async function fetchUsersJoined(): Promise<UserRow[]> {
   const { data: profiles, error: pErr } = await supabase
@@ -296,9 +279,7 @@ async function fetchUsersJoined(): Promise<UserRow[]> {
 
   if (pErr) throw pErr;
 
-  const { data: rpUsers } = await supabase
-    .from("rp_users")
-    .select("user_id,username,permissions,is_active,role,name,created_at");
+  const { data: rpUsers } = await supabase.from("rp_users").select("user_id,username,permissions,is_active,role,name,created_at");
 
   const rpMap = new Map<string, RpUserRow>();
   (rpUsers as any[] | null)?.forEach((r) => {
@@ -322,7 +303,7 @@ async function fetchUsersJoined(): Promise<UserRow[]> {
 }
 
 /* =========================
-   UI components
+   Small UI helpers
 ========================= */
 function RoleBadge({ role }: { role: AppRole }) {
   const cfg = roleConfig[role];
@@ -359,15 +340,11 @@ function PermissionMatrix({
                 const checked = !!value[it.key];
                 return (
                   <div key={it.key} className="flex items-center justify-between rounded-lg border bg-background px-3 py-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 pr-3">
                       <div className="text-sm font-medium">{it.label}</div>
                       <div className="text-xs text-muted-foreground">{it.hint}</div>
                     </div>
-                    <Switch
-                      checked={checked}
-                      onCheckedChange={(v) => onChange({ ...value, [it.key]: !!v })}
-                      disabled={!!locked}
-                    />
+                    <Switch checked={checked} onCheckedChange={(v) => onChange({ ...value, [it.key]: !!v })} disabled={!!locked} />
                   </div>
                 );
               })}
@@ -418,7 +395,7 @@ export default function Users() {
   const [deleteTarget, setDeleteTarget] = useState<UserRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  async function reload() {
+  const reload = async () => {
     setLoading(true);
     try {
       const data = await fetchUsersJoined();
@@ -428,7 +405,7 @@ export default function Users() {
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
     reload();
@@ -461,7 +438,7 @@ export default function Users() {
       });
   }, [rows, searchQuery, roleFilter]);
 
-  function openCreateDialog() {
+  const openCreateDialog = () => {
     setCEmail("");
     setCName("");
     setCPassword("");
@@ -469,27 +446,26 @@ export default function Users() {
     setCActive(true);
     setCPerm(presetForRole("viewer"));
     setOpenCreate(true);
-  }
+  };
 
-  function openEditDialog(user: UserRow) {
-    setEditing(user);
-    setEName(user.full_name || "");
-    setERole(user.role);
-    setEActive(!!user.is_active);
-    setEPerm({ ...(user.permissions || presetForRole(user.role)) });
+  const openEditDialog = (u: UserRow) => {
+    setEditing(u);
+    setEName(u.full_name || "");
+    setERole(u.role);
+    setEActive(!!u.is_active);
+    setEPerm({ ...(u.permissions || presetForRole(u.role)) });
     setEResetPwd("");
     setOpenEdit(true);
-  }
+  };
 
-  function openDeleteDialog(user: UserRow) {
-    setDeleteTarget(user);
+  const openDeleteDialog = (u: UserRow) => {
+    setDeleteTarget(u);
     setOpenDelete(true);
-  }
+  };
 
-  async function handleCreate() {
-    if (!isAdmin) {
-      return toast({ title: "Forbidden", description: "Admin only", variant: "destructive" });
-    }
+  const handleCreate = async () => {
+    if (!isAdmin) return toast({ title: "Forbidden", description: "Admin only", variant: "destructive" });
+
     const email = s(cEmail).toLowerCase();
     if (!email) return toast({ title: "Missing", description: "Email is required", variant: "destructive" });
 
@@ -518,9 +494,9 @@ export default function Users() {
     } finally {
       setCreating(false);
     }
-  }
+  };
 
-  async function handleSaveEdit() {
+  const handleSaveEdit = async () => {
     if (!isAdmin || !editing) return;
 
     setSaving(true);
@@ -544,9 +520,9 @@ export default function Users() {
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  async function handleDelete() {
+  const handleDelete = async () => {
     if (!isAdmin || !deleteTarget) return;
 
     setDeleting(true);
@@ -561,7 +537,7 @@ export default function Users() {
     } finally {
       setDeleting(false);
     }
-  }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -569,9 +545,7 @@ export default function Users() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-3xl font-bold text-foreground tracking-tight">Users & Permissions</div>
-          <div className="text-muted-foreground mt-1">
-            Premium access control • Roles + permission matrix • Admin-only actions
-          </div>
+          <div className="text-muted-foreground mt-1">Premium access control • Roles + permission matrix</div>
         </div>
 
         <div className="flex gap-2">
@@ -671,7 +645,7 @@ export default function Users() {
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Joined</TableHead>
-                  <TableHead className="w-[56px]"></TableHead>
+                  <TableHead className="w-[56px]" />
                 </TableRow>
               </TableHeader>
 
@@ -681,7 +655,7 @@ export default function Users() {
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-                          {u.full_name?.charAt(0) || u.email?.charAt(0) || "U"}
+                          {(u.full_name?.charAt(0) || u.email?.charAt(0) || "U").toUpperCase()}
                         </div>
                         <div className="min-w-0">
                           <div className="font-medium truncate">{u.full_name || "Unknown"}</div>
@@ -738,11 +712,7 @@ export default function Users() {
                                   });
                                   await reload();
                                 } catch (e: any) {
-                                  toast({
-                                    title: "Error",
-                                    description: e?.message || "Failed",
-                                    variant: "destructive",
-                                  });
+                                  toast({ title: "Error", description: e?.message || "Failed", variant: "destructive" });
                                 }
                               }}
                             >
@@ -751,10 +721,7 @@ export default function Users() {
 
                             <DropdownMenuSeparator />
 
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={() => openDeleteDialog(u)}
-                            >
+                            <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(u)}>
                               <Trash2 className="h-4 w-4 mr-2" />
                               Delete User
                             </DropdownMenuItem>
@@ -775,114 +742,134 @@ export default function Users() {
       </Card>
 
       {/* ========================= CREATE USER ========================= */}
-      <Dialog open={openCreate} onOpenChange={setOpenCreate}>
-  <DialogContent className="sm:max-w-[520px]">
-    <DialogHeader>
+<Dialog open={openCreate} onOpenChange={setOpenCreate}>
+  <DialogContent className="sm:max-w-[640px] max-h-[85vh] overflow-hidden p-0 flex flex-col">
+    {/* Header (fixed) */}
+    <DialogHeader className="px-6 pt-6 pb-3 border-b">
       <DialogTitle>Create User</DialogTitle>
-      <DialogDescription>
-        Create login access and assign role
-      </DialogDescription>
+      <DialogDescription>Create login access and assign role + module permissions.</DialogDescription>
     </DialogHeader>
 
-    <div className="grid gap-4">
-      {/* Identity */}
-      <div className="grid gap-3">
-        <div>
-          <Label>Email *</Label>
-          <Input
-            value={cEmail}
-            onChange={(e) => setCEmail(e.target.value)}
-            placeholder="user@company.mu"
-          />
+    {/* Body (scrolls) */}
+    <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div className="grid gap-5">
+        {/* Details */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-3">
+            <div>
+              <Label>Email *</Label>
+              <Input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="user@company.mu" />
+            </div>
+
+            <div>
+              <Label>Full Name</Label>
+              <Input value={cName} onChange={(e) => setCName(e.target.value)} placeholder="John Doe" />
+            </div>
+
+            <div>
+              <Label>Password (optional)</Label>
+              <Input
+                type="password"
+                value={cPassword}
+                onChange={(e) => setCPassword(e.target.value)}
+                placeholder="Auto-generate if empty"
+              />
+            </div>
+          </div>
+
+          {/* Access */}
+          <div className="grid gap-3">
+            <div>
+              <Label>Role</Label>
+              <select
+                className="h-10 rounded-md border px-3 bg-background w-full"
+                value={cRole}
+                onChange={(e) => {
+                  const r = e.target.value as AppRole;
+                  setCRole(r);
+                  setCPerm(presetForRole(r));
+                }}
+              >
+                <option value="admin">Admin — Full access</option>
+                <option value="manager">Manager</option>
+                <option value="accountant">Accountant</option>
+                <option value="sales">Sales</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <Switch checked={cActive} onCheckedChange={setCActive} />
+              <span className="text-sm text-muted-foreground">Active</span>
+            </div>
+
+            <div className="rounded-xl border bg-muted/20 p-3 text-sm">
+              <div className="font-medium">Preset applied</div>
+              <div className="text-muted-foreground text-xs mt-1">
+                Role presets keep access consistent. Admin is always full access.
+              </div>
+            </div>
+          </div>
         </div>
 
+        {/* Permissions */}
         <div>
-          <Label>Full Name</Label>
-          <Input
-            value={cName}
-            onChange={(e) => setCName(e.target.value)}
-            placeholder="John Doe"
-          />
+          <div className="text-sm font-semibold mb-2">Permissions</div>
+          <PermissionMatrix value={cPerm} onChange={setCPerm} locked={cRole === "admin"} />
         </div>
-
-        <div>
-          <Label>Password (optional)</Label>
-          <Input
-            type="password"
-            value={cPassword}
-            onChange={(e) => setCPassword(e.target.value)}
-            placeholder="Auto-generate if empty"
-          />
-        </div>
-      </div>
-
-      {/* Role */}
-      <div className="grid gap-3">
-        <Label>Role</Label>
-        <select
-          className="h-10 rounded-md border px-3 bg-background"
-          value={cRole}
-          onChange={(e) => {
-            const r = e.target.value as AppRole;
-            setCRole(r);
-            setCPerm(presetForRole(r));
-          }}
-        >
-          <option value="admin">Admin — Full access</option>
-          <option value="manager">Manager</option>
-          <option value="accountant">Accountant</option>
-          <option value="sales">Sales</option>
-          <option value="viewer">Viewer</option>
-        </select>
-      </div>
-
-      {/* Status */}
-      <div className="flex items-center gap-3">
-        <Switch checked={cActive} onCheckedChange={setCActive} />
-        <span className="text-sm text-muted-foreground">Active</span>
       </div>
     </div>
 
-    <DialogFooter className="mt-4">
+    {/* Footer (fixed) */}
+    <DialogFooter className="px-6 py-4 border-t">
       <Button variant="outline" onClick={() => setOpenCreate(false)}>
         Cancel
       </Button>
-      <Button
-        className="gradient-primary shadow-glow text-primary-foreground"
-        onClick={handleCreate}
-        disabled={creating}
-      >
-        Create User
+      <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={handleCreate} disabled={creating}>
+        {creating ? "Creating..." : "Create User"}
       </Button>
     </DialogFooter>
   </DialogContent>
 </Dialog>
 
+
       {/* ========================= EDIT USER ========================= */}
       <Dialog open={openEdit} onOpenChange={setOpenEdit}>
-        <DialogContent className="sm:max-w-[860px]">
+        <DialogContent className="sm:max-w-[820px]">
           <DialogHeader>
-            <DialogTitle>Update User</DialogTitle>
-            <DialogDescription>{editing ? `${editing.full_name || editing.email} • ${editing.email || "-"}` : "—"}</DialogDescription>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>Update role, status, permissions and reset password (optional).</DialogDescription>
           </DialogHeader>
 
-          {!editing ? null : (
-            <div className="grid gap-4">
-              <Card className="shadow-premium">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Account</CardTitle>
-                  <CardDescription>Status + role + password</CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
+          {editing ? (
+            <div className="grid gap-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-3">
+                  <div>
                     <Label>Full Name</Label>
-                    <Input value={eName} onChange={(e) => setEName(e.target.value)} />
+                    <Input value={eName} onChange={(e) => setEName(e.target.value)} placeholder="Full name" />
                   </div>
 
-                  <div className="space-y-2">
+                  <div>
+                    <Label>Reset Password (optional)</Label>
+                    <Input
+                      type="password"
+                      value={eResetPwd}
+                      onChange={(e) => setEResetPwd(e.target.value)}
+                      placeholder="Leave empty to keep unchanged"
+                    />
+                  </div>
+
+                  <div className="text-xs text-muted-foreground break-all">
+                    User ID: <span className="font-mono">{editing.user_id}</span>
+                  </div>
+                </div>
+
+                <div className="grid gap-3">
+                  <div>
                     <Label>Role</Label>
                     <select
-                      className="h-10 w-full rounded-md border px-3 bg-background"
+                      className="h-10 rounded-md border px-3 bg-background w-full"
                       value={eRole}
                       onChange={(e) => {
                         const r = e.target.value as AppRole;
@@ -891,70 +878,64 @@ export default function Users() {
                       }}
                     >
                       <option value="admin">Admin — Full access</option>
-                      <option value="manager">Manager — Operations</option>
-                      <option value="accountant">Accountant — Finance</option>
-                      <option value="sales">Sales — Invoices</option>
-                      <option value="viewer">Viewer — Read only</option>
+                      <option value="manager">Manager</option>
+                      <option value="accountant">Accountant</option>
+                      <option value="sales">Sales</option>
+                      <option value="viewer">Viewer</option>
                     </select>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Status</Label>
-                    <div className="flex items-center gap-3 rounded-lg border px-3 py-2">
-                      <Switch checked={eActive} onCheckedChange={(v) => setEActive(!!v)} />
-                      <span className="text-sm text-muted-foreground">Active</span>
-                    </div>
+                  <div className="flex items-center gap-3 pt-2">
+                    <Switch checked={eActive} onCheckedChange={setEActive} />
+                    <span className="text-sm text-muted-foreground">Active</span>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Reset Password (optional)</Label>
-                    <div className="relative">
-                      <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        className="pl-10"
-                        value={eResetPwd}
-                        onChange={(e) => setEResetPwd(e.target.value)}
-                        placeholder="Leave empty to keep unchanged"
-                        type="password"
-                      />
-                    </div>
+                  <div className="rounded-xl border bg-muted/20 p-3 text-xs text-muted-foreground">
+                    Changing role refreshes permission preset. You can fine-tune below (except Admin).
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
 
-              <PermissionMatrix value={ePerm} onChange={setEPerm} locked={eRole === "admin"} />
+              <div>
+                <div className="text-sm font-semibold mb-2">Permissions</div>
+                <PermissionMatrix value={ePerm} onChange={setEPerm} locked={eRole === "admin"} />
+              </div>
             </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">No user selected.</div>
           )}
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setOpenEdit(false)}>
               Cancel
             </Button>
             <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={handleSaveEdit} disabled={saving || !editing}>
-              {saving ? "Saving..." : "Update User"}
+              {saving ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ========================= DELETE CONFIRM ========================= */}
+      {/* ========================= DELETE USER ========================= */}
       <Dialog open={openDelete} onOpenChange={setOpenDelete}>
         <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
-            <DialogTitle className="text-destructive">Delete User</DialogTitle>
+            <DialogTitle>Delete User</DialogTitle>
             <DialogDescription>
-              This will permanently remove the user from Auth + profiles + rp_users.
+              This will remove the user from the system. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="rounded-lg border bg-muted/30 p-3">
-            <div className="text-sm font-semibold">{deleteTarget?.full_name || "Unknown"}</div>
+          <div className="rounded-xl border bg-muted/20 p-3 text-sm">
+            <div className="font-medium">{deleteTarget?.full_name || "Unknown user"}</div>
             <div className="text-xs text-muted-foreground">{deleteTarget?.email || "-"}</div>
-            <div className="text-xs text-muted-foreground mt-1">ID: {deleteTarget?.user_id}</div>
+            <div className="text-xs text-muted-foreground mt-1 break-all">
+              ID: <span className="font-mono">{deleteTarget?.user_id}</span>
+            </div>
           </div>
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setOpenDelete(false)} disabled={deleting}>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setOpenDelete(false)}>
               Cancel
             </Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleting || !deleteTarget}>
@@ -966,4 +947,3 @@ export default function Users() {
     </div>
   );
 }
-

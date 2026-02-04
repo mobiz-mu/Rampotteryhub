@@ -1,3 +1,4 @@
+// src/components/layout/AppSidebar.tsx
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -17,13 +18,16 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { ComponentType } from "react";
 
 interface NavItem {
   title: string;
   href?: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
   children?: { title: string; href: string }[];
+  /** if true, only show for admins */
+  adminOnly?: boolean;
 }
 
 const navigation: NavItem[] = [
@@ -49,7 +53,7 @@ const navigation: NavItem[] = [
     icon: FileQuestion,
     children: [
       { title: "All Quotations", href: "/quotations" },
-      { title: "Create Quotation", href: "/quotations/new" }, // ✅ matches your router
+      { title: "Create Quotation", href: "/quotations/create" },
     ],
   },
   {
@@ -64,42 +68,43 @@ const navigation: NavItem[] = [
   { title: "Customers", href: "/customers", icon: Users },
   { title: "Suppliers", href: "/suppliers", icon: Truck },
   { title: "Reports", href: "/reports", icon: BarChart3 },
-  { title: "Users & Permissions", href: "/users", icon: Shield },
+  { title: "Users & Permissions", href: "/users", icon: Shield, adminOnly: true },
 ];
 
 function normalizePath(pathname: string) {
-  // remove trailing slash except root
-  if (pathname.length > 1 && pathname.endsWith("/")) return pathname.slice(0, -1);
-  return pathname;
+  return pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 }
 
-// "inside" means same section: "/invoices" should match "/invoices/123", "/invoices/create", etc.
 function isInside(pathname: string, baseHref: string) {
   const p = normalizePath(pathname);
   const b = normalizePath(baseHref);
   return p === b || p.startsWith(b + "/");
 }
 
-function getActiveGroupTitles(pathname: string) {
+function getActiveGroupTitles(items: NavItem[], pathname: string) {
   const active: string[] = [];
-  for (const item of navigation) {
+  for (const item of items) {
     if (!item.children) continue;
     if (item.children.some((c) => isInside(pathname, c.href))) active.push(item.title);
   }
   return active;
 }
 
+function titleCase(s: string) {
+  const v = String(s || "").trim();
+  if (!v) return v;
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
 export function AppSidebar() {
   const location = useLocation();
-  const { profile, signOut } = useAuth() as any;
+  const { profile, role, isAdmin, user, signOut } = useAuth() as any;
 
-  // Route-derived open groups (auto-open)
-  const routeOpen = useMemo(() => getActiveGroupTitles(location.pathname), [location.pathname]);
+  const nav = useMemo(() => navigation.filter((i) => (!i.adminOnly ? true : !!isAdmin)), [isAdmin]);
 
-  // Manual toggles (user-controlled) — combined with routeOpen
+  const routeOpen = useMemo(() => getActiveGroupTitles(nav, location.pathname), [nav, location.pathname]);
   const [manualOpen, setManualOpen] = useState<string[]>([]);
 
-  // When route changes, ensure the active group is open (premium feel)
   useEffect(() => {
     setManualOpen((prev) => Array.from(new Set([...prev, ...routeOpen])));
   }, [routeOpen]);
@@ -110,34 +115,40 @@ export function AppSidebar() {
     setManualOpen((prev) => (prev.includes(title) ? prev.filter((x) => x !== title) : [...prev, title]));
   };
 
-  const sidebarBase =
-    "fixed left-0 top-0 z-30 flex h-screen w-64 shrink-0 flex-col border-r";
-  const sidebarVisual =
-    "bg-slate-950 text-white border-white/10";
-  const sidebarToken =
-    "bg-sidebar text-sidebar-foreground border-sidebar-border";
+  const displayName = profile?.full_name || user?.email || "Admin";
+  const roleLabel = isAdmin ? "Admin" : titleCase(role || "user");
+
+  const sidebarBase = "fixed left-0 top-0 z-30 flex h-screen w-64 shrink-0 flex-col border-r";
+  const sidebarVisual = "bg-slate-950 text-white border-white/10";
+  const sidebarToken = "bg-sidebar text-sidebar-foreground border-sidebar-border";
 
   return (
-    <aside className={cn(sidebarBase, sidebarVisual, sidebarToken)}>
+    <aside className={cn(sidebarBase, sidebarVisual, sidebarToken, "rp-sidebar")}>
       {/* Premium top glow */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/10 to-transparent" />
 
-      {/* Logo */}
+      {/* Logo / Brand */}
       <div className="relative flex h-16 items-center gap-3 px-6 border-b border-white/10 border-sidebar-border">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 bg-sidebar-primary shadow-[0_10px_30px_rgba(0,0,0,.35)]">
-          <Package className="h-5 w-5 text-white text-sidebar-primary-foreground" />
+        <div className="relative h-10 w-10 rounded-xl bg-white shadow-[0_14px_40px_rgba(0,0,0,.45)] ring-1 ring-white/30 overflow-hidden rp-logoCapsule">
+          <span className="pointer-events-none absolute inset-0 rp-logoShine" />
+          <img
+            src="/logo.png"
+            alt="Ram Pottery Ltd"
+            className="h-full w-full object-contain p-1.5"
+            draggable={false}
+          />
         </div>
 
         <div className="flex flex-col leading-tight">
-          <span className="text-sm font-semibold tracking-wide">Ram Pottery Hub</span>
-          <span className="text-xs opacity-70">Accounting</span>
+          <span className="text-sm font-semibold tracking-wide">Ram Pottery Ltd</span>
+          <span className="text-xs opacity-70">Accounting Software</span>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      <nav className="flex-1 overflow-y-auto px-3 py-4 rp-navScroll">
         <ul className="space-y-1">
-          {navigation.map((item) => {
+          {nav.map((item) => {
             const Icon = item.icon;
 
             if (!item.children) {
@@ -157,8 +168,6 @@ export function AppSidebar() {
                   >
                     <Icon className="h-5 w-5 opacity-90 group-hover:opacity-100 transition-opacity" />
                     <span className="flex-1">{item.title}</span>
-
-                    {/* tiny accent bar on active */}
                     <span className="absolute left-0 top-1/2 h-5 -translate-y-1/2 rounded-r bg-white/30 opacity-0 group-[.active]:opacity-100" />
                   </NavLink>
                 </li>
@@ -194,12 +203,9 @@ export function AppSidebar() {
                     </button>
                   </CollapsibleTrigger>
 
-                  {/* Premium animated submenu */}
                   <CollapsibleContent
                     className={cn(
                       "overflow-hidden",
-                      // shadcn CollapsibleContent sets CSS var --radix-collapsible-content-height
-                      // we animate with those vars for smooth open/close
                       "data-[state=open]:animate-rpCollapsibleDown data-[state=closed]:animate-rpCollapsibleUp"
                     )}
                   >
@@ -234,12 +240,20 @@ export function AppSidebar() {
       <div className="border-t border-white/10 border-sidebar-border p-4">
         <div className="flex items-center gap-3 rounded-xl bg-white/10 bg-sidebar-accent p-3 shadow-[0_16px_40px_rgba(0,0,0,.25)]">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 bg-sidebar-primary text-sm font-semibold text-white text-sidebar-primary-foreground">
-            {(profile?.full_name || profile?.email || "U")?.charAt(0)?.toUpperCase?.() || "U"}
+            {String(displayName || "A").charAt(0).toUpperCase()}
           </div>
 
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{profile?.full_name || profile?.email || "User"}</p>
-            <p className="text-xs opacity-70 truncate">{profile?.email || ""}</p>
+            <p className="text-sm font-medium truncate">{displayName}</p>
+            <div className="mt-0.5 flex items-center gap-2 min-w-0">
+              <p className="text-xs opacity-70 truncate">{roleLabel}</p>
+
+              {isAdmin && (
+                <span className="ml-auto inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-200 ring-1 ring-emerald-400/20">
+                  ADMIN
+                </span>
+              )}
+            </div>
           </div>
 
           <Button
@@ -247,14 +261,16 @@ export function AppSidebar() {
             size="icon"
             onClick={signOut}
             className="h-8 w-8 rounded-xl text-white/70 hover:text-white hover:bg-white/10 hover:bg-sidebar-border"
+            title="Sign out"
           >
             <LogOut className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      {/* Local keyframes (no need to edit tailwind config) */}
+      {/* Local keyframes + premium scrollbar + logo animation (no tailwind config needed) */}
       <style>{`
+        /* ---------- Collapsible animation ---------- */
         @keyframes rpCollapsibleDown {
           from { height: 0; opacity: 0; transform: translateY(-4px); }
           to   { height: var(--radix-collapsible-content-height); opacity: 1; transform: translateY(0); }
@@ -265,6 +281,48 @@ export function AppSidebar() {
         }
         .animate-rpCollapsibleDown { animation: rpCollapsibleDown 260ms cubic-bezier(.2,.8,.2,1); }
         .animate-rpCollapsibleUp { animation: rpCollapsibleUp 220ms cubic-bezier(.2,.8,.2,1); }
+
+        /* ---------- Premium logo animation ---------- */
+        @keyframes rpFloat {
+          0% { transform: translateY(0); }
+          50% { transform: translateY(-1.5px); }
+          100% { transform: translateY(0); }
+        }
+        .rp-logoCapsule { animation: rpFloat 3.2s ease-in-out infinite; }
+
+        @keyframes rpShine {
+          0%   { transform: translateX(-130%) rotate(10deg); opacity: 0; }
+          10%  { opacity: .22; }
+          35%  { opacity: .22; }
+          55%  { opacity: 0; }
+          100% { transform: translateX(130%) rotate(10deg); opacity: 0; }
+        }
+        .rp-logoShine{
+          background: linear-gradient(120deg, transparent, rgba(255,255,255,.65), transparent);
+          transform: translateX(-130%) rotate(10deg);
+          animation: rpShine 3.8s ease-in-out infinite;
+          mix-blend-mode: soft-light;
+        }
+
+        /* ---------- Luxury red scrollbar (nav only) ---------- */
+        .rp-navScroll::-webkit-scrollbar { width: 10px; }
+        .rp-navScroll::-webkit-scrollbar-track {
+          background: rgba(120, 0, 0, 0.55);
+          border-left: 1px solid rgba(255,255,255,.06);
+          border-radius: 999px;
+        }
+        .rp-navScroll::-webkit-scrollbar-thumb {
+          background: rgba(255, 110, 110, 0.75);
+          border: 2px solid rgba(120,0,0,0.30);
+          border-radius: 999px;
+        }
+        .rp-navScroll::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 140, 140, 0.88);
+        }
+        .rp-navScroll{
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255,110,110,.75) rgba(120,0,0,.55);
+        }
       `}</style>
     </aside>
   );

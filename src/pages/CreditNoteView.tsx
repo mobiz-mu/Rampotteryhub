@@ -1,9 +1,9 @@
 // src/pages/CreditNoteView.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { createClient } from "@supabase/supabase-js";
 import { useQuery } from "@tanstack/react-query";
 
+import { supabase } from "@/integrations/supabase/client";
 import { rpFetch } from "@/lib/rpFetch";
 import { getAuditLogs } from "@/lib/creditNotes";
 
@@ -18,23 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { MoreHorizontal, Printer, Eye, Ban, ArrowLeft } from "lucide-react";
-
-/* =========================
-   Supabase (Direct - Vite)
-========================= */
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
-function mustEnv(v: string | undefined, name: string) {
-  if (!v) throw new Error(`${name} missing in .env (restart Vite after adding it).`);
-  return v;
-}
-
-const supabase = createClient(
-  mustEnv(SUPABASE_URL, "VITE_SUPABASE_URL"),
-  mustEnv(SUPABASE_ANON_KEY, "VITE_SUPABASE_ANON_KEY")
-);
+import { ArrowLeft, Ban, MoreHorizontal, Printer, Plus } from "lucide-react";
 
 /* =========================
    Helpers
@@ -62,10 +46,8 @@ function pillClass(st: string) {
 
 function fmtDate(v: any) {
   const s = String(v || "").trim();
-  // supports yyyy-mm-dd
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
-  // fallback to locale
   try {
     const d = new Date(v);
     if (!Number.isNaN(d.getTime())) return d.toLocaleDateString();
@@ -77,6 +59,13 @@ export default function CreditNoteView() {
   const nav = useNavigate();
   const { id } = useParams();
 
+  // ✅ keep cnId stable + safe
+  const cnId = useMemo(() => {
+    const raw = String(id || "").trim();
+    const num = Number(raw);
+    return Number.isFinite(num) && num > 0 ? num : 0;
+  }, [id]);
+
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -84,19 +73,25 @@ export default function CreditNoteView() {
   const [items, setItems] = useState<any[]>([]);
   const [actionBusy, setActionBusy] = useState(false);
 
+  // ✅ HOOKS MUST STAY ABOVE RETURNS (ALWAYS RUN)
   const st = useMemo(() => cnStatus(cn?.status), [cn?.status]);
+
+  const customer = useMemo(() => cn?.customers || null, [cn?.customers]);
+
+  const totals = useMemo(() => {
+    const subtotal = n(cn?.subtotal);
+    const vat = n(cn?.vat_amount);
+    const total = n(cn?.total_amount);
+    return { subtotal, vat, total };
+  }, [cn?.subtotal, cn?.vat_amount, cn?.total_amount]);
 
   async function load() {
     setLoading(true);
     setErr(null);
+
     try {
-      const raw = String(id || "").trim();
-      if (!raw) throw new Error("Missing credit note id");
+      if (!cnId) throw new Error("Invalid credit note id");
 
-      const cnId = Number(raw);
-      if (!Number.isFinite(cnId) || cnId <= 0) throw new Error("Invalid credit note id");
-
-      // header + customer
       const cnQ = await supabase
         .from("credit_notes")
         .select(
@@ -129,7 +124,6 @@ export default function CreditNoteView() {
 
       const creditNote = cnQ.data;
 
-      // items + product
       const itQ = await supabase
         .from("credit_note_items")
         .select(
@@ -158,6 +152,8 @@ export default function CreditNoteView() {
       setItems(itQ.data || []);
     } catch (e: any) {
       setErr(e?.message || "Failed to load credit note");
+      setCn(null);
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -166,14 +162,13 @@ export default function CreditNoteView() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [cnId]);
 
   // ✅ Audit logs via backend endpoint
-  const cnId = Number(id || 0);
   const auditQ = useQuery({
     queryKey: ["audit", "credit_notes", cnId],
     queryFn: () => getAuditLogs({ entity: "credit_notes", id: cnId }),
-    enabled: Number.isFinite(cnId) && cnId > 0,
+    enabled: cnId > 0,
     staleTime: 5_000,
   });
 
@@ -185,7 +180,6 @@ export default function CreditNoteView() {
     try {
       setActionBusy(true);
 
-      // ✅ Use backend route (works even if RLS blocks anon UPDATE)
       const res = await rpFetch(`/api/credit-notes/${cn.id}/void`, { method: "POST" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) throw new Error(json?.error || "Void failed");
@@ -199,6 +193,7 @@ export default function CreditNoteView() {
     }
   }
 
+  // ✅ RETURNS AFTER ALL HOOKS
   if (loading) {
     return (
       <div className="space-y-4">
@@ -227,35 +222,23 @@ export default function CreditNoteView() {
     );
   }
 
-  const customer = cn.customers || null;
-
-  const totals = useMemo(() => {
-    const subtotal = n(cn?.subtotal);
-    const vat = n(cn?.vat_amount);
-    const total = n(cn?.total_amount);
-    return { subtotal, vat, total };
-  }, [cn?.subtotal, cn?.vat_amount, cn?.total_amount]);
-
   return (
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-start gap-3">
-          {/* ✅ Back to Dashboard */}
           <Button variant="outline" onClick={() => nav("/dashboard")} className="mt-1">
             <ArrowLeft className="mr-2 h-4 w-4" />
             Dashboard
           </Button>
 
-          {/* Keep your back-to-list too (no redesign, just useful) */}
           <Button variant="outline" onClick={() => nav("/credit-notes")} className="mt-1">
             Back to list
           </Button>
 
           <div>
             <div className="text-2xl font-semibold">
-              Credit Note{" "}
-              <span className="text-slate-900">{cn.credit_note_number || `#${cn.id}`}</span>
+              Credit Note <span className="text-slate-900">{cn.credit_note_number || `#${cn.id}`}</span>
             </div>
             <div className="text-sm text-muted-foreground">
               Date: <b className="text-slate-800">{fmtDate(cn.credit_note_date)}</b>
@@ -270,7 +253,10 @@ export default function CreditNoteView() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => nav(`/credit-notes/${cn.id}/print`)}>
+          <Button
+            variant="outline"
+            onClick={() => window.open(`/credit-notes/${cn.id}/print`, "_blank", "noopener,noreferrer")}
+          >
             <Printer className="mr-2 h-4 w-4" />
             Print
           </Button>
@@ -297,7 +283,7 @@ export default function CreditNoteView() {
               <DropdownMenuSeparator />
 
               <DropdownMenuItem onClick={() => nav(`/credit-notes/create`)}>
-                <Eye className="mr-2 h-4 w-4" />
+                <Plus className="mr-2 h-4 w-4" />
                 New Credit Note
               </DropdownMenuItem>
 
@@ -320,21 +306,14 @@ export default function CreditNoteView() {
         <Card className="p-4">
           <div className="text-xs text-muted-foreground">Customer</div>
           <div className="font-semibold text-slate-900">{customer?.name || "—"}</div>
-          {customer?.customer_code ? (
-            <div className="text-xs text-slate-500">{customer.customer_code}</div>
-          ) : null}
+          {customer?.customer_code ? <div className="text-xs text-slate-500">{customer.customer_code}</div> : null}
           {customer?.phone ? <div className="text-xs text-slate-500 mt-1">{customer.phone}</div> : null}
         </Card>
 
         <Card className="p-4">
           <div className="text-xs text-muted-foreground">Status</div>
           <div className="mt-1">
-            <span
-              className={
-                "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " +
-                pillClass(st)
-              }
-            >
+            <span className={"inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)}>
               {st}
             </span>
           </div>
@@ -369,28 +348,32 @@ export default function CreditNoteView() {
               <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
                 <th className="px-4 py-3 text-left">#</th>
                 <th className="px-4 py-3 text-left">Item</th>
-                <th className="px-4 py-3 text-left">Description</th>
+                <th className="px-4 py-3 text-left">Code</th>
                 <th className="px-4 py-3 text-right">Qty</th>
                 <th className="px-4 py-3 text-right">Unit Ex</th>
                 <th className="px-4 py-3 text-right">VAT</th>
                 <th className="px-4 py-3 text-right">Total</th>
               </tr>
             </thead>
+
             <tbody className="divide-y">
-              {items.map((it: any, idx: number) => (
-                <tr key={it.id}>
-                  <td className="px-4 py-3">{idx + 1}</td>
-                  <td className="px-4 py-3">
-                    <div className="font-semibold text-slate-900">{it.products?.name || "—"}</div>
-                    <div className="text-xs text-slate-500">{it.products?.item_code || it.products?.sku || ""}</div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{it.description || "—"}</td>
-                  <td className="px-4 py-3 text-right">{n(it.total_qty)}</td>
-                  <td className="px-4 py-3 text-right">{n(it.unit_price_excl_vat).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right">{n(it.unit_vat).toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right font-semibold">{n(it.line_total).toFixed(2)}</td>
-                </tr>
-              ))}
+              {items.map((it: any, idx: number) => {
+                const code = it.products?.item_code || it.products?.sku || "—";
+                return (
+                  <tr key={it.id}>
+                    <td className="px-4 py-3">{idx + 1}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-900">{it.products?.name || "—"}</div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-700">{code}</td>
+                    <td className="px-4 py-3 text-right">{n(it.total_qty)}</td>
+                    <td className="px-4 py-3 text-right">{n(it.unit_price_excl_vat).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right">{n(it.unit_vat).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right font-semibold">{n(it.line_total).toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+
               {items.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-6 text-center text-sm text-muted-foreground">
@@ -403,7 +386,7 @@ export default function CreditNoteView() {
         </div>
       </Card>
 
-      {/* ✅ Audit Trail (simple section, no redesign) */}
+      {/* Audit Trail */}
       <Card className="p-4">
         <div className="flex items-center justify-between">
           <div>
@@ -417,9 +400,7 @@ export default function CreditNoteView() {
 
         <div className="mt-3 overflow-auto">
           {auditQ.isError ? (
-            <div className="text-sm text-red-600">
-              {String((auditQ.error as any)?.message || "Failed to load audit")}
-            </div>
+            <div className="text-sm text-red-600">{String((auditQ.error as any)?.message || "Failed to load audit")}</div>
           ) : null}
 
           {!auditQ.isLoading && (auditQ.data?.length || 0) === 0 ? (

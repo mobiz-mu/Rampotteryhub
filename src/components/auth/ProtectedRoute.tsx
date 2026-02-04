@@ -1,13 +1,7 @@
 // src/components/auth/ProtectedRoute.tsx
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
-
-/**
- * Optional: if you want to protect pages by role/permission later.
- * Your rp_users table: role (text) + permissions (jsonb)
- */
-type AppRole = "admin" | "manager" | "accountant" | "sales" | "viewer";
+import { useAuth, type AppRole } from "@/contexts/AuthContext";
 
 type ProtectedRouteProps = {
   children: React.ReactNode;
@@ -15,21 +9,14 @@ type ProtectedRouteProps = {
   /** If provided, user must have one of these roles */
   allowRoles?: AppRole[];
 
-  /** If provided, user must have permissions[key] === true */
+  /** If provided, user must have this permission key (rp_users.permissions[key] === true) */
   requirePerm?: string;
 };
 
-function hasPerm(profile: any, key?: string) {
-  if (!key) return true;
-  const p = profile?.permissions || {};
-  return !!p?.[key];
-}
-
 export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedRouteProps) {
-  const { session, loading, profile } = useAuth();
+  const { session, loading, profile, role, can } = useAuth();
   const location = useLocation();
 
-  // 1) Global loading (auth + rp_users fetch)
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
@@ -38,16 +25,12 @@ export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedR
     );
   }
 
-  // 2) Not logged in
   if (!session) {
     const from = location.pathname + location.search;
     return <Navigate to="/auth" replace state={{ from }} />;
   }
 
-  /**
-   * 3) Logged in but app profile not loaded / missing in rp_users.
-   *    This is the most common reason your UI shows "User" and admin buttons disappear.
-   */
+  // Logged in but no rp_users record
   if (!profile) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
@@ -55,8 +38,8 @@ export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedR
           <div className="rounded-2xl border bg-background shadow-premium p-5">
             <div className="text-base font-semibold">Access not configured</div>
             <div className="mt-1 text-sm text-muted-foreground">
-              Your login is valid, but you don’t have an ERP user record yet (rp_users).
-              Ask admin to create your access or upgrade your role.
+              Your login is valid, but your ERP access (rp_users) is not set up yet.
+              Please contact the administrator to enable your account.
             </div>
 
             <div className="mt-4 text-xs text-muted-foreground break-all">
@@ -78,8 +61,8 @@ export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedR
     );
   }
 
-  // 4) Inactive user (extra safety; your AuthContext already signs out, but keep it here too)
-  if (profile?.is_active === false) {
+  // Inactive user
+  if (profile.is_active === false) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
         <div className="rounded-2xl border bg-background shadow-premium p-5 max-w-md w-full">
@@ -92,17 +75,14 @@ export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedR
     );
   }
 
-  // 5) Role gate (optional)
-  if (allowRoles && allowRoles.length > 0) {
-    const role = String(profile?.role || "viewer") as AppRole;
-    if (!allowRoles.includes(role)) {
-      return <Navigate to="/dashboard" replace />;
-    }
+  // Role gate
+  if (allowRoles?.length) {
+    if (!allowRoles.includes(role)) return <Navigate to="/dashboard" replace />;
   }
 
-  // 6) Permission gate (optional)
-  if (requirePerm && !hasPerm(profile, requirePerm)) {
-    return <Navigate to="/dashboard" replace />;
+  // Permission gate
+  if (requirePerm) {
+    if (!can(requirePerm)) return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;

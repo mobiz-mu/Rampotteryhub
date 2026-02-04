@@ -55,8 +55,6 @@ export async function listInvoices(params?: {
 
   if (q) {
     const s = q.replaceAll(",", " ");
-    // NOTE: supabase .or() doesn't join across relations reliably,
-    // so keep it on invoice fields; we also do local filter below.
     query = query.or(`invoice_number.ilike.%${s}%,sales_rep.ilike.%${s}%`);
   }
 
@@ -99,10 +97,8 @@ export async function getInvoiceById(id: string | number) {
   const invoiceId = Number(id);
   if (!Number.isFinite(invoiceId)) throw new Error("Invalid invoice id");
 
-  // invoice
   const inv = await getInvoice(invoiceId);
 
-  // items with products
   const { data: items, error: itemsErr } = await supabase
     .from("invoice_items")
     .select(
@@ -120,7 +116,6 @@ export async function getInvoiceById(id: string | number) {
   const mappedItems = (items || []).map((r: any) => ({
     ...r,
     product: r.products ?? null,
-    // convenience for UI duplicate:
     item_code: r?.products?.item_code || r?.products?.sku || "",
   }));
 
@@ -138,11 +133,17 @@ export async function updateInvoiceHeader(id: number, patch: Partial<Invoice>) {
     .from("invoices")
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq("id", id)
-    .select("*")
-    .single();
+    .select("*"); // ✅ do NOT use .single()
 
   if (error) throw error;
-  return data as Invoice;
+
+  const row = (data || [])[0];
+  if (!row) {
+    // ✅ real cause: RLS or trigger blocked update / returning row
+    throw new Error("Invoice update blocked (RLS policy or trigger). No row returned from UPDATE.");
+  }
+
+  return row as Invoice;
 }
 
 /* =========================
@@ -179,7 +180,6 @@ export async function createDraftInvoice(payload: {
     sales_rep_phone: payload.sales_rep_phone ?? null,
     purchase_order_no: payload.purchase_order_no ?? null,
 
-    // totals start empty
     subtotal: 0,
     vat_amount: 0,
     total_amount: 0,
@@ -192,13 +192,15 @@ export async function createDraftInvoice(payload: {
     balance_due: 0,
   };
 
-  const { data, error } = await supabase
-    .from("invoices")
-    .insert(insertRow)
-    .select("*")
-    .single();
+  const { data, error } = await supabase.from("invoices").insert(insertRow).select("*").maybeSingle();
 
   if (error) throw error;
+
+  if (!data) {
+    // ✅ INSERT blocked by RLS or trigger, or no returning row
+    throw new Error("Invoice creation blocked (RLS policy or trigger). No row returned from INSERT.");
+  }
+
   return data as Invoice;
 }
 
@@ -207,7 +209,6 @@ export async function createDraftInvoice(payload: {
    (InvoiceCreate.tsx uses camelCase payload)
 ========================= */
 export async function createInvoice(payload: any) {
-  // InvoiceCreate.tsx sends camelCase keys
   const inv = await createDraftInvoice({
     customer_id: Number(payload.customerId),
     invoice_date: String(payload.invoiceDate),
@@ -228,7 +229,6 @@ export async function createInvoice(payload: any) {
   const items = (payload.items || []) as any[];
   if (!items.length) return inv;
 
-  // Insert invoice_items
   const insertRows = items.map((it) => ({
     invoice_id: inv.id,
     product_id: it.product_id,
@@ -239,7 +239,7 @@ export async function createInvoice(payload: any) {
     total_qty: it.total_qty ?? 0,
 
     unit_price_excl_vat: it.unit_price_excl_vat ?? 0,
-    vat_rate: it.vat_rate ?? inv.vat_percent ?? 15,
+    vat_rate: it.vat_rate ?? (inv as any).vat_percent ?? 15,
     unit_vat: it.unit_vat ?? 0,
     unit_price_incl_vat: it.unit_price_incl_vat ?? 0,
     line_total: it.line_total ?? 0,
@@ -250,9 +250,6 @@ export async function createInvoice(payload: any) {
   const { error: itemsErr } = await supabase.from("invoice_items").insert(insertRows);
   if (itemsErr) throw itemsErr;
 
-  // IMPORTANT for Option A:
-  // After create, keep totals as BASE (no discount applied yet),
-  // user can click "Apply Discount" later in InvoiceView.
   const fresh = await listInvoiceItemsForTotals(inv.id);
   const updated = await recalcAndSaveBaseTotalsNoDiscount(inv.id, inv, fresh);
 
@@ -274,24 +271,18 @@ async function listInvoiceItemsForTotals(invoiceId: number) {
 
 /* =========================
    OPTION A — totals computed with MANUAL invoice discount
-   - Items are NOT discounted
-   - discount_percent applied at invoice level
-   - VAT computed AFTER discount per line vat_rate
 ========================= */
 export function computeInvoiceTotalsOptionA(invoice: Invoice, items: InvoiceItem[]) {
   const list = items || [];
   const dp = clampPct((invoice as any).discount_percent ?? 0);
 
-  // base subtotal (before discount)
   const baseSubtotalEx = round2(
     list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_price_excl_vat), 0)
   );
 
-  // discount on excl VAT
   const discountAmount = dp > 0 ? round2((baseSubtotalEx * dp) / 100) : 0;
   const subtotalAfterDiscount = round2(baseSubtotalEx - discountAmount);
 
-  // VAT AFTER discount per line vat_rate
   const vatAmount = round2(
     list.reduce((sum, it: any) => {
       const qty = n2(it.total_qty);
@@ -312,7 +303,7 @@ export function computeInvoiceTotalsOptionA(invoice: Invoice, items: InvoiceItem
   const paid = n2((invoice as any).amount_paid);
 
   const grossTotal = round2(totalAmount + prev);
-  const balance = round2(grossTotal - paid); // allow negative
+  const balance = round2(grossTotal - paid);
 
   return {
     baseSubtotalEx,
@@ -326,15 +317,10 @@ export function computeInvoiceTotalsOptionA(invoice: Invoice, items: InvoiceItem
   };
 }
 
-/**
- * Applies the currently saved invoice.discount_percent.
- * In Option A: call this ONLY when user clicks "Apply Discount".
- */
 export async function recalcAndSaveInvoiceTotals(invoiceId: number, invoice: Invoice, items: InvoiceItem[]) {
   const t = computeInvoiceTotalsOptionA(invoice, items);
 
   const patch: Partial<Invoice> = {
-    // SUBTOTAL shown on print = after discount
     subtotal: t.subtotalAfterDiscount,
     vat_amount: round2(t.vatAmount),
     total_amount: round2(t.totalAmount),
@@ -352,11 +338,6 @@ export async function recalcAndSaveInvoiceTotals(invoiceId: number, invoice: Inv
   return updateInvoiceHeader(invoiceId, patch);
 }
 
-/**
- * Apply Discount helper (use in UI button):
- * - saves discount_percent
- * - recalculates totals accordingly
- */
 export async function applyInvoiceDiscount(params: {
   invoiceId: number;
   discount_percent: number;
@@ -372,11 +353,6 @@ export async function applyInvoiceDiscount(params: {
   return recalcAndSaveInvoiceTotals(invoiceId, updated as any, items.length ? items : []);
 }
 
-/**
- * Base totals NO discount:
- * Use this after add/remove items so totals stay consistent,
- * then user can click "Apply Discount" again.
- */
 export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoice: Invoice, items: InvoiceItem[]) {
   const list = items || [];
 
@@ -384,9 +360,7 @@ export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoi
     list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_price_excl_vat), 0)
   );
 
-  const vatAmount = round2(
-    list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_vat), 0)
-  );
+  const vatAmount = round2(list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_vat), 0));
 
   const totalAmount = round2(subtotalEx + vatAmount);
 
@@ -404,7 +378,6 @@ export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoi
     total_excl_vat: subtotalEx,
     total_incl_vat: totalAmount,
 
-    // keep discount fields as-is (manual flow)
     gross_total: grossTotal,
     balance_remaining: balance,
     balance_due: balance,
@@ -416,32 +389,28 @@ export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoi
 /* =========================
    Payments / status (used by Invoices.tsx)
 ========================= */
-
 export async function setInvoicePayment(invoiceId: number, amount_paid: number) {
   const inv = await getInvoice(invoiceId);
 
-  const paid = n2(amount_paid);
-  const gross = n2((inv as any).gross_total ?? (inv as any).total_amount);
+  const paid = round2(n2(amount_paid));
+  const gross = round2(n2((inv as any).gross_total ?? (inv as any).total_amount));
 
-  // status logic
-  let status: any = inv.status;
-  if (paid <= 0) status = "ISSUED";
-  else if (paid >= gross) status = "PAID";
+  let status: InvoiceStatus = "ISSUED";
+  const eps = 0.00001;
+
+  if (paid <= eps) status = "ISSUED";
+  else if (paid + eps >= gross) status = "PAID";
   else status = "PARTIALLY_PAID";
 
-  const updated = await updateInvoiceHeader(invoiceId, {
+  const bal = round2(gross - paid);
+
+  const final = await updateInvoiceHeader(invoiceId, {
     amount_paid: paid,
     status,
-  } as any);
-
-  // update balance fields based on stored gross_total
-  const bal = round2(gross - paid);
-  const final = await updateInvoiceHeader(invoiceId, {
     balance_remaining: bal,
     balance_due: bal,
   } as any);
 
-  // include customer join for WhatsApp usage
   const { data: joined } = await supabase
     .from("invoices")
     .select("*, customers:customer_id ( id,name,phone,whatsapp )")
@@ -451,7 +420,6 @@ export async function setInvoicePayment(invoiceId: number, amount_paid: number) 
   return (joined || final) as any;
 }
 
-// ✅ Backward-compatible: accepts markInvoicePaid(123) OR markInvoicePaid({ invoiceId: 123 })
 export async function markInvoicePaid(arg: any) {
   const invoiceId = typeof arg === "object" ? Number(arg?.invoiceId) : Number(arg);
   if (!Number.isFinite(invoiceId)) throw new Error("Invalid invoice id");
@@ -467,7 +435,6 @@ export async function markInvoicePaid(arg: any) {
   } as any);
 }
 
-// ✅ Backward-compatible: voidInvoice(123) OR voidInvoice({ invoiceId: 123 })
 export async function voidInvoice(arg: any) {
   const invoiceId = typeof arg === "object" ? Number(arg?.invoiceId) : Number(arg);
   if (!Number.isFinite(invoiceId)) throw new Error("Invalid invoice id");
@@ -477,13 +444,9 @@ export async function voidInvoice(arg: any) {
 
 /* =========================
    PDF helper (simple)
-   InvoiceCreate imports getInvoicePdf
 ========================= */
 export async function getInvoicePdf(invoiceId: number | string) {
-  // You can later replace with real generated PDF URL.
   const id = Number(invoiceId);
   if (!Number.isFinite(id)) throw new Error("Invalid invoice id");
   return `/invoices/${id}/print`;
 }
-
-

@@ -172,4 +172,31 @@
 }
 
 
+/* =========================
+   Live status pulse
+========================= */
+@keyframes livePulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+}
+
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  background: rgba(34, 197, 94, 0.35); /* emerald-500 */
+  animation: livePulse 2s ease-in-out infinite;
+}
+
 
