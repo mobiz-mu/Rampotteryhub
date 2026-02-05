@@ -90,7 +90,7 @@ export default function App() {
                 <Route path="invoices" element={<Invoices />} />
                 <Route path="invoices/create" element={<InvoiceCreate />} />
                 <Route path="invoices/:id" element={<InvoiceView />} />
-                <Route path="invoices/:id/print" element={<InvoicePrint />} />
+               
 
                 {/* Credit Notes */}
                 <Route path="credit-notes" element={<CreditNotes />} />
