@@ -1,0 +1,1055 @@
+/* src/styles/InvoiceCreate.css
+   Ram Pottery Hub — Premium Red Theme (Clean Single File)
+   Notes:
+   - Unified tokens (no duplicates)
+   - Keeps your existing classnames working
+   - Includes: 2-row top section, light red borders, premium inputs, visible search buttons,
+     one-row QTY layout, small animated dark-red X, dark-red totals text & figures, print rules
+*/
+
+/* =========================
+   Theme Tokens
+========================= */
+:root{
+  --inv-ink:#0b0b0f;
+  --inv-muted:rgba(11,11,15,.68);
+
+  --inv-card:#ffffff;
+  --inv-bg:#f6f7fb;
+
+  --inv-hair:rgba(15,23,42,.12);
+  --inv-shadow:0 18px 60px rgba(2,6,23,.10);
+
+  /* Premium reds */
+  --inv-red:#7a0f14;                 /* deep maroon */
+  --inv-red2:#5f0b0f;                /* darker */
+  --inv-red-soft:rgba(122,15,20,.14);/* light red border */
+  --inv-red-soft2:rgba(122,15,20,.10);
+  --inv-red-ring:rgba(122,15,20,.12);
+}
+
+/* =========================
+   Page + Layout
+========================= */
+.inv-page{
+  min-height:100vh;
+  background:var(--inv-bg);
+  color:var(--inv-ink);
+  padding:18px 16px 46px;
+}
+
+.inv-screen{
+  max-width:1320px;
+  margin:0 auto;
+  scroll-behavior:smooth;
+}
+
+.inv-actions{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:14px;
+}
+
+.inv-actions-right{
+  display:flex;
+  gap:10px;
+}
+
+/* =========================
+   Card
+========================= */
+.inv-form-shell--tight{ padding-bottom:24px; }
+
+.inv-form-card{
+  background:var(--inv-card);
+  border:1px solid var(--inv-hair);
+  border-radius:18px;
+  box-shadow:var(--inv-shadow);
+  overflow:hidden;
+}
+
+.inv-form-head{
+  padding:16px 18px;
+  border-bottom:1px solid rgba(15,23,42,.08);
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+}
+
+.inv-form-title{
+  font-size:18px;
+  font-weight:800;
+  letter-spacing:-.01em;
+}
+
+.inv-form-sub{
+  margin-top:2px;
+  font-size:12px;
+  color:var(--inv-muted);
+}
+
+.inv-form-meta{
+  display:grid;
+  gap:6px;
+  text-align:right;
+}
+
+.inv-meta-row{
+  display:flex;
+  gap:10px;
+  justify-content:flex-end;
+  font-size:12px;
+}
+
+.inv-meta-k{ color:var(--inv-muted); }
+.inv-meta-v{ font-weight:700; }
+
+/* =========================
+   2 Rows Section (Straight + Red Border)
+========================= */
+.inv-form-2rows{
+  padding:14px 16px 6px;
+  display:grid;
+  gap:12px;
+}
+
+.inv-form-row{
+  display:grid;
+  gap:12px;
+  align-items:start;
+}
+
+/* ROW 1 (your TSX now has 4 blocks: PrintName, Customer, Date, PO) */
+.inv-form-row--top{
+  grid-template-columns: 520px 420px 210px 260px;
+}
+
+.inv-printblock-inner{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.inv-form-row--bottom{
+  grid-template-columns:1.25fr .65fr .65fr .7fr .7fr .75fr;
+}
+
+.inv-row-red{
+  border:1px solid var(--inv-red-soft);
+  background:linear-gradient(180deg, rgba(255,255,255,1), rgba(255,255,255,1));
+  border-radius:16px;
+  padding:12px;
+}
+
+/* =========================
+   Fields + Inputs
+========================= */
+.inv-field label{
+  display:block;
+  font-size:13px;
+  font-weight:700;
+  margin-bottom:8px;
+}
+
+.inv-help{
+  margin-top:8px;
+  font-size:12px;
+  color:var(--inv-muted);
+  line-height:1.25rem;
+}
+
+.inv-muted{ color:var(--inv-muted); }
+
+.inv-input{
+  width:100%;
+  border:1px solid rgba(15,23,42,.10);
+  border-radius:14px;
+  padding:10px 12px;
+  background:#fbfcff;
+  outline:none;
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+
+.inv-input:focus{
+  border-color:rgba(122,15,20,.38);
+  box-shadow:0 0 0 4px var(--inv-red-ring);
+  transform:translateY(-1px);
+}
+
+.inv-input--sm{ padding:9px 10px; }
+.inv-input--right{ text-align:right; }
+.inv-center{ text-align:center; }
+
+/* =========================
+   Customer Row + Search Button
+========================= */
+.inv-customerRow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.inv-input--customerSelect{
+  width:100%;
+  min-width:0;
+}
+
+/* Premium icon button (search) */
+.inv-iconBtn{
+  width:44px;
+  height:44px;
+  border-radius:14px;
+  border:1px solid rgba(15,23,42,.10);
+  background:#fff;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+  box-shadow:0 8px 20px rgba(2,6,23,.06);
+}
+
+.inv-iconBtn:hover{
+  transform:translateY(-1px);
+  border-color:rgba(122,15,20,.28);
+  box-shadow:0 14px 30px rgba(122,15,20,.12);
+}
+
+/* Table variant icon */
+.inv-iconBtn--table{
+  width:40px;
+  height:40px;
+  border-radius:14px;
+}
+
+/* =========================
+   Print Name Radio
+========================= */
+.inv-radioRow{
+  display:flex;
+  gap:16px;
+  flex-wrap:wrap;
+}
+
+.inv-radioOpt{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  font-size:13px;
+  color:rgba(11,11,15,.82);
+}
+
+.inv-radioOpt input{ transform:translateY(1px); }
+
+/* =========================
+   Sales Rep Dropdown + Chips
+========================= */
+.inv-rep{ position:relative; }
+
+.inv-rep-btn{
+  width:100%;
+  border-radius:14px;
+  border:1px solid rgba(15,23,42,.10);
+  background:#fbfcff;
+  padding:10px 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  cursor:pointer;
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+
+.inv-rep-btn:hover{
+  transform:translateY(-1px);
+  border-color:rgba(122,15,20,.24);
+  box-shadow:0 14px 30px rgba(2,6,23,.08);
+}
+
+.inv-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  background:rgba(122,15,20,.07);
+  border:1px solid rgba(122,15,20,.14);
+  font-size:12px;
+  font-weight:700;
+}
+
+.inv-chip-x{
+  width:18px;
+  height:18px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  background:rgba(122,15,20,.12);
+  cursor:pointer;
+}
+
+.inv-chip-x:hover{ background:rgba(122,15,20,.18); }
+
+.inv-rep-placeholder,
+.inv-rep-caret{ color:rgba(11,11,15,.55); }
+
+.inv-rep-pop{
+  position:absolute;
+  top:calc(100% + 8px);
+  left:0;
+  right:0;
+  z-index:30;
+  background:#fff;
+  border:1px solid rgba(15,23,42,.10);
+  border-radius:16px;
+  box-shadow:0 28px 70px rgba(2,6,23,.14);
+  overflow:hidden;
+}
+
+.inv-rep-item{
+  width:100%;
+  padding:10px 12px;
+  background:#fff;
+  border:0;
+  display:grid;
+  grid-template-columns:1fr auto auto;
+  gap:10px;
+  text-align:left;
+  cursor:pointer;
+}
+
+.inv-rep-item:hover{ background:rgba(122,15,20,.05); }
+.inv-rep-item.is-active{ background:rgba(122,15,20,.08); }
+
+.inv-rep-name{ font-weight:800; }
+.inv-rep-phone{ color:rgba(11,11,15,.65); font-weight:700; }
+.inv-rep-check{ color:var(--inv-red); font-weight:900; }
+
+.inv-rep-hint{
+  padding:10px 12px;
+  border-top:1px solid rgba(15,23,42,.08);
+  font-size:12px;
+  color:rgba(11,11,15,.62);
+}
+
+/* =========================
+   Items Section
+========================= */
+.inv-items{ padding:14px 16px 18px; }
+
+.inv-items-head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+
+.inv-items-title{ font-size:16px; font-weight:900; }
+.inv-items-sub{ margin-top:2px; font-size:12px; color:var(--inv-muted); }
+
+.inv-table-wrap{
+  overflow-x:auto;
+  border-radius:16px;
+  border:1px solid rgba(15,23,42,.08);
+  background:#fff;
+}
+
+.inv-table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  min-width:1100px;
+
+  /* Make table respect col widths (prevents 🔍 collapsing) */
+  table-layout:fixed;
+}
+
+.inv-th{
+  background:#fbfcff;
+  font-size:12px;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  color:rgba(11,11,15,.60);
+  padding:12px 10px;
+  border-bottom:1px solid rgba(15,23,42,.08);
+  position:sticky;
+  top:0;
+  z-index:1;
+}
+
+.inv-th-center{ text-align:center; }
+.inv-th-right{ text-align:right; }
+
+.inv-td{
+  padding:10px;
+  border-bottom:1px solid rgba(15,23,42,.06);
+  vertical-align:middle;
+}
+
+/* Light red separators for rows */
+.inv-tr-red td{
+  border-bottom:1px solid var(--inv-red-soft2);
+}
+
+.inv-table tbody tr:hover{
+  background:rgba(122,15,20,.03);
+}
+
+/* Product dropdown shrink safely */
+.inv-input--prod{
+  width:100%;
+  min-width:0;
+}
+
+/* Keep 🔍 perfectly centered + visible */
+.inv-prodSearchBtn{
+  width:40px;
+  height:40px;
+  border-radius:14px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:0;
+  line-height:1;
+}
+
+/* QTY cell one row */
+.inv-boxcell{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  justify-content:center;
+}
+
+.inv-boxcell--oneRow{ flex-wrap:nowrap; }
+
+.inv-input--uom{ width:90px; }
+.inv-input--qty{ width:110px; }
+
+.inv-input--total{ font-weight:900; }
+
+/* =========================
+   Remove Row Button (Small Dark-Red Animated X)
+========================= */
+.inv-xmini{
+  width:26px;
+  height:26px;
+  border-radius:999px;
+  border:1px solid rgba(122,15,20,.30);
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(255,255,255,.35), rgba(255,255,255,0) 45%),
+    linear-gradient(180deg, rgba(122,15,20,.12), rgba(122,15,20,.06));
+  color:var(--inv-red2);
+  font-weight:900;
+  line-height:1;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  position:relative;
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+  box-shadow:0 8px 18px rgba(0,0,0,.10);
+  user-select:none;
+}
+
+.inv-xmini--red{ color:var(--inv-red2); }
+
+.inv-xmini::after{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  border-radius:999px;
+  pointer-events:none;
+  opacity:0;
+  transform:scale(.92);
+  transition:opacity .22s ease, transform .22s ease;
+  box-shadow:0 0 0 6px rgba(122,15,20,.14);
+}
+
+.inv-xmini:hover{
+  transform:translateY(-1px) scale(1.05);
+  border-color:rgba(122,15,20,.52);
+  box-shadow:0 14px 26px rgba(0,0,0,.14);
+}
+
+.inv-xmini:hover::after{
+  opacity:1;
+  transform:scale(1);
+}
+
+.inv-xmini:active{
+  transform:translateY(0) scale(.98);
+  box-shadow:0 10px 18px rgba(0,0,0,.12);
+}
+
+@media (prefers-reduced-motion:no-preference){
+  .inv-xmini:hover{ animation:invXminiPulse .8s ease-in-out infinite; }
+  @keyframes invXminiPulse{
+    0%,100%{ filter:saturate(1); }
+    50%{ filter:saturate(1.18); }
+  }
+}
+
+/* =========================
+   Bottom Row + Add Row Button
+========================= */
+.inv-bottomRow{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:12px;
+  align-items:stretch;
+  margin-top:12px;
+}
+
+.inv-bottomLeft{
+  border:1px solid var(--inv-red-soft);
+  border-radius:16px;
+  background:#fff;
+  padding:12px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+/* Your TSX uses .inv-addrows */
+.inv-addrows{
+  width:100%;
+  max-width:360px;
+  height:44px;
+  border-radius:14px;
+  border:1px solid rgba(122,15,20,.22);
+  background:rgba(122,15,20,.08);
+  color:var(--inv-red);
+  font-weight:900;
+  cursor:pointer;
+  transition:transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.inv-addrows:hover{
+  transform:translateY(-1px);
+  background:rgba(122,15,20,.12);
+  border-color:rgba(122,15,20,.30);
+  box-shadow:0 16px 30px rgba(2,6,23,.08);
+}
+
+.inv-addrows-help{
+  font-size:12px;
+  color:rgba(11,11,15,.62);
+}
+
+/* Back-compat if you had old classnames */
+.inv-addRowsBtn{ display:none; }
+.inv-bottomHint{ display:none; }
+
+/* =========================
+   Totals Bar (Dark Red Text + Figures)
+========================= */
+.inv-totalsbar{
+  border-radius:16px;
+  overflow:hidden;
+  display:grid;
+  grid-auto-flow:column;
+  grid-auto-columns:1fr;
+}
+
+.inv-totalsbar--red{
+  border:1px solid rgba(122,15,20,.28);
+  background:linear-gradient(180deg, rgba(122,15,20,.08), rgba(122,15,20,.04));
+}
+
+.inv-totalsbar__cell{
+  padding:12px 14px;
+  display:grid;
+  gap:4px;
+  align-content:center;
+  border-left:1px solid rgba(122,15,20,.14);
+}
+
+.inv-totalsbar__cell:first-child{ border-left:0; }
+
+.inv-totalsbar__cell .k{
+  font-size:11px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:rgba(107,12,17,.78); /* dark red label */
+}
+
+.inv-totalsbar__cell .v{
+  font-size:16px;
+  font-weight:900;
+  color:rgba(95,11,15,.98);  /* dark red value */
+}
+
+.inv-totalsbar__cell--balance .k{ color:rgba(107,12,17,.92); }
+.inv-totalsbar__cell--balance .v{
+  font-size:18px;
+  color:var(--inv-red2);
+}
+
+/* =========================
+   Modals
+========================= */
+.inv-modal-backdrop{
+  position:fixed;
+  inset:0;
+  background:rgba(2,6,23,.45);
+  display:grid;
+  place-items:center;
+  padding:16px;
+  z-index:80;
+}
+
+.inv-modal{
+  width:min(640px, 100%);
+  background:#fff;
+  border-radius:18px;
+  border:1px solid rgba(15,23,42,.12);
+  box-shadow:0 40px 100px rgba(2,6,23,.25);
+  overflow:hidden;
+}
+
+.inv-modal--sm{ width:min(560px, 100%); }
+
+.inv-modal-head{
+  padding:12px 14px;
+  border-bottom:1px solid rgba(15,23,42,.08);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
+.inv-modal-title{ font-weight:900; }
+
+.inv-modal-x{
+  width:34px;
+  height:34px;
+  border-radius:12px;
+  border:1px solid rgba(15,23,42,.12);
+  background:#fff;
+  cursor:pointer;
+  transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+
+.inv-modal-x:hover{
+  transform:translateY(-1px);
+  border-color:rgba(122,15,20,.24);
+  box-shadow:0 12px 26px rgba(122,15,20,.12);
+}
+
+.inv-modal-body{ padding:14px; }
+
+.inv-modal-list{
+  margin-top:10px;
+  max-height:380px;
+  overflow:auto;
+  border-radius:14px;
+  border:1px solid rgba(15,23,42,.08);
+}
+
+.inv-modal-item{
+  width:100%;
+  text-align:left;
+  padding:10px 12px;
+  border:0;
+  background:#fff;
+  cursor:pointer;
+  border-bottom:1px solid rgba(15,23,42,.06);
+}
+
+.inv-modal-item:hover{ background:rgba(122,15,20,.05); }
+
+.inv-modal-item-title{ font-size:13px; }
+.inv-modal-item-sub{
+  font-size:12px;
+  color:rgba(11,11,15,.62);
+  margin-top:2px;
+}
+
+/* =========================
+   Print
+========================= */
+.inv-printonly{ display:none; }
+
+@media print{
+  .inv-screen,
+  .inv-actions,
+  .inv-form-shell,
+  .inv-form-card{
+    display:none !important;
+  }
+  .inv-printonly{
+    display:block !important;
+  }
+}
+
+
+/* =========================================
+   FIXES: show 🔍 column, tighten QTY, remove H-scroll
+   (paste at END)
+========================================= */
+
+/* 1) Remove horizontal scrollbar (you said you don't need it) */
+.inv-table-wrap{
+  overflow-x: hidden !important;
+}
+
+/* Let the table fit the card (no forced overflow) */
+.inv-table{
+  min-width: 0 !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+/* Prevent cell content from blowing widths */
+.inv-th,
+.inv-td{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 2) Force the 🔍 column to have real width + always visible */
+.inv-table--invoiceCols colgroup col:nth-child(3){
+  width: 56px !important; /* 🔍 column */
+}
+
+.inv-table--invoiceCols th:nth-child(3),
+.inv-table--invoiceCols td:nth-child(3){
+  width: 56px !important;
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+  text-align: center !important;
+  overflow: visible !important;
+}
+
+/* Make the button pop (not “washed” into background) */
+.inv-prodSearchBtn{
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 14px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+  font-size: 16px !important;
+  z-index: 2;
+}
+
+/* 3) Make QTY box smaller so everything fits nicely */
+.inv-boxcell{
+  gap: 8px !important;
+}
+
+.inv-input--uom{
+  width: 78px !important;
+}
+
+.inv-input--qty{
+  width: 84px !important;
+}
+
+/* Slightly tighter cell padding in the QTY area */
+.inv-table--invoiceCols td:nth-child(4){
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+
+/* =========================================
+   TIGHTER ROW + FULL "TOTAL QTY" + CLEAN DELETE X
+   (paste at END)
+========================================= */
+
+/* Reduce empty spaces (cell padding) */
+.inv-th{ padding: 10px 8px !important; }
+.inv-td{ padding: 8px 8px !important; }
+
+/* Make inputs a bit tighter so the row feels compact */
+.inv-input{
+  padding: 9px 10px !important;
+  border-radius: 13px !important;
+}
+
+/* Tighten QTY cell spacing */
+.inv-boxcell{
+  gap: 6px !important;
+}
+
+/* Slightly smaller select + qty widths (gives room back) */
+.inv-input--uom{ width: 74px !important; }
+.inv-input--qty{ width: 78px !important; }
+
+/* Ensure "TOTAL QTY" header shows full text (no truncation) */
+.inv-table--invoiceCols th:nth-child(6){
+  white-space: normal !important;     /* allow wrap */
+  overflow: visible !important;
+  text-overflow: clip !important;
+  line-height: 1.05 !important;
+}
+
+/* Give TOTAL QTY column a bit more width */
+.inv-table--invoiceCols colgroup col:nth-child(6){
+  width: 92px !important;
+}
+.inv-table--invoiceCols th:nth-child(6),
+.inv-table--invoiceCols td:nth-child(6){
+  width: 92px !important;
+}
+
+/* Make the delete X look premium + centered in its cell */
+.inv-table--invoiceCols colgroup col:nth-child(11){
+  width: 56px !important;
+}
+.inv-table--invoiceCols th:nth-child(11),
+.inv-table--invoiceCols td:nth-child(11){
+  width: 56px !important;
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+  text-align: center !important;
+  overflow: visible !important;
+}
+
+/* Your X button */
+.inv-xmini{
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 14px !important;     /* matches your rounded inputs */
+  font-size: 18px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: 0 10px 22px rgba(0,0,0,.10) !important;
+  border-color: rgba(122,15,20,.30) !important;
+  background: rgba(122,15,20,.08) !important;
+}
+
+.inv-xmini:hover{
+  background: rgba(122,15,20,.14) !important;
+  box-shadow: 0 14px 28px rgba(0,0,0,.14) !important;
+}
+
+
+/* =========================================
+   SMALLER DELETE X → GIVE SPACE TO TOTAL
+========================================= */
+
+/* Shrink the delete column */
+.inv-table--invoiceCols colgroup col:nth-child(11){
+  width: 42px !important;
+}
+
+.inv-table--invoiceCols th:nth-child(11),
+.inv-table--invoiceCols td:nth-child(11){
+  width: 42px !important;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+  text-align: center !important;
+}
+
+/* Make TOTAL column slightly wider */
+.inv-table--invoiceCols colgroup col:nth-child(10){
+  width: 132px !important;
+}
+
+.inv-table--invoiceCols th:nth-child(10),
+.inv-table--invoiceCols td:nth-child(10){
+  width: 132px !important;
+}
+
+/* Compact, premium delete button */
+.inv-xmini{
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 10px !important;
+  font-size: 14px !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+  padding: 0 !important;
+
+  box-shadow: 0 6px 14px rgba(0,0,0,.10) !important;
+  background: rgba(122,15,20,.08) !important;
+  border-color: rgba(122,15,20,.28) !important;
+}
+
+/* Subtle hover – not bulky */
+.inv-xmini:hover{
+  background: rgba(122,15,20,.14) !important;
+  box-shadow: 0 10px 18px rgba(0,0,0,.14) !important;
+  transform: translateY(-1px);
+}
+
+
+/* Keep TOTAL wide and DELETE tiny */
+.inv-td-total { padding-right: 6px; }
+.inv-td-del { padding-left: 6px; padding-right: 6px; width: 44px; }
+
+/* Smaller delete button so TOTAL fits perfectly */
+.inv-td-del .inv-xmini{
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  box-shadow: 0 6px 14px rgba(0,0,0,.10);
+}
+
+
+/* =========================================================
+   PATCH — Row 1 alignment + Client Name input premium red
+   (put at VERY BOTTOM of InvoiceCreate.css)
+========================================================= */
+
+/* Keep ROW 1 in a single line (no wrapping of PO field) */
+.inv-form-row--top{
+  grid-template-columns: 1.05fr 1.05fr 1.35fr .95fr !important; /* PrintName | Customer | Date | PO */
+  align-items:start;
+}
+
+/* Ensure the PO field doesn't drop to next line */
+.inv-form-row--top .inv-field:last-child{
+  min-width: 240px;
+}
+
+/* Make Client Name input wider + visible placeholder text */
+.inv-field--printblock .inv-input{
+  width: 100%;
+  min-width: 360px;          /* makes it larger so placeholder shows fully */
+}
+
+/* Premium red border for the Client Name input (only) */
+.inv-field--printblock .inv-printblock-inner > .inv-input{
+  border: 1px solid rgba(122,15,20,.28) !important;
+  box-shadow: 0 10px 26px rgba(122,15,20,.08);
+  background: #fff;
+}
+
+/* Stronger focus ring in your theme */
+.inv-field--printblock .inv-printblock-inner > .inv-input:focus{
+  border-color: rgba(122,15,20,.55) !important;
+  box-shadow: 0 0 0 4px rgba(122,15,20,.12), 0 18px 40px rgba(122,15,20,.10) !important;
+}
+
+/* Slightly reduce gaps so PO fits nicely */
+.inv-form-row--top{
+  column-gap: 10px !important;
+}
+
+/* =========================================================
+   PREMIUM SALES REP DROPDOWN — RED LUXURY
+========================================================= */
+
+/* Dropdown container */
+.inv-rep-pop{
+  background: linear-gradient(180deg, #ffffff 0%, #faf7f7 100%);
+  border: 1px solid rgba(122,15,20,.28);
+  border-radius: 14px;
+  box-shadow:
+    0 20px 45px rgba(122,15,20,.18),
+    0 6px 14px rgba(0,0,0,.06);
+  padding: 6px;
+  animation: repFadeSlide .18s ease-out both;
+  transform-origin: top;
+}
+
+/* Opening animation */
+@keyframes repFadeSlide{
+  from{
+    opacity: 0;
+    transform: translateY(-6px) scale(.985);
+  }
+  to{
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Rep item */
+.inv-rep-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+  color: #1c1c1c;
+  transition: all .16s ease;
+  position: relative;
+}
+
+/* Name + phone styling */
+.inv-rep-name{
+  font-weight: 700;
+}
+
+.inv-rep-phone{
+  color:#6b6f76;
+  font-weight:600;
+  letter-spacing:.3px;
+}
+
+/* Hover state */
+.inv-rep-item:hover{
+  background: linear-gradient(
+    90deg,
+    rgba(122,15,20,.08),
+    rgba(122,15,20,.04)
+  );
+  transform: translateX(2px);
+}
+
+/* Active / selected rep */
+.inv-rep-item.is-active{
+  background: linear-gradient(
+    90deg,
+    rgba(122,15,20,.16),
+    rgba(122,15,20,.08)
+  );
+  box-shadow: inset 3px 0 0 #7a0f14;
+}
+
+/* Checkmark */
+.inv-rep-check{
+  color:#7a0f14;
+  font-size:15px;
+  font-weight:800;
+}
+
+/* Hint text */
+.inv-rep-hint{
+  margin-top:6px;
+  padding:10px 12px;
+  font-size:12.5px;
+  color:#7a0f14;
+  opacity:.75;
+  text-align:center;
+  border-top:1px dashed rgba(122,15,20,.25);
+}
+
+/* Trigger button */
+.inv-rep-btn{
+  border:1px solid rgba(122,15,20,.28);
+  border-radius: 14px;
+  background:#fff;
+  transition: all .2s ease;
+}
+
+/* Trigger hover */
+.inv-rep-btn:hover{
+  box-shadow: 0 10px 30px rgba(122,15,20,.15);
+  border-color: rgba(122,15,20,.45);
+}
+
+/* Caret */
+.inv-rep-caret{
+  color:#7a0f14;
+}
+
+
+
+
+

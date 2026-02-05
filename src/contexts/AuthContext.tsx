@@ -55,33 +55,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const user = session?.user ?? null;
 
   // 1) Session bootstrap + auth changes
-  useEffect(() => {
-    let alive = true;
+useEffect(() => {
+  let alive = true;
+  const bootstrapped = { current: false };
 
-    (async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (!alive) return;
-        if (error) console.error("getSession error:", error);
-        setSession(data.session ?? null);
-      } catch (e) {
-        console.error("getSession crash:", e);
-      } finally {
-        if (alive) setSessionLoading(false);
-      }
-    })();
+  (async () => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (!alive) return;
+      if (error) console.error("getSession error:", error);
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-     if (!alive) return;
-     setSession(newSession ?? null);
-     setSessionLoading(false);
+      setSession(data.session ?? null);
+    } catch (e) {
+      console.error("getSession crash:", e);
+    } finally {
+      if (!alive) return;
+      bootstrapped.current = true;
+      setSessionLoading(false);
+    }
+  })();
+
+  const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    if (!alive) return;
+
+    setSession(newSession ?? null);
+
+    // ✅ critical: DO NOT end loading until bootstrap finished
+    if (bootstrapped.current) setSessionLoading(false);
   });
 
-    return () => {
-      alive = false;
-      sub.subscription.unsubscribe();
-    };
-  }, []);
+  return () => {
+    alive = false;
+    sub.subscription.unsubscribe();
+  };
+}, []);
 
   // 2) Load rp_users (authority for access control)
   useEffect(() => {
@@ -163,7 +170,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [isAdmin, permissions]);
 
   // ✅ This is the key fix: prevent ProtectedRoute flicker
-  const loading = sessionLoading || (!!user && profileLoading);
+  const loading = sessionLoading || (session ? profileLoading : false);
+
 
   const value = useMemo<AuthCtx>(
     () => ({

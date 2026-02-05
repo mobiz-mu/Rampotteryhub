@@ -1,8 +1,34 @@
 import React, { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+
+function normalizePhone(input: string) {
+  // keep + and digits only
+  const v = String(input || "").trim().replace(/[^\d+]/g, "");
+  return v;
+}
+
+function isPhoneLikelyValid(phone: string) {
+  // very light validation: must start with + and have at least 8 digits
+  const p = normalizePhone(phone);
+  if (!p.startsWith("+")) return false;
+  const digits = p.replace(/\D/g, "");
+  return digits.length >= 8;
+}
+
+async function safeReadJson(res: Response) {
+  const text = await res.text();
+  try {
+    return { ok: true, json: JSON.parse(text), raw: text };
+  } catch {
+    return { ok: false, json: null as any, raw: text };
+  }
+}
 
 export default function QrApprove() {
   const [sp] = useSearchParams();
+  const nav = useNavigate();
+
   const token = useMemo(() => sp.get("token") || "", [sp]);
 
   const [phone, setPhone] = useState("+230");
@@ -13,17 +39,47 @@ export default function QrApprove() {
   async function approve(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
-    setBusy(true);
 
+    if (!token) {
+      setErr("Missing token. Please re-scan the QR code from your desktop.");
+      return;
+    }
+
+    const p = normalizePhone(phone);
+    if (!isPhoneLikelyValid(p)) {
+      setErr("Please enter a valid phone number (example: +2307788884).");
+      return;
+    }
+
+    setBusy(true);
     try {
       const r = await fetch("/api/qr/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, phone: phone.trim(), username: "admin" }),
+        body: JSON.stringify({
+          token,
+          phone: p,
+          // keep if your API needs it; otherwise remove it
+          username: "admin",
+        }),
       });
 
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || "Failed to approve");
+      const parsed = await safeReadJson(r);
+
+      // If API returned HTML / non-JSON, show helpful error
+      if (!parsed.ok) {
+        throw new Error(
+          `Approve failed (HTTP ${r.status}). Server returned non-JSON response. ` +
+            `This usually means your /api route is not configured in Vite proxy.`
+        );
+      }
+
+      const j = parsed.json;
+
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || `Approve failed (HTTP ${r.status})`);
+      }
+
       setDone(true);
     } catch (e: any) {
       setErr(e?.message || "Failed");
@@ -41,10 +97,20 @@ export default function QrApprove() {
         </div>
 
         {!token ? (
-          <div className="mt-4 text-sm text-destructive">Missing token.</div>
+          <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
+            Missing token. Please re-scan the QR code from your desktop.
+          </div>
         ) : done ? (
-          <div className="mt-5 rounded-xl border border-success/30 bg-success/10 px-3 py-3 text-sm text-success">
+          <div className="mt-5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-3 text-sm text-emerald-700 dark:text-emerald-300">
             Approved ✅ You can return to your desktop.
+            <div className="mt-3 flex gap-2">
+              <Button variant="outline" onClick={() => nav("/dashboard")}>
+                Go to Dashboard
+              </Button>
+              <Button onClick={() => window.close()} className="gradient-primary shadow-glow">
+                Close
+              </Button>
+            </div>
           </div>
         ) : (
           <form onSubmit={approve} className="mt-5 space-y-4">
@@ -56,23 +122,29 @@ export default function QrApprove() {
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="+2307788884"
                 required
+                inputMode="tel"
+                autoComplete="tel"
               />
               <div className="text-xs text-muted-foreground mt-1">Example: +2307788884</div>
             </div>
 
             {err && (
-              <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive whitespace-pre-wrap">
                 {err}
               </div>
             )}
 
-            <button
+            <Button
               disabled={busy}
-              className="w-full rounded-xl px-4 py-2 font-medium text-primary-foreground gradient-primary shadow-glow disabled:opacity-60"
+              className="w-full gradient-primary shadow-glow"
               type="submit"
             >
               {busy ? "Approving..." : "Approve"}
-            </button>
+            </Button>
+
+            <div className="text-xs text-muted-foreground">
+              If this fails with “non-JSON response”, your Vite dev server is not proxying <b>/api</b>.
+            </div>
           </form>
         )}
       </div>
