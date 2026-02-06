@@ -1,196 +1,397 @@
-/* ===========================================
-   InvoiceView — Premium Light CSS Overrides
-   Paste into: src/styles/invoiceview.css
-   Then import in main.tsx:  import "./styles/invoiceview.css";
-   (This fixes the “white text on white cards” look in your screenshot)
-=========================================== */
+/* ===========================
+   Ram Pottery Hub — Invoice View (Luxury Red / Light)
+   Scope: .iv-root.iv-invoice-view only
+=========================== */
 
-/* Attach this to the InvoiceView page root:
-   <div className="iv-root space-y-5"> ... */
-.iv-root{
+.iv-root.iv-invoice-view{
+  /* Luxury Light Palette */
   --iv-bg: #f6f7fb;
-  --iv-card: rgba(255,255,255,.92);
-  --iv-border: rgba(15,23,42,.08);
+  --iv-card: rgba(255,255,255,.86);
+  --iv-card2: rgba(255,255,255,.72);
+  --iv-border: rgba(15, 23, 42, .10);
+  --iv-border2: rgba(15, 23, 42, .07);
+
   --iv-ink: #0b1220;
-  --iv-muted: rgba(11,18,32,.62);
-  --iv-muted2: rgba(11,18,32,.46);
-  --iv-shadow: 0 18px 55px rgba(2,6,23,.10);
-  --iv-shadow2: 0 10px 30px rgba(2,6,23,.08);
-  --iv-radius: 22px;
-  --iv-radius2: 16px;
-  --iv-focus: 0 0 0 4px rgba(185,28,28,.12);
+  --iv-muted: rgba(11,18,32,.64);
+  --iv-muted2: rgba(11,18,32,.48);
 
-  background: transparent;
+  /* Signature Ram Pottery Red */
+  --iv-red: #b91c1c;
+  --iv-red2: rgba(185,28,28,.16);
+  --iv-red3: rgba(185,28,28,.10);
+  --iv-red4: rgba(185,28,28,.06);
+
+  /* Luxury shadows */
+  --iv-shadow: 0 30px 70px rgba(2,6,23,.14);
+  --iv-shadow2: 0 18px 45px rgba(2,6,23,.12);
+  --iv-inset: 0 1px 0 rgba(255,255,255,.8) inset;
+
+  color: var(--iv-ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+  letter-spacing: .1px;
+  max-width: 1250px;
+  margin: 0 auto;
+  padding: 18px 14px 26px;
 }
 
-/* ---------- Fix Tailwind “text-white” used in your component ---------- */
-.iv-root .text-white{ color: var(--iv-ink) !important; }
-.iv-root .text-white\/80,
-.iv-root .text-white\/70,
-.iv-root .text-white\/60,
-.iv-root .text-white\/55,
-.iv-root .text-white\/50,
-.iv-root .text-white\/45{
-  color: var(--iv-muted) !important;
-}
-
-/* Muted utility */
-.iv-root .text-muted-foreground{
-  color: var(--iv-muted) !important;
-}
-
-/* ---------- Premium page backdrop (optional) ---------- */
-.iv-root::before{
+/* ===========================
+   Background: premium, subtle red glow
+=========================== */
+.iv-root.iv-invoice-view::before{
   content:"";
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: -30;
   background:
-    radial-gradient(1000px 420px at 20% -10%, rgba(185,28,28,.10), transparent 55%),
-    radial-gradient(900px 380px at 95% 25%, rgba(15,23,42,.08), transparent 55%),
-    linear-gradient(to bottom, var(--iv-bg), #ffffff 55%, var(--iv-bg));
+    radial-gradient(900px 360px at 50% -10%, rgba(185,28,28,.10), transparent 65%),
+    radial-gradient(520px 520px at 85% 80%, rgba(185,28,28,.08), transparent 62%),
+    radial-gradient(520px 520px at 20% 85%, rgba(15,23,42,.06), transparent 62%),
+    linear-gradient(180deg, #fbfcff 0%, var(--iv-bg) 100%);
 }
 
-/* ---------- Cards (shadcn Card) ---------- */
-.iv-root .shadow-premium{
-  background: var(--iv-card) !important;
-  border: 1px solid var(--iv-border) !important;
-  border-radius: var(--iv-radius) !important;
-  box-shadow: var(--iv-shadow) !important;
+/* soft grain */
+.iv-root.iv-invoice-view::after{
+  content:"";
+  position: fixed;
+  inset: 0;
+  z-index: -29;
+  pointer-events:none;
+  opacity:.06;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
 }
 
-/* Some of your cards use bg-white/[0.04] etc — neutralize */
-.iv-root .bg-white\/\[0\.04\],
-.iv-root .bg-white\/10,
-.iv-root .bg-white\/5,
-.iv-root .bg-black\/10,
-.iv-root .bg-black\/20{
-  background: var(--iv-card) !important;
+/* Selection */
+.iv-root.iv-invoice-view ::selection{ background: rgba(185,28,28,.22); }
+
+/* ===========================
+   Fix: your JSX uses text-white classes
+   Force them to be dark in light theme
+=========================== */
+.iv-root.iv-invoice-view .text-white{ color: var(--iv-ink) !important; }
+.iv-root.iv-invoice-view .text-white\/55,
+.iv-root.iv-invoice-view .text-white\/50,
+.iv-root.iv-invoice-view .text-white\/45{
+  color: var(--iv-muted) !important;
 }
 
-/* Borders like border-white/10 become too strong/odd in light mode */
-.iv-root .border-white\/10,
-.iv-root .divide-white\/10{
+/* headline */
+.iv-root.iv-invoice-view .text-2xl{
+  font-weight: 900;
+  letter-spacing: .2px;
+  color: var(--iv-ink) !important;
+}
+
+/* ===========================
+   Cards (your <Card className="... bg-white/[0.04] border-white/10">)
+   Replace those dark-glass styles with luxury light cards
+=========================== */
+.iv-root.iv-invoice-view .bg-white\/\[0\.04\]{
+  background: linear-gradient(180deg, var(--iv-card) 0%, var(--iv-card2) 100%) !important;
+}
+.iv-root.iv-invoice-view .border-white\/10{
   border-color: var(--iv-border) !important;
 }
-.iv-root .divide-white\/10 > * + *{
-  border-top-color: var(--iv-border) !important;
-}
-
-/* ---------- Inputs (shadcn Input) ---------- */
-.iv-root input,
-.iv-root select,
-.iv-root textarea{
-  background: rgba(255,255,255,.96) !important;
-  border: 1px solid rgba(15,23,42,.10) !important;
-  color: var(--iv-ink) !important;
-  border-radius: 14px !important;
-  height: 44px;
-  box-shadow: 0 1px 0 rgba(255,255,255,.85) inset;
-  transition: box-shadow .18s ease, border-color .18s ease, transform .18s ease;
-}
-.iv-root input::placeholder{
-  color: rgba(11,18,32,.40) !important;
-}
-.iv-root input:focus,
-.iv-root select:focus,
-.iv-root textarea:focus{
-  outline: none !important;
-  border-color: rgba(185,28,28,.28) !important;
-  box-shadow: var(--iv-focus), 0 10px 30px rgba(2,6,23,.08) !important;
-}
-
-/* ---------- Buttons ---------- */
-.iv-root .gradient-primary{
-  background: linear-gradient(135deg, rgba(185,28,28,.92), rgba(185,28,28,.68)) !important;
-  box-shadow: 0 18px 45px rgba(185,28,28,.18) !important;
-  border: 1px solid rgba(185,28,28,.25) !important;
-}
-.iv-root .gradient-primary:hover{
-  transform: translateY(-1px);
-  box-shadow: 0 22px 55px rgba(185,28,28,.22) !important;
-}
-.iv-root button[variant="outline"],
-.iv-root .btn-outline,
-.iv-root .variant-outline{
-  background: rgba(255,255,255,.92) !important;
-  border: 1px solid rgba(15,23,42,.12) !important;
-  box-shadow: 0 10px 30px rgba(2,6,23,.06) !important;
-}
-
-/* Shadcn outline button class (common) */
-.iv-root .border-input{
-  border-color: rgba(15,23,42,.12) !important;
-}
-.iv-root .hover\:bg-accent:hover{
-  background: rgba(2,6,23,.04) !important;
-}
-
-/* ---------- Pills (your <Pill/>) ---------- */
-.iv-root .rounded-full.border{
-  border-color: rgba(15,23,42,.12) !important;
-  background: rgba(2,6,23,.03) !important;
-  color: rgba(11,18,32,.72) !important;
-}
-.iv-root .bg-emerald-500\/10{
-  background: rgba(16,185,129,.10) !important;
-  border-color: rgba(16,185,129,.20) !important;
-  color: rgba(5,150,105,.95) !important;
-}
-.iv-root .bg-amber-500\/10{
-  background: rgba(245,158,11,.12) !important;
-  border-color: rgba(245,158,11,.22) !important;
-  color: rgba(217,119,6,.98) !important;
-}
-
-/* ---------- Product results list container ---------- */
-.iv-root .max-h-64{
-  border-radius: var(--iv-radius) !important;
-  background: rgba(255,255,255,.80) !important;
+.iv-root.iv-invoice-view .shadow-premium{
   box-shadow: var(--iv-shadow2) !important;
 }
-.iv-root .max-h-64 > button{
-  border-radius: 0;
-}
-.iv-root .max-h-64 > button:first-child{
-  border-top-left-radius: var(--iv-radius);
-  border-top-right-radius: var(--iv-radius);
-}
-.iv-root .max-h-64 > button:last-child{
-  border-bottom-left-radius: var(--iv-radius);
-  border-bottom-right-radius: var(--iv-radius);
-}
-.iv-root .max-h-64 > button:hover{
-  background: rgba(2,6,23,.035) !important;
+.iv-root.iv-invoice-view .rounded-2xl{
+  border-radius: 20px !important;
 }
 
-/* ---------- Items rows (luxury strip look) ---------- */
-.iv-root .divide-y > div{
-  background: rgba(255,255,255,.82);
-}
-.iv-root .divide-y > div:hover{
-  background: rgba(2,6,23,.02);
-}
-
-/* ---------- Totals tiles (StatCard) ---------- */
-.iv-root .ring-1.ring-white\/15{
-  ring-color: rgba(15,23,42,.10) !important;
-}
-.iv-root .tabular-nums{
-  font-variant-numeric: tabular-nums;
+.iv-root.iv-invoice-view .bg-white\/\[0\.04\],
+.iv-root.iv-invoice-view .bg-black\/20,
+.iv-root.iv-invoice-view .bg-black\/10{
+  box-shadow: var(--iv-inset), var(--iv-shadow2) !important;
+  backdrop-filter: blur(10px);
 }
 
-/* ---------- Small typography polish ---------- */
-.iv-root .text-2xl,
-.iv-root .text-lg{
-  letter-spacing: -0.02em;
-}
-.iv-root b{
-  color: var(--iv-ink);
+/* Header strip inside cards */
+.iv-root.iv-invoice-view .border-b.border-white\/10{
+  border-color: var(--iv-border2) !important;
 }
 
-/* ---------- Mobile tighten ---------- */
-@media (max-width: 640px){
-  .iv-root .shadow-premium{ border-radius: 18px !important; }
-  .iv-root input, .iv-root select{ height: 42px; }
+/* ===========================
+   Buttons
+=========================== */
+.iv-root.iv-invoice-view .gradient-primary{
+  background: linear-gradient(135deg, rgba(185,28,28,1) 0%, rgba(185,28,28,.72) 100%) !important;
+  border: 1px solid rgba(185,28,28,.30) !important;
+  box-shadow:
+    0 18px 40px rgba(185,28,28,.22),
+    0 1px 0 rgba(255,255,255,.55) inset !important;
+  transform: translateY(0);
+}
+.iv-root.iv-invoice-view .gradient-primary:hover{
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+}
+
+.iv-root.iv-invoice-view button[class*="outline"]{
+  background: rgba(255,255,255,.75) !important;
+  border: 1px solid rgba(15,23,42,.12) !important;
+  box-shadow: 0 10px 25px rgba(2,6,23,.08) !important;
+}
+.iv-root.iv-invoice-view button[class*="outline"]:hover{
+  background: rgba(255,255,255,.92) !important;
+  border-color: rgba(185,28,28,.20) !important;
+}
+
+.iv-root.iv-invoice-view button[disabled]{
+  opacity: .6 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+/* ===========================
+   Inputs (shadcn Input)
+=========================== */
+.iv-root.iv-invoice-view input{
+  height: 44px;
+  border-radius: 16px;
+  background: rgba(255,255,255,.92) !important;
+  border: 1px solid rgba(15,23,42,.12) !important;
+  color: var(--iv-ink) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 10px 22px rgba(2,6,23,.06);
+}
+.iv-root.iv-invoice-view input::placeholder{
+  color: rgba(11,18,32,.40) !important;
+}
+.iv-root.iv-invoice-view input:focus{
+  outline: none !important;
+  border-color: rgba(185,28,28,.34) !important;
+  box-shadow:
+    0 0 0 4px rgba(185,28,28,.14),
+    0 12px 26px rgba(2,6,23,.08) !important;
+}
+
+/* Select (your unit dropdown) */
+.iv-root.iv-invoice-view select{
+  height: 44px;
+  border-radius: 16px;
+  background: rgba(255,255,255,.92) !important;
+  border: 1px solid rgba(15,23,42,.12) !important;
+  color: var(--iv-ink) !important;
+  box-shadow: 0 10px 22px rgba(2,6,23,.06);
+}
+.iv-root.iv-invoice-view select:focus{
+  outline:none;
+  border-color: rgba(185,28,28,.34) !important;
+  box-shadow: 0 0 0 4px rgba(185,28,28,.12);
+}
+
+/* ===========================
+   Pills (status chips)
+=========================== */
+.iv-root.iv-invoice-view .rounded-full.border.px-2\.5.py-1.text-xs{
+  font-weight: 900;
+  letter-spacing: .2px;
+  border-radius: 999px !important;
+  box-shadow: 0 14px 28px rgba(2,6,23,.10);
+}
+
+/* Override the tones (your Pill component sets bg/text by classes) */
+.iv-root.iv-invoice-view .bg-emerald-500\/10{
+  background: rgba(16,185,129,.10) !important;
+  border-color: rgba(16,185,129,.20) !important;
+  color: rgba(16,185,129,.92) !important;
+}
+.iv-root.iv-invoice-view .bg-amber-500\/10{
+  background: rgba(245,158,11,.12) !important;
+  border-color: rgba(245,158,11,.22) !important;
+  color: rgba(180,83,9,.92) !important;
+}
+.iv-root.iv-invoice-view .bg-white\/5{
+  background: rgba(185,28,28,.08) !important;
+  border-color: rgba(185,28,28,.16) !important;
+  color: rgba(185,28,28,.92) !important;
+}
+
+/* ===========================
+   Stat cards hover + emphasize
+=========================== */
+.iv-root.iv-invoice-view .grid.gap-3.md\:grid-cols-5 > div,
+.iv-root.iv-invoice-view .grid.gap-3.md\:grid-cols-3 > div{
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.iv-root.iv-invoice-view .grid.gap-3.md\:grid-cols-5 > div:hover,
+.iv-root.iv-invoice-view .grid.gap-3.md\:grid-cols-3 > div:hover{
+  transform: translateY(-2px);
+  box-shadow: var(--iv-shadow);
+  border-color: rgba(185,28,28,.16) !important;
+}
+
+/* emphasize tiles (Balance / Total) */
+.iv-root.iv-invoice-view .ring-1.ring-white\/15{
+  border-color: rgba(185,28,28,.22) !important;
+  box-shadow:
+    0 0 0 1px rgba(185,28,28,.10),
+    0 28px 70px rgba(185,28,28,.12),
+    0 18px 45px rgba(2,6,23,.14) !important;
+  background: linear-gradient(180deg, rgba(185,28,28,.08), rgba(255,255,255,.75)) !important;
+}
+
+/* ===========================
+   Items list (luxury list view)
+=========================== */
+.iv-root.iv-invoice-view .divide-y.divide-white\/10{
+  border-top: 1px solid var(--iv-border2);
+}
+.iv-root.iv-invoice-view .divide-y.divide-white\/10 > *{
+  border-color: var(--iv-border2) !important;
+  transition: background .18s ease;
+}
+.iv-root.iv-invoice-view .divide-y.divide-white\/10 > *:hover{
+  background: linear-gradient(90deg, rgba(185,28,28,.06), transparent 50%) !important;
+}
+
+/* item amount */
+.iv-root.iv-invoice-view .tabular-nums{ font-variant-numeric: tabular-nums; }
+.iv-root.iv-invoice-view .text-white.font-semibold.text-lg{
+  color: var(--iv-ink) !important;
+  font-weight: 950 !important;
+  letter-spacing: .2px;
+}
+
+/* Remove button alignment */
+.iv-root.iv-invoice-view .divide-y.divide-white\/10 button[class*="outline"]{
+  border-radius: 14px;
+}
+
+/* ===========================
+   Product search list (Add Item)
+=========================== */
+.iv-root.iv-invoice-view .max-h-64.overflow-auto{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(11,18,32,.22) transparent;
+}
+.iv-root.iv-invoice-view .max-h-64.overflow-auto::-webkit-scrollbar{ width: 10px; height: 10px; }
+.iv-root.iv-invoice-view .max-h-64.overflow-auto::-webkit-scrollbar-thumb{
+  background: rgba(11,18,32,.18);
+  border-radius: 999px;
+  border: 2px solid rgba(255,255,255,.65);
+}
+.iv-root.iv-invoice-view .max-h-64.overflow-auto::-webkit-scrollbar-track{ background: transparent; }
+
+/* selected product row: use red highlight */
+.iv-root.iv-invoice-view .bg-white\/10{
+  background: rgba(185,28,28,.10) !important;
+  border-left: 3px solid rgba(185,28,28,.55);
+}
+
+/* ===========================
+   Responsive
+=========================== */
+@media (max-width: 820px){
+  .iv-root.iv-invoice-view{ padding: 14px 12px 22px; }
+  .iv-root.iv-invoice-view .text-2xl{ font-size: 20px !important; }
+}
+@media (max-width: 520px){
+  .iv-root.iv-invoice-view{ padding: 12px 10px 18px; }
+  .iv-root.iv-invoice-view input,
+  .iv-root.iv-invoice-view select{ height: 42px; border-radius: 14px; }
+}
+
+
+/* =========================================================
+   FIX PATCH — headers visibility + Save button text visibility
+   Paste at the END of invoiceview.css
+========================================================= */
+
+/* Make card section titles + subtitles always readable */
+.iv-root.iv-invoice-view .text-sm.font-semibold{
+  color: #0b1220 !important;
+  font-weight: 900 !important;
+  letter-spacing: .2px;
+}
+.iv-root.iv-invoice-view .text-xs.text-white\/55,
+.iv-root.iv-invoice-view .text-xs.text-white\/50,
+.iv-root.iv-invoice-view .text-xs.text-white\/45{
+  color: rgba(11,18,32,.62) !important;
+}
+
+/* Stronger header strip contrast (the top row inside Cards) */
+.iv-root.iv-invoice-view .px-4.py-4.border-b.border-white\/10{
+  background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.78)) !important;
+}
+.iv-root.iv-invoice-view .border-b.border-white\/10{
+  border-color: rgba(15,23,42,.10) !important;
+}
+
+/* IMPORTANT: Do NOT override text color inside red gradient buttons */
+.iv-root.iv-invoice-view .gradient-primary,
+.iv-root.iv-invoice-view .gradient-primary *{
+  color: #fff !important;
+}
+
+/* Also ensure outline buttons text stays visible */
+.iv-root.iv-invoice-view button[class*="outline"],
+.iv-root.iv-invoice-view button[class*="outline"] *{
+  color: #0b1220 !important;
+}
+
+/* Give all action buttons a premium height + spacing (looks like InvoiceCreate) */
+.iv-root.iv-invoice-view button{
+  min-height: 42px;
+  border-radius: 16px;
+}
+
+/* If any button label is still faint due to inherited classes */
+.iv-root.iv-invoice-view .text-primary-foreground{
+  color: #fff !important;
+}
+
+
+/* =========================================================
+   VISIBILITY FIX — force "text-white" utilities to dark ink
+   (InvoiceView only)
+   Paste at END of InvoiceView CSS
+========================================================= */
+
+.iv-root.iv-invoice-view{
+  --iv-ink: #0b1220;
+  --iv-muted: rgba(11,18,32,.66);
+  --iv-muted2: rgba(11,18,32,.52);
+  --iv-hair: rgba(15,23,42,.12);
+}
+
+/* Make ALL Tailwind "text-white" variants readable on light cards */
+.iv-root.iv-invoice-view .text-white{
+  color: var(--iv-ink) !important;
+}
+.iv-root.iv-invoice-view .text-white\/80{
+  color: rgba(11,18,32,.78) !important;
+}
+.iv-root.iv-invoice-view .text-white\/60,
+.iv-root.iv-invoice-view .text-white\/55,
+.iv-root.iv-invoice-view .text-white\/50,
+.iv-root.iv-invoice-view .text-white\/45{
+  color: var(--iv-muted) !important;
+}
+
+/* Card borders/dividers were using white/10 – make them visible on white */
+.iv-root.iv-invoice-view .border-white\/10{
+  border-color: var(--iv-hair) !important;
+}
+.iv-root.iv-invoice-view .divide-white\/10 > :not([hidden]) ~ :not([hidden]){
+  border-color: var(--iv-hair) !important;
+}
+
+/* Pills: keep luxury red tone but readable on light */
+.iv-root.iv-invoice-view .inline-flex.rounded-full.border{
+  border-color: rgba(185,28,28,.18) !important;
+  background: linear-gradient(180deg, rgba(220,38,38,.08), rgba(220,38,38,.05)) !important;
+  color: rgba(120,10,10,.92) !important;
+}
+
+/* IMPORTANT: keep gradient buttons WHITE text (don’t let overrides break them) */
+.iv-root.iv-invoice-view .gradient-primary,
+.iv-root.iv-invoice-view .gradient-primary *{
+  color: #fff !important;
+}
+
+/* Outline buttons: dark text on white */
+.iv-root.iv-invoice-view button[class*="outline"],
+.iv-root.iv-invoice-view button[class*="outline"] *{
+  color: var(--iv-ink) !important;
 }

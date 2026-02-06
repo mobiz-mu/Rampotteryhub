@@ -1,5 +1,5 @@
 // src/lib/invoiceItems.ts
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, createPublicSupabase } from "@/integrations/supabase/client";
 import type { InvoiceItem, InvoiceItemInsert } from "@/types/invoiceItem";
 
 const SELECT_JOIN = `
@@ -17,8 +17,11 @@ function normalizeRow(r: any) {
   };
 }
 
-export async function listInvoiceItems(invoiceId: number) {
-  const { data, error } = await supabase
+/** ✅ Supports publicToken (for /invoices/:id/print?t=...) */
+export async function listInvoiceItems(invoiceId: number, opts?: { publicToken?: string }) {
+  const db = opts?.publicToken ? createPublicSupabase(opts.publicToken) : supabase;
+
+  const { data, error } = await db
     .from("invoice_items")
     .select(SELECT_JOIN)
     .eq("invoice_id", invoiceId)
@@ -30,14 +33,8 @@ export async function listInvoiceItems(invoiceId: number) {
 }
 
 export async function insertInvoiceItem(row: InvoiceItemInsert) {
-  const { data, error } = await supabase
-    .from("invoice_items")
-    .insert(row)
-    .select(SELECT_JOIN)
-    .single();
-
+  const { data, error } = await supabase.from("invoice_items").insert(row).select(SELECT_JOIN).single();
   if (error) throw error;
-
   return normalizeRow(data) as InvoiceItem;
 }
 
@@ -50,7 +47,6 @@ export async function updateInvoiceItem(id: number, patch: Partial<InvoiceItemIn
     .single();
 
   if (error) throw error;
-
   return normalizeRow(data) as InvoiceItem;
 }
 

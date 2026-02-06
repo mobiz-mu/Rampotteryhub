@@ -15,10 +15,9 @@ import { round2 } from "@/lib/invoiceTotals";
 
 import type { Invoice } from "@/types/invoice";
 import type { Product } from "@/types/product";
-import { waLink, invoiceShareMessage } from "@/lib/whatsapp";
 
-
-const WA_PHONE = "2307788884";
+/** ✅ your domain (same idea as Invoices.tsx) */
+const APP_ORIGIN = "https://rampotteryhub.com";
 
 /* =========================
    helpers
@@ -35,6 +34,9 @@ function money(v: any) {
   const n = n2(v);
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+function rs(v: any) {
+  return `Rs ${n2(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 function isValidId(v: any) {
   return Number.isFinite(Number(v)) && Number(v) > 0;
 }
@@ -47,6 +49,46 @@ function fmtQty(uom: string, v: any) {
     return new Intl.NumberFormat("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 3 }).format(x);
   }
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(x));
+}
+
+/** ✅ phone normalization (same as Invoices.tsx logic) */
+function digitsOnly(v: any) {
+  return String(v ?? "").replace(/[^\d]/g, "");
+}
+function normalizeMuPhone(raw: any) {
+  const d = digitsOnly(raw);
+  if (d.length === 8) return "230" + d;
+  if (d.startsWith("230") && d.length === 11) return d;
+  return "";
+}
+
+/** ✅ WhatsApp text format (EXACT same structure as Invoices.tsx) */
+function buildWhatsAppInvoiceText(opts: {
+  customerName?: string;
+  invoiceNo: string;
+  invoiceAmount: number;
+  amountPaid: number;
+  amountDue: number;
+  pdfUrl: string;
+}) {
+  return [
+    "Ram Pottery Ltd",
+    "",
+    "Invoice details:",
+    opts.customerName ? `Customer: ${opts.customerName}` : null,
+    `Invoice: ${opts.invoiceNo}`,
+    `Invoice Amount: ${rs(opts.invoiceAmount)}`,
+    `Amount Paid: ${rs(opts.amountPaid)}`,
+    `Amount Due: ${rs(opts.amountDue)}`,
+    "",
+    `Invoice PDF: ${opts.pdfUrl}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function openWhatsApp(to: string, text: string) {
+  window.open(`https://wa.me/${to}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
 }
 
 /* simple debounce */
@@ -74,11 +116,10 @@ function computeTotalsWithManualDiscount(params: {
   const { items, discountPercent, previousBalance, amountPaid } = params;
   const dp = clampPct(discountPercent);
 
-  // Base (excl) subtotal per line
   const lineBases = (items || []).map((it) => {
     const qty = n2(it.total_qty);
     const unitEx = n2(it.unit_price_excl_vat);
-    const vatRate = n2(it.vat_rate ?? 0); // per line
+    const vatRate = n2(it.vat_rate ?? 0);
     const base = round2(qty * unitEx);
     return { qty, unitEx, vatRate, base };
   });
@@ -86,13 +127,11 @@ function computeTotalsWithManualDiscount(params: {
   const subtotalBase = round2(lineBases.reduce((s, l) => s + l.base, 0));
   const discountAmount = dp > 0 ? round2((subtotalBase * dp) / 100) : 0;
 
-  // Apply discount proportionally to every line base (same % for all)
   const discountedBases = lineBases.map((l) => ({
     ...l,
     baseAfter: round2(l.base * (1 - dp / 100)),
   }));
 
-  // VAT recompute per-line with its own vatRate
   const vatAmount = round2(
     discountedBases.reduce((s, l) => {
       if (l.vatRate <= 0) return s;
@@ -117,31 +156,38 @@ function computeTotalsWithManualDiscount(params: {
 }
 
 /* =========================
-   Premium tiny UI atoms (no extra libs)
+   Premium tiny UI atoms
+   ✅ fixed visibility: uses foreground tokens (not text-white)
 ========================= */
-function Pill(props: { children: React.ReactNode; tone?: "default" | "good" | "warn" }) {
+function Pill(props: { children: React.ReactNode; tone?: "default" | "good" | "warn" | "bad" }) {
   const tone = props.tone || "default";
+
   const cls =
     tone === "good"
-      ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+      ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/20"
       : tone === "warn"
-      ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
-      : "bg-white/5 text-white/80 border-white/10";
+      ? "bg-amber-500/10 text-amber-800 border-amber-500/20"
+      : tone === "bad"
+      ? "bg-rose-500/10 text-rose-700 border-rose-500/20"
+      : "bg-slate-500/10 text-slate-700 border-slate-500/20";
+
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs ${cls}`}>{props.children}</span>
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${cls}`}>
+      {props.children}
+    </span>
   );
 }
 
 function StatCard(props: { label: string; value: string; hint?: string; emphasize?: boolean }) {
   return (
     <div
-      className={`rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-[0_20px_60px_rgba(0,0,0,.35)] ${
-        props.emphasize ? "ring-1 ring-white/15" : ""
+      className={`rounded-2xl border bg-background p-4 shadow-premium ${
+        props.emphasize ? "ring-1 ring-rose-500/25" : ""
       }`}
     >
-      <div className="text-xs text-white/60">{props.label}</div>
-      <div className="mt-1 text-lg font-semibold tracking-tight text-white">{props.value}</div>
-      {props.hint ? <div className="mt-1 text-xs text-white/45">{props.hint}</div> : null}
+      <div className="text-xs text-muted-foreground">{props.label}</div>
+      <div className="mt-1 text-lg font-semibold tracking-tight text-foreground">{props.value}</div>
+      {props.hint ? <div className="mt-1 text-xs text-muted-foreground">{props.hint}</div> : null}
     </div>
   );
 }
@@ -220,33 +266,43 @@ export default function InvoiceView() {
     return customersQ.data?.find((c: any) => c.id === inv.customer_id) ?? null;
   }, [customersQ.data, inv?.customer_id, inv]);
 
-/* =========================
-   WhatsApp share
-========================= */
-const waHref = useMemo(() => {
-  if (!inv) return "#";
+  /* =========================
+     WhatsApp share
+     ✅ FIXED: same message format as Invoices.tsx
+     ✅ FIXED: send to CUSTOMER phone (not company WA_PHONE)
+  ========================= */
+  const waTo = useMemo(() => {
+    const c: any = customer || {};
+    return normalizeMuPhone(c.whatsapp || c.phone || inv?.customer_whatsapp || inv?.customer_phone);
+  }, [customer, inv?.customer_whatsapp, inv?.customer_phone]);
 
-  const msg = invoiceShareMessage({
-    companyName: "Ram Pottery Ltd",
-    customerName: customer?.name || "Customer",
-    invoiceNo: inv.invoice_number,
-    invoiceId: inv.id,
-    total: inv.total_amount,
-    paid: inv.amount_paid,
-    balance: inv.balance_remaining,
-    // baseUrl: "https://rampotteryhub.com", // optional override
-  });
+  const waMsg = useMemo(() => {
+    if (!inv) return "";
 
-  return waLink(WA_PHONE, msg);
-}, [
-  inv?.id,
-  inv?.invoice_number,
-  inv?.total_amount,
-  inv?.amount_paid,
-  inv?.balance_remaining,
-  customer?.name,
-]);
+    const invNo = inv.invoice_number || `#${inv.id}`;
+    const gross = n2(inv.gross_total ?? inv.total_amount);
+    const paid = n2(inv.amount_paid);
+    const due = Math.max(0, n2(inv.balance_remaining ?? (gross - paid))); // ✅ nullish (not ||)
 
+    const pdfUrl = `${APP_ORIGIN}/invoices/${inv.id}/print`;
+
+    return buildWhatsAppInvoiceText({
+      customerName: (customer as any)?.name || inv.customer_name,
+      invoiceNo: invNo,
+      invoiceAmount: gross,
+      amountPaid: paid,
+      amountDue: due,
+      pdfUrl,
+    });
+  }, [customer, inv]);
+
+  function onSendWhatsApp() {
+    if (!waTo) {
+      toast.error("No WhatsApp/phone number found for this customer.");
+      return;
+    }
+    openWhatsApp(waTo, waMsg);
+  }
 
   /* =========================
      MUTATIONS
@@ -363,13 +419,9 @@ const waHref = useMemo(() => {
       if (!selectedProduct) throw new Error("Select a product");
 
       const vatRate = clampPct(hdrVatPercent);
-
       const uom = addUom;
 
-      // Qty rules
-      const qty =
-        uom === "KG" ? Math.max(0, roundKg(qtyValue)) : Math.max(0, Math.trunc(n2(qtyValue)));
-
+      const qty = uom === "KG" ? Math.max(0, roundKg(qtyValue)) : Math.max(0, Math.trunc(n2(qtyValue)));
       if (qty <= 0) throw new Error("Quantity must be greater than 0");
 
       const baseEx = n2((selectedProduct as any).selling_price); // EXCL VAT
@@ -387,9 +439,7 @@ const waHref = useMemo(() => {
         )
       );
 
-      const totalQty =
-        uom === "BOX" ? qty * unitsPerBox : qty; // PCS or KG => qty itself
-
+      const totalQty = uom === "BOX" ? qty * unitsPerBox : qty;
       const lineTotal = round2(n2(totalQty) * n2(unitInc));
 
       await insertInvoiceItem({
@@ -398,10 +448,6 @@ const waHref = useMemo(() => {
 
         uom,
 
-        // DB compatibility:
-        // - BOX => box_qty
-        // - PCS => pcs_qty
-        // - KG  => store numeric in box_qty + uom="KG"
         box_qty: uom === "BOX" || uom === "KG" ? qty : 0,
         pcs_qty: uom === "PCS" ? qty : 0,
 
@@ -475,31 +521,22 @@ const waHref = useMemo(() => {
   /* =========================
      RENDER
   ========================= */
-  if (isLoading) {
-    return <div className="text-sm text-muted-foreground">Loading invoice…</div>;
-  }
-
-  if (!inv) {
-    return <div className="text-sm text-destructive">Invoice not found</div>;
-  }
+  if (isLoading) return <div className="text-sm text-muted-foreground">Loading invoice…</div>;
+  if (!inv) return <div className="text-sm text-destructive">Invoice not found</div>;
 
   return (
-     <div className="iv-root iv-invoice-view space-y-5">
-      {/* Premium page background hint (works with your existing theme) */}
-      <div className="pointer-events-none fixed inset-0 -z-10 opacity-60">
-        <div className="absolute -top-24 left-1/2 h-72 w-[60rem] -translate-x-1/2 rounded-full bg-white/10 blur-3xl" />
-        <div className="absolute -bottom-40 right-[-10rem] h-96 w-96 rounded-full bg-white/5 blur-3xl" />
-      </div>
-
+    <div className="iv-root iv-invoice-view space-y-5">
       {/* HEADER */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-2xl font-semibold truncate text-white">Invoice {inv.invoice_number}</div>
+            <div className="text-2xl font-semibold truncate text-foreground">
+              Invoice {inv.invoice_number}
+            </div>
             <Pill tone={statusTone as any}>Status: {String(inv.status || "—")}</Pill>
-            <Pill>Customer: {customer?.name || `#${inv.customer_id}`}</Pill>
+            <Pill>Customer: {(customer as any)?.name || `#${inv.customer_id}`}</Pill>
           </div>
-          <div className="mt-1 text-sm text-white/55 truncate">
+          <div className="mt-1 text-sm text-muted-foreground truncate">
             Invoice ID #{inv.id} • Created: {String(inv.created_at || "").slice(0, 10)}
           </div>
         </div>
@@ -513,54 +550,47 @@ const waHref = useMemo(() => {
             Print
           </Button>
 
-          <Button asChild className="gradient-primary text-primary-foreground shadow-[0_18px_45px_rgba(0,0,0,.35)]">
-            <a href={waHref} target="_blank" rel="noreferrer">
-              Send via WhatsApp
-            </a>
+          {/* ✅ FIXED WhatsApp button (same format + sends to customer) */}
+          <Button
+            onClick={onSendWhatsApp}
+            disabled={!waTo}
+            className="gradient-primary text-primary-foreground shadow-glow"
+            title={!waTo ? "No WhatsApp/phone for this customer" : "Send invoice details to WhatsApp"}
+          >
+            Send via WhatsApp
           </Button>
         </div>
       </div>
 
       {/* STATS STRIP */}
       <div className="grid gap-3 md:grid-cols-5">
-        <StatCard label="Subtotal" value={`Rs ${money(inv.subtotal)}`} />
-        <StatCard label="VAT" value={`Rs ${money(inv.vat_amount)}`} hint={`VAT %: ${money(inv.vat_percent ?? hdrVatPercent)}`} />
-        <StatCard label="Discount" value={`Rs ${money(inv.discount_amount)}`} hint={`Discount %: ${money(inv.discount_percent ?? hdrDiscountPercent)}`} />
-        <StatCard label="Gross" value={`Rs ${money(inv.gross_total)}`} />
-        <StatCard label="Balance" value={`Rs ${money(inv.balance_remaining)}`} emphasize />
+        <StatCard label="Subtotal" value={rs(inv.subtotal)} />
+        <StatCard label="VAT" value={rs(inv.vat_amount)} hint={`VAT %: ${money(inv.vat_percent ?? hdrVatPercent)}`} />
+        <StatCard label="Discount" value={rs(inv.discount_amount)} hint={`Discount %: ${money(inv.discount_percent ?? hdrDiscountPercent)}`} />
+        <StatCard label="Gross" value={rs(inv.gross_total)} />
+        <StatCard label="Balance" value={rs(inv.balance_remaining)} emphasize />
       </div>
 
-      {/* INVOICE HEADER (premium) */}
-      <Card className="p-4 md:p-5 shadow-premium space-y-3 border-white/10 bg-white/[0.04] rounded-2xl">
+      {/* INVOICE HEADER */}
+      <Card className="p-4 md:p-5 shadow-premium space-y-3 rounded-2xl">
         <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-white">Invoice Header</div>
-            <div className="text-xs text-white/55">Edit fields, then Save Header. Discount is manual (Apply Discount).</div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-foreground">Invoice Header</div>
+            <div className="text-xs text-muted-foreground">
+              Edit fields, then Save Header. Discount is manual (Apply Discount).
+            </div>
           </div>
+
           <div className="flex gap-2">
-            <Button
-              className="gradient-primary text-primary-foreground shadow-[0_18px_45px_rgba(0,0,0,.35)]"
-              onClick={() => saveHeaderM.mutate()}
-              disabled={saveHeaderM.isPending}
-            >
+            <Button onClick={() => saveHeaderM.mutate()} disabled={saveHeaderM.isPending} className="gradient-primary text-primary-foreground shadow-glow">
               {saveHeaderM.isPending ? "Saving..." : "Save Header"}
             </Button>
 
-            <Button
-              variant="outline"
-              onClick={() => applyDiscountM.mutate()}
-              disabled={applyDiscountM.isPending}
-              title="Manual: apply discount to totals only"
-            >
+            <Button variant="outline" onClick={() => applyDiscountM.mutate()} disabled={applyDiscountM.isPending} title="Manual: apply discount to totals only">
               {applyDiscountM.isPending ? "Applying..." : "Apply Discount"}
             </Button>
 
-            <Button
-              variant="outline"
-              onClick={() => recalcBaseTotalsM.mutate()}
-              disabled={recalcBaseTotalsM.isPending}
-              title="Recalculate base totals from items (no discount auto)"
-            >
+            <Button variant="outline" onClick={() => recalcBaseTotalsM.mutate()} disabled={recalcBaseTotalsM.isPending} title="Recalculate base totals from items">
               {recalcBaseTotalsM.isPending ? "Recalculating..." : "Recalculate Totals"}
             </Button>
           </div>
@@ -568,43 +598,47 @@ const waHref = useMemo(() => {
 
         <div className="grid gap-3 md:grid-cols-4">
           <div className="space-y-1">
-            <div className="text-xs text-white/55">Invoice Date</div>
+            <div className="text-xs text-muted-foreground">Invoice Date</div>
             <Input type="date" value={hdrInvoiceDate} onChange={(e) => setHdrInvoiceDate(e.target.value)} />
           </div>
 
           <div className="space-y-1">
-            <div className="text-xs text-white/55">Due Date</div>
+            <div className="text-xs text-muted-foreground">Due Date</div>
             <Input type="date" value={hdrDueDate} onChange={(e) => setHdrDueDate(e.target.value)} placeholder="Due date" />
           </div>
 
           <div className="space-y-1">
-            <div className="text-xs text-white/55">VAT %</div>
+            <div className="text-xs text-muted-foreground">VAT %</div>
             <Input inputMode="decimal" value={hdrVatPercent} onChange={(e) => setHdrVatPercent(e.target.value)} placeholder="VAT %" />
           </div>
 
           <div className="space-y-1">
-            <div className="text-xs text-white/55">Discount % (manual)</div>
+            <div className="text-xs text-muted-foreground">Discount % (manual)</div>
             <Input inputMode="decimal" value={hdrDiscountPercent} onChange={(e) => setHdrDiscountPercent(e.target.value)} placeholder="Discount %" />
           </div>
         </div>
 
-        <div className="text-xs text-white/50">
+        <div className="text-xs text-muted-foreground">
           Option A: Items stay at base price. Click <b>Apply Discount</b> to update totals + discount amount.
         </div>
       </Card>
 
-      {/* ADD ITEM (premium) */}
-      <Card className="p-4 md:p-5 shadow-premium space-y-3 border-white/10 bg-white/[0.04] rounded-2xl">
+      {/* ADD ITEM
+          ✅ Updated to visually match the Items section style (same “row” feel + pills)
+      */}
+      <Card className="p-4 md:p-5 shadow-premium space-y-3 rounded-2xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-white">Add Item</div>
-            <div className="text-xs text-white/55">Search product, choose unit (BOX / PCS / Kg), then add quantity.</div>
+            <div className="text-sm font-semibold text-foreground">Add Item</div>
+            <div className="text-xs text-muted-foreground">
+              Search product, choose unit (BOX / PCS / Kg), then add quantity.
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="text-xs text-white/55">Unit</div>
+            <div className="text-xs text-muted-foreground">Unit</div>
             <select
-              className="h-10 rounded-xl border border-white/10 bg-white/[0.06] px-3 text-sm text-white outline-none"
+              className="h-10 rounded-xl border bg-background px-3 text-sm text-foreground outline-none"
               value={addUom}
               onChange={(e) => setAddUom(e.target.value as any)}
             >
@@ -615,7 +649,7 @@ const waHref = useMemo(() => {
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
+        <div className="grid gap-3 md:grid-cols-[1fr_200px_200px_auto]">
           <Input placeholder="Search product…" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} />
 
           <Input
@@ -635,7 +669,7 @@ const waHref = useMemo(() => {
           />
 
           <Button
-            className="gradient-primary text-primary-foreground shadow-[0_18px_45px_rgba(0,0,0,.35)]"
+            className="gradient-primary text-primary-foreground shadow-glow"
             disabled={!selectedProduct || addItemM.isPending}
             onClick={() => addItemM.mutate()}
           >
@@ -643,67 +677,77 @@ const waHref = useMemo(() => {
           </Button>
         </div>
 
+        {/* Selected product summary — same “pills” as Items rows */}
         {selectedInfo ? (
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+          <div className="rounded-2xl border bg-background p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-sm font-medium text-white">{selectedInfo.name}</div>
+              <div className="text-sm font-semibold text-foreground">{selectedInfo.name}</div>
               <div className="flex flex-wrap gap-2">
                 <Pill>SKU: {selectedInfo.sku}</Pill>
-                <Pill>Unit Ex: {selectedInfo.priceEx}</Pill>
+                <Pill tone="bad">Unit Ex: {selectedInfo.priceEx}</Pill>
                 <Pill>UPB: {selectedInfo.upb}</Pill>
               </div>
             </div>
           </div>
         ) : null}
 
-        <div className="border border-white/10 rounded-2xl max-h-64 overflow-auto divide-y divide-white/10 bg-black/10">
+        {/* Product results — styled like Items section rows */}
+        <div className="border rounded-2xl overflow-hidden">
           {!hasProductsSearch ? (
-            <div className="p-4 text-sm text-white/55">Start typing to search products…</div>
+            <div className="p-4 text-sm text-muted-foreground">Start typing to search products…</div>
           ) : productsQ.isLoading ? (
-            <div className="p-4 text-sm text-white/55">Searching…</div>
+            <div className="p-4 text-sm text-muted-foreground">Searching…</div>
           ) : productsList.length === 0 ? (
-            <div className="p-4 text-sm text-white/55">No products found.</div>
+            <div className="p-4 text-sm text-muted-foreground">No products found.</div>
           ) : (
-            productsList.map((p: any) => {
-              const active = (selectedProduct as any)?.id === p.id;
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => setSelectedProduct(p)}
-                  className={`w-full text-left px-4 py-3 transition ${
-                    active ? "bg-white/10" : "hover:bg-white/5"
-                  }`}
-                  type="button"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-medium text-white truncate">{p.name}</div>
-                      <div className="text-xs text-white/55 truncate">
-                        SKU: {p.sku || "-"} • Unit Excl VAT: {money(p.selling_price)} • UPB: {p.units_per_box ?? "-"}
+            <div className="divide-y">
+              {productsList.map((p: any) => {
+                const active = (selectedProduct as any)?.id === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedProduct(p)}
+                    className={`w-full text-left px-4 py-4 transition ${
+                      active ? "bg-rose-50" : "hover:bg-slate-50"
+                    }`}
+                    type="button"
+                  >
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-semibold text-foreground truncate">{p.name}</div>
+                          <Pill>SKU: {p.sku || "-"}</Pill>
+                          <Pill tone="bad">Unit ex: {money(p.selling_price)}</Pill>
+                          <Pill>UPB: {p.units_per_box ?? "-"}</Pill>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground truncate">
+                          Click to {active ? "keep selected" : "select"} this product
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 flex items-center gap-2">
+                        <Pill tone={active ? "good" : "default"}>{active ? "Selected" : "Select"}</Pill>
                       </div>
                     </div>
-                    <div className="shrink-0">
-                      <Pill tone={active ? "good" : "default"}>{active ? "Selected" : "Pick"}</Pill>
-                    </div>
-                  </div>
-                </button>
-              );
-            })
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
       </Card>
 
-      {/* ITEMS (premium list) */}
-      <Card className="overflow-hidden shadow-premium border-white/10 bg-white/[0.04] rounded-2xl">
-        <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between">
+      {/* ITEMS */}
+      <Card className="overflow-hidden shadow-premium rounded-2xl">
+        <div className="px-4 py-4 border-b flex items-center justify-between">
           <div>
-            <div className="text-sm font-semibold text-white">Items</div>
-            <div className="text-xs text-white/55">Luxury list view — delete recalculates totals.</div>
+            <div className="text-sm font-semibold text-foreground">Items</div>
+            <div className="text-xs text-muted-foreground">Luxury list view — delete recalculates totals.</div>
           </div>
           <Pill>{items.length} item(s)</Pill>
         </div>
 
-        <div className="divide-y divide-white/10">
+        <div className="divide-y">
           {items.map((it: any) => {
             const uom = String(it.uom || "BOX").toUpperCase();
             const qty = fmtQty(uom, it.total_qty);
@@ -711,18 +755,19 @@ const waHref = useMemo(() => {
               <div key={it.id} className="px-4 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="font-medium text-white truncate">{it.product?.name || it.description}</div>
+                    <div className="font-semibold text-foreground truncate">{it.product?.name || it.description}</div>
                     <Pill>UOM: {uom}</Pill>
-                    <Pill>Qty: {qty}</Pill>
+                    <Pill tone="bad">Qty: {qty}</Pill>
                     <Pill>Unit inc: {money(it.unit_price_incl_vat)}</Pill>
                   </div>
-                  <div className="mt-1 text-xs text-white/55">
-                    Unit ex: {money(it.unit_price_excl_vat)} • VAT rate: {money(it.vat_rate)}% • Line VAT: {money(n2(it.unit_vat) * n2(it.total_qty))}
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Unit ex: {money(it.unit_price_excl_vat)} • VAT rate: {money(it.vat_rate)}% • Line VAT:{" "}
+                    {money(n2(it.unit_vat) * n2(it.total_qty))}
                   </div>
                 </div>
 
                 <div className="flex items-center justify-end gap-2 shrink-0">
-                  <div className="text-white font-semibold text-lg tabular-nums">Rs {money(it.line_total)}</div>
+                  <div className="text-foreground font-extrabold text-lg tabular-nums">Rs {money(it.line_total)}</div>
                   <Button variant="outline" onClick={() => delItemM.mutate(it.id)} disabled={delItemM.isPending}>
                     Remove
                   </Button>
@@ -732,22 +777,20 @@ const waHref = useMemo(() => {
           })}
 
           {!itemsQ.isLoading && items.length === 0 && (
-            <div className="p-8 text-center text-sm text-white/55">No items yet.</div>
+            <div className="p-8 text-center text-sm text-muted-foreground">No items yet.</div>
           )}
         </div>
       </Card>
 
-      {/* TOTALS (premium tiles) */}
+      {/* TOTALS */}
       <div className="grid gap-3 md:grid-cols-3">
-        <StatCard label="Subtotal" value={`Rs ${money(inv.subtotal)}`} hint="From items (base totals)" />
-        <StatCard label="VAT Amount" value={`Rs ${money(inv.vat_amount)}`} hint="Mixed VAT lines supported" />
-        <StatCard label="Discount Amount" value={`Rs ${money(inv.discount_amount)}`} hint="Manual (Apply Discount)" />
-        <StatCard label="Total" value={`Rs ${money(inv.total_amount)}`} hint="Subtotal + VAT - discount logic (Option A)" emphasize />
-        <StatCard label="Gross Total" value={`Rs ${money(inv.gross_total)}`} hint={`Prev balance: Rs ${money(inv.previous_balance)}`} />
-        <StatCard label="Balance Remaining" value={`Rs ${money(inv.balance_remaining)}`} hint={`Paid: Rs ${money(inv.amount_paid)}`} emphasize />
+        <StatCard label="Subtotal" value={rs(inv.subtotal)} hint="From items (base totals)" />
+        <StatCard label="VAT Amount" value={rs(inv.vat_amount)} hint="Mixed VAT lines supported" />
+        <StatCard label="Discount Amount" value={rs(inv.discount_amount)} hint="Manual (Apply Discount)" />
+        <StatCard label="Total" value={rs(inv.total_amount)} hint="Subtotal + VAT - discount logic (Option A)" emphasize />
+        <StatCard label="Gross Total" value={rs(inv.gross_total)} hint={`Prev balance: ${rs(inv.previous_balance)}`} />
+        <StatCard label="Balance Remaining" value={rs(inv.balance_remaining)} hint={`Paid: ${rs(inv.amount_paid)}`} emphasize />
       </div>
     </div>
   );
 }
-
-

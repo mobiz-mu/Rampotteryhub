@@ -46,14 +46,8 @@ import NotFound from "./pages/NotFound";
 /** Create once */
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-    mutations: {
-      retry: 0,
-    },
+    queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false },
+    mutations: { retry: 0 },
   },
 });
 
@@ -66,7 +60,7 @@ export default function App() {
 
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthProvider>
-            {/* Inside router context */}
+            {/* inside router context */}
             <WhatsAppFab />
 
             <Routes>
@@ -74,7 +68,10 @@ export default function App() {
               <Route path="/login" element={<Navigate to="/auth" replace />} />
               <Route path="/auth" element={<Auth />} />
 
-              {/* App shell */}
+              {/* ✅ PUBLIC VIEWER PRINT ROUTES (NO LOGIN) */}
+              <Route path="/invoices/:id/print" element={<InvoicePrint />} />
+
+              {/* ✅ PRIVATE SYSTEM (LOGIN REQUIRED) */}
               <Route
                 path="/"
                 element={
@@ -90,7 +87,8 @@ export default function App() {
                 <Route path="invoices" element={<Invoices />} />
                 <Route path="invoices/create" element={<InvoiceCreate />} />
                 <Route path="invoices/:id" element={<InvoiceView />} />
-               
+                {/* NOTE: keep this too (staff print from inside app) */}
+                <Route path="invoices/:id/print" element={<InvoicePrint />} />
 
                 {/* Credit Notes */}
                 <Route path="credit-notes" element={<CreditNotes />} />
@@ -100,7 +98,6 @@ export default function App() {
 
                 {/* Quotations */}
                 <Route path="quotations" element={<Quotation />} />
-                {/* Allow both links */}
                 <Route path="quotations/new" element={<QuotationCreate />} />
                 <Route path="quotations/create" element={<QuotationCreate />} />
                 <Route path="quotations/:id" element={<QuotationView />} />
@@ -117,7 +114,7 @@ export default function App() {
                 <Route path="ap/bills" element={<SupplierBills />} />
                 <Route path="ap/payments" element={<SupplierPayments />} />
 
-                {/* Reports */}
+                {/* Reports (restricted roles) */}
                 <Route
                   path="reports"
                   element={
@@ -127,7 +124,7 @@ export default function App() {
                   }
                 />
 
-                {/* Users & Permissions (Admin only) */}
+                {/* Users (Admin only) */}
                 <Route
                   path="users"
                   element={
@@ -146,4 +143,5 @@ export default function App() {
     </QueryClientProvider>
   );
 }
+
 

@@ -22,7 +22,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { MoreHorizontal, Plus, Save, Trash2, Search, ArrowLeft, RefreshCw } from "lucide-react";
+import {
+  MoreHorizontal,
+  Plus,
+  Save,
+  Trash2,
+  Search,
+  ArrowLeft,
+  RefreshCw,
+  Receipt,
+  BadgePercent,
+  FileText,
+} from "lucide-react";
 
 /* =========================
    Helpers
@@ -78,6 +89,14 @@ type ProductOpt = {
   sku?: string | null;
 };
 
+/** NOTE:
+ *  We keep the same “editable boxes” structure as InvoiceCreate:
+ *  - product select + quick search
+ *  - qty editable
+ *  - unit_excl editable
+ *  - vat_rate editable
+ *  - derived: unitVat/unitInc/lineTotal
+ */
 type Line = {
   key: string;
   product_id: number | null;
@@ -115,7 +134,7 @@ export default function CreditNoteCreate() {
   const [creditNoteNo, setCreditNoteNo] = useState<string>("");
   const [date, setDate] = useState<string>(todayISO());
 
-  // links
+  // links / metadata
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [invoiceId, setInvoiceId] = useState<string>(""); // optional (string input)
   const [reason, setReason] = useState<string>("");
@@ -142,7 +161,10 @@ export default function CreditNoteCreate() {
     return c.customer_code ? `${c.name} (${c.customer_code})` : c.name;
   }, [customers, customerId]);
 
-  const selectedCustomer = useMemo(() => customers.find((c) => c.id === customerId) || null, [customers, customerId]);
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c.id === customerId) || null,
+    [customers, customerId]
+  );
 
   const totals = useMemo(() => {
     const computed = lines.map(lineCalc);
@@ -313,7 +335,7 @@ export default function CreditNoteCreate() {
 
   return (
     <div className="space-y-5">
-      {/* Header (InvoiceCreate-style) */}
+      {/* ========= Header (Premium like InvoiceCreate) ========= */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <Button variant="outline" onClick={() => nav("/credit-notes")} className="mt-1">
@@ -322,8 +344,16 @@ export default function CreditNoteCreate() {
           </Button>
 
           <div>
-            <div className="text-2xl font-semibold">New Credit Note</div>
-            <div className="text-sm text-muted-foreground">Customer • Items • Totals • Save</div>
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-semibold">New Credit Note</div>
+              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
+                <Receipt className="h-3.5 w-3.5" />
+                CN Create
+              </span>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Customer • Items • Totals • Save
+            </div>
           </div>
         </div>
 
@@ -345,7 +375,7 @@ export default function CreditNoteCreate() {
         </Card>
       ) : null}
 
-      {/* Main layout */}
+      {/* ========= Main layout ========= */}
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Left: details + customer */}
         <Card className="p-5 space-y-4 lg:col-span-2">
@@ -417,8 +447,15 @@ export default function CreditNoteCreate() {
 
           {/* Customer preview card (premium) */}
           <div className="rounded-xl border bg-white p-4">
-            <div className="text-xs text-muted-foreground">Customer Preview</div>
-            <div className="mt-1 flex items-start justify-between gap-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-muted-foreground">Customer Preview</div>
+              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
+                <FileText className="h-3.5 w-3.5" />
+                Preview
+              </span>
+            </div>
+
+            <div className="mt-2 flex items-start justify-between gap-3">
               <div>
                 <div className="font-semibold text-slate-900">{selectedCustomer?.name || "—"}</div>
                 {selectedCustomer?.customer_code ? (
@@ -427,7 +464,9 @@ export default function CreditNoteCreate() {
               </div>
               <div className="text-right text-xs text-slate-500">
                 {selectedCustomer?.phone ? <div>{selectedCustomer.phone}</div> : null}
-                {selectedCustomer?.address ? <div className="max-w-[320px] truncate">{selectedCustomer.address}</div> : null}
+                {selectedCustomer?.address ? (
+                  <div className="max-w-[320px] truncate">{selectedCustomer.address}</div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -437,7 +476,10 @@ export default function CreditNoteCreate() {
         <Card className="p-5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="font-semibold">Totals</div>
-            <div className="text-xs text-muted-foreground">Live</div>
+            <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
+              <BadgePercent className="h-3.5 w-3.5" />
+              Live calc
+            </span>
           </div>
 
           <div className="rounded-xl border bg-white p-4 space-y-2">
@@ -465,21 +507,22 @@ export default function CreditNoteCreate() {
           </Button>
 
           <div className="text-[11px] text-muted-foreground">
-            Tip: use the 🔎 button in each row to quickly search products.
+            Tip: Use the 🔎 search button per row to find products fast.
           </div>
         </Card>
       </div>
 
-      {/* Items table */}
+      {/* ========= Items table (editable like InvoiceCreate) ========= */}
       <Card className="overflow-hidden">
         <div className="overflow-auto">
-          <table className="w-full min-w-[1050px]">
+          <table className="w-full min-w-[1120px]">
             <thead className="bg-slate-50">
               <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
                 <th className="px-4 py-3 text-left">Product</th>
                 <th className="px-4 py-3 text-left">Qty</th>
                 <th className="px-4 py-3 text-left">Unit Excl</th>
                 <th className="px-4 py-3 text-left">VAT %</th>
+                <th className="px-4 py-3 text-left">Unit VAT</th>
                 <th className="px-4 py-3 text-left">Unit Incl</th>
                 <th className="px-4 py-3 text-left">Line Total</th>
                 <th className="px-3 py-3 text-right" />
@@ -517,7 +560,6 @@ export default function CreditNoteCreate() {
                           )}
                         </div>
 
-                        {/* small search button next to product */}
                         <Button
                           type="button"
                           variant="outline"
@@ -555,6 +597,11 @@ export default function CreditNoteCreate() {
                         onChange={(e) => setLine(l.key, { vat_rate: n(e.target.value) })}
                         className="w-[110px]"
                       />
+                    </td>
+
+                    <td className="px-4 py-3 text-sm">
+                      <div className="text-slate-500">Rs</div>
+                      <div className="text-slate-900">{c.unitVat.toFixed(2)}</div>
                     </td>
 
                     <td className="px-4 py-3 text-sm">

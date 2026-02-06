@@ -1,5 +1,5 @@
 // src/lib/invoices.ts
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, createPublicSupabase } from "@/integrations/supabase/client";
 import type { Invoice, InvoiceRow, InvoiceStatus } from "@/types/invoice";
 import type { InvoiceItem } from "@/types/invoiceItem";
 import { round2 } from "@/lib/invoiceTotals";
@@ -21,7 +21,7 @@ function clampPct(v: any) {
 }
 
 /* =========================
-   LIST INVOICES
+   LIST INVOICES (private / authenticated)
 ========================= */
 export async function listInvoices(params?: {
   q?: string;
@@ -82,16 +82,19 @@ export async function listInvoices(params?: {
 
 /* =========================
    GET (single invoice)
+   ✅ supports public token for print route
 ========================= */
-export async function getInvoice(id: number) {
-  const { data, error } = await supabase.from("invoices").select("*").eq("id", id).single();
+export async function getInvoice(id: number, opts?: { publicToken?: string }) {
+  const db = opts?.publicToken ? createPublicSupabase(opts.publicToken) : supabase;
+
+  const { data, error } = await db.from("invoices").select("*").eq("id", id).single();
   if (error) throw error;
+
   return data as Invoice;
 }
 
 /* =========================
    GET invoice + items (for duplicate)
-   Used by InvoiceCreate.tsx: getInvoiceById()
 ========================= */
 export async function getInvoiceById(id: string | number) {
   const invoiceId = Number(id);
@@ -139,7 +142,6 @@ export async function updateInvoiceHeader(id: number, patch: Partial<Invoice>) {
 
   const row = (data || [])[0];
   if (!row) {
-    // ✅ real cause: RLS or trigger blocked update / returning row
     throw new Error("Invoice update blocked (RLS policy or trigger). No row returned from UPDATE.");
   }
 
@@ -193,11 +195,9 @@ export async function createDraftInvoice(payload: {
   };
 
   const { data, error } = await supabase.from("invoices").insert(insertRow).select("*").maybeSingle();
-
   if (error) throw error;
 
   if (!data) {
-    // ✅ INSERT blocked by RLS or trigger, or no returning row
     throw new Error("Invoice creation blocked (RLS policy or trigger). No row returned from INSERT.");
   }
 
@@ -206,7 +206,6 @@ export async function createDraftInvoice(payload: {
 
 /* =========================
    Backward-compatible createInvoice
-   (InvoiceCreate.tsx uses camelCase payload)
 ========================= */
 export async function createInvoice(payload: any) {
   const inv = await createDraftInvoice({
@@ -345,7 +344,6 @@ export async function applyInvoiceDiscount(params: {
 }) {
   const { invoiceId, discount_percent, items } = params;
 
-  const inv = await getInvoice(invoiceId);
   const updated = await updateInvoiceHeader(invoiceId, {
     discount_percent: clampPct(discount_percent),
   } as any);
@@ -387,7 +385,7 @@ export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoi
 }
 
 /* =========================
-   Payments / status (used by Invoices.tsx)
+   Payments / status
 ========================= */
 export async function setInvoicePayment(invoiceId: number, amount_paid: number) {
   const inv = await getInvoice(invoiceId);
@@ -450,3 +448,4 @@ export async function getInvoicePdf(invoiceId: number | string) {
   if (!Number.isFinite(id)) throw new Error("Invalid invoice id");
   return `/invoices/${id}/print`;
 }
+

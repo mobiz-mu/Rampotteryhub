@@ -1,31 +1,114 @@
-@page { size: A4; margin: 15mm; }
+/* =========================================================
+   RamPotteryDoc — Premium A4 Print CSS (FINAL)
+   ✅ No duplicates
+   ✅ Single clean border (no double frame)
+   ✅ True A4 fit (screen + print)
+   ✅ Premium typography + spacing
+   ✅ Bigger logo (A4-safe)
+   ✅ Times New Roman for RAM POTTERY LTD (bold)
+   ✅ Taglines italic (not bold) + no extra gap
+   ✅ VAT INVOICE bigger + bold
+   ✅ Notes bullets solid black + title red
+   ✅ Notes + Totals perfectly aligned side-by-side
+   ✅ Page number bottom-right BELOW border
+========================================================= */
 
-.rpdoc-shell{
-  background:#f5f5f5;
-  padding:30px 0;
+/* ---------- Print page ---------- */
+@page{
+  size: A4;
+  margin: 0 0 12mm 0; /* bottom room for page number below border */
 }
 
-.invoice-container{
-  width: 900px;
-  margin: auto;
+html, body{
+  margin:0;
+  padding:0;
+  background:#f2f2f2;
+  font-family: Arial, Helvetica, sans-serif;
+  color:#111;
+}
+
+*{ box-sizing:border-box; }
+
+@media print{
+  html, body{
+    background:#fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .no-print{ display:none !important; }
+}
+
+/* =========================================================
+   A4 wrapper used in InvoicePrint.tsx
+========================================================= */
+.print-stage{
+  display:flex;
+  justify-content:center;
+  padding:16px;
+  background:#f2f2f2;
+}
+
+.a4-sheet{
+  width:210mm;
+  min-height:297mm;
   background:#fff;
-  border: 3px solid #000;
-  padding: 20px;
-  box-sizing:border-box;
+  color:#111;
+  position:relative;
+  box-shadow: 0 18px 60px rgba(0,0,0,.18);
+  overflow: visible;
 }
 
-/* HEADER */
-.header{
-  text-align:center;
-  margin-bottom: 20px;
+/* IMPORTANT: no padding here (prevents “double border feel”) */
+.a4-content{
+  padding: 0;
+  background:#fff;
 }
 
-/* ✅ Logo left big, center text perfectly centered */
+@media print{
+  .print-stage{ padding:0 !important; background:#fff !important; }
+  .a4-sheet{
+    width:210mm !important;
+    min-height:297mm !important;
+    margin:0 !important;
+    box-shadow:none !important;
+    background:#fff !important;
+  }
+}
+
+/* =========================================================
+   RamPotteryDoc wrappers
+========================================================= */
+.rpdoc-a4{ width:100%; background:transparent; }
+.rpdoc-shell{ background:transparent; padding:0; }
+
+/* ✅ THE ONLY BORDER + paper margins live here */
+.invoice-container{
+  margin: 10mm;              /* paper margin */
+  padding: 6mm;              /* inner padding */
+  background:#fff;
+  border: 2px solid #111;    /* single border only */
+}
+
+/* If RamPotteryDoc also renders rp-page-footer inside invoice, hide it.
+   Page footer should be the sibling of a4-content in InvoicePrint.tsx. */
+.invoice-container .rp-page-footer{ display:none !important; }
+
+/* =========================================================
+   Header
+========================================================= */
+
+.header,
+.rpdoc-headerCenter{
+  text-align: center;
+}
+
+
+/* Bigger left column to support bigger logo */
 .rpdoc-headerGrid{
   display:grid;
-  grid-template-columns: 180px 1fr 180px; /* right empty to keep center true */
+  grid-template-columns: 200px 1fr 200px; /* keep center perfectly centered */
   align-items:center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .rpdoc-headerLeft{
@@ -34,200 +117,344 @@
   justify-content:flex-start;
 }
 
+/* ✅ Logo bigger but A4-safe */
 .rpdoc-logoBig{
-  width: 160px;
+  width: 180px;   /* bigger than before, still safe */
+  max-width: 100%;
   height: auto;
+  object-fit: contain;
   display:block;
-  object-fit:contain;
 }
 
-.rpdoc-headerCenter{
-  text-align:center;
-}
+.rpdoc-headerCenter{ text-align:center; }
+.rpdoc-headerRight{ /* spacer */ }
 
-.rpdoc-headerRight{ /* spacer column */ }
-
+/* Company name = Times New Roman bold */
 .company-name{
-  font-size: 28px;
-  font-weight: bold;
-  color:#b30000;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 26px;
+  font-weight: 900;
+  color: #b00000;
+  margin: 0 0 2mm 0;   /* ⬅ reduced space */
+  letter-spacing: 0.8px;
 }
 
+
+/* Compact spacing for header details */
 .company-details{
-  font-size: 13px;
-  margin-top: 5px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.25;   /* ⬅ reduced line spacing */
+  margin-top: 1mm;
 }
 
+.company-details br{
+  line-height: 1.1;
+}
+
+
+/* Taglines: italic + NO gap between the 2 lines */
+.company-details .tagline{
+  font-style: italic;
+  font-weight: normal;
+  line-height: 1.15;   /* ⬅ tight */
+  margin: 0;
+  padding: 0;
+}
+
+
+/* Contact line: one line, Email/Web label red */
+.rpdoc-contact-line{
+  margin-top: 1.5mm;
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.label-red{
+  color: #b00000;
+  font-weight: 800;
+}
+
+.rpdoc-contact-line .sep{
+  margin: 0 6px;
+  color: #111;
+  font-weight: 700;
+}
+
+
+/* VAT INVOICE bigger + bold */
 .vat-invoice{
-  margin-top: 10px;
-  font-weight: bold;
-  color:#b30000;
+  margin-top: 2.5mm;     /* ⬅ reduced gap */
+  font-family: "Times New Roman", Times, serif;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+  color: #b00000;
+  text-transform: uppercase;
 }
 
-/* BOXES */
+
+/* =========================================================
+   Customer / Invoice boxes
+========================================================= */
 .row{
   display:flex;
-  gap: 15px;
-  margin-top: 15px;
+  gap: 6mm;
+  margin-top: 2mm;
 }
 
 .box{
   flex:1;
-  border: 2px solid #000;
+  border: 1.6px solid #111;
 }
 
 .box-title,
 .right-box-header{
-  background:#b30000;
-  color:white;
-  padding:8px;
-  font-weight:bold;
+  background:#b00000;
+  color:#fff;
+  padding: 7px 10px;
+  font-weight: 900;
   text-align:center;
-  font-size: 14px;
+  font-size: 13px;
+  letter-spacing:.25px;
 }
 
 .box-content{
-  padding: 10px;
-  font-size: 13px;
+  padding: 7px 10px;
+  font-size: 12.4px;
 }
 
-.rpdoc-boxContentTight{
-  padding: 10px;
-}
+.rpdoc-boxContentTight{ padding: 7px 10px; }
 
-/* ✅ clean aligned label/value */
+/* KV grid */
 .rpdoc-kv{
   display:grid;
-  grid-template-columns: 150px 1fr;
-  align-items:start;
+  grid-template-columns: 130px 1fr;
   gap: 10px;
-  padding: 4px 0;
+  padding: 3.5px 0;
 }
 
-.rpdoc-kv .k{
-  font-weight: 700;
-}
-
-.rpdoc-kv .v{
-  font-weight: 600;
-}
+.rpdoc-kv .k{ font-weight: 900; }
+.rpdoc-kv .v{ font-weight: 650; }
 
 .rpdoc-kv-row2{
   display:grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 
-.rpdoc-inlineTel{
-  float:right;
-  font-weight: 700;
+/* ✅ Sales rep row (name more to the left, phone right) */
+.rpdoc-kv.rpdoc-sales-row{
+  grid-template-columns: 110px 1fr; /* pulls value column left */
 }
 
-/* TABLE */
+.rpdoc-sales-flex{
+  display:flex;
+  align-items:center;
+  gap: 6px;
+  width:100%;
+}
+
+.rpdoc-sales-name{
+  font-weight: 800;
+  white-space: nowrap;
+  color:#111;
+}
+
+.rpdoc-sales-phone{
+  margin-left:auto;
+  font-weight: 800;
+  white-space: nowrap;
+  color:#111;
+}
+
+/* =========================================================
+   Table
+========================================================= */
 .invoice-table{
   width:100%;
   border-collapse: collapse;
-  margin-top: 20px;
-  font-size: 13px;
+  margin-top: 5mm;
+  font-size: 12px;
 }
 
 .invoice-table th{
-  background:#b30000;
-  color:white;
-  padding:8px;
-  border:2px solid #000;
+  background:#b00000;
+  color:#fff;
+  padding: 7px 6px;
+  border: 1.6px solid #111;
   text-align:center;
+  font-weight: 900;
+  letter-spacing:.15px;
 }
 
 .invoice-table td{
-  border:2px solid #000;
-  padding:8px;
+  border: 1.6px solid #111;
+  padding: 7px 6px;
   text-align:center;
+  vertical-align: top;
+  font-weight: 650;
 }
 
-.invoice-table td.desc{ text-align:left; }
+.invoice-table td.desc{
+  text-align:left;
+  font-weight: 650;
+  line-height: 1.32;
+}
 
-/* NOTES + TOTALS */
+@media print{
+  .invoice-table tr{ break-inside: avoid; page-break-inside: avoid; }
+}
+
+/* =========================================================
+   Notes + Totals (perfect alignment)
+========================================================= */
 .notes-totals{
-  display:flex;
-  margin-top: 15px;
-  gap: 15px;
+  display:grid;
+  grid-template-columns: 2.2fr 1fr;
+  gap: 8mm;
+  margin-top: 6mm;
+  align-items: stretch;
 }
 
+/* Notes */
 .notes{
-  flex:2;
-  border:2px solid #000;
-  padding:10px;
+  border: 1.6px solid #111;
+  padding: 10px 12px;
+  background:#fff;
+  font-family: Arial, Helvetica, sans-serif;
   font-size: 12px;
-  height: 220px;
+  line-height: 1.55;
 }
 
-.notes ul{
-  margin:0;
-  padding-left:18px;
-  line-height: 1.6;
-}
-
-.totals{
-  flex:1;
-  border:2px solid #000;
+.notes-title{
+  font-weight: 900;
+  color:#b00000;
+  margin-bottom: 6px;
   font-size: 13px;
+}
+
+/* Bullets solid black */
+.notes ul{
+  margin: 0;
+  padding-left: 18px;
+  list-style-type: disc;
+}
+
+.notes li{
+  margin-bottom: 6px;
+  color:#111;
+  font-weight: 600;
+}
+
+.notes li::marker{
+  color:#000;
+  font-weight: 900;
+}
+
+/* Red emphasis lines */
+.note-emphasis{
+  margin-top: 6px;
+  font-weight: 900;
+  color:#b00000;
+}
+
+/* Totals */
+.totals{
+  border: 1.6px solid #111;
+  background:#fff;
+  font-family: Arial, Helvetica, sans-serif;
 }
 
 .totals table{
   width:100%;
   border-collapse: collapse;
+  font-size: 12px;
 }
 
 .totals td{
-  border-bottom:2px solid #000;
-  padding:8px;
+  padding: 8px 10px;
+  border-bottom: 1.6px solid #111;
+  vertical-align: middle;
 }
 
 .totals td:first-child{
-  font-weight:bold;
-  width:65%;
+  font-weight: 900;
+  width: 65%;
+  letter-spacing: .2px;
 }
 
 .totals td:last-child{
   text-align:right;
-  font-weight:bold;
+  font-weight: 900;
 }
 
-/* SIGNATURES */
+.totals tr:last-child td{ border-bottom:none; }
+
+@media print{
+  .notes, .totals{ break-inside: avoid; page-break-inside: avoid; }
+}
+
+/* =========================================================
+   Signatures
+========================================================= */
 .signatures{
   display:flex;
   justify-content: space-between;
-  margin-top: 30px;
-  font-size: 12px;
+  gap: 6mm;
+  margin-top: 8mm;
+  font-size: 11.3px;
 }
 
 .signature-box{
-  width: 30%;
+  width: 33.33%;
   text-align:center;
 }
 
 .signature-line{
-  border-top:2px solid #000;
-  margin-top: 35px;
-  padding-top: 5px;
+  border-top: 1.6px solid #111;
+  margin-top: 14mm;
+  padding-top: 6px;
 }
 
-/* FOOTER */
-.footer-bar{
-  margin-top: 25px;
-  background:#b30000;
-  color:white;
-  text-align:center;
-  font-weight:bold;
-  padding: 12px;
-  font-size: 14px;
-}
+/* =========================================================
+   Page number — bottom-right BELOW border
+   IMPORTANT: place <div class="rp-page-footer" /> as sibling of .a4-content
+   (inside .a4-sheet). Not inside invoice-container.
+========================================================= */
+.rp-page-footer{ display:none; }
 
-/* PRINT */
 @media print{
-  .rpdoc-shell{ background:#fff !important; padding:0 !important; }
-  .invoice-container{ margin:0 auto !important; }
+  .rp-page-footer{
+    display:block;
+    position: fixed;
+    right: 12mm;
+    bottom: 4mm;          /* below border area */
+    font-size: 10px;
+    color:#111;
+    font-weight: 700;
+    text-align:right;
+  }
+
+  .rp-page-footer::after{
+    content: "Page " counter(page);
+  }
+
+  @supports (content: "Page " counter(page) " of " counter(pages)) {
+    .rp-page-footer::after{
+      content: "Page " counter(page) " of " counter(pages);
+    }
+  }
+}
+
+
+/* ================================
+   Notes — RED emphasis lines
+================================ */
+.notes .note-emphasis{
+  color: #b00000;        /* invoice red */
+  font-weight: 900;     /* strong emphasis */
+  margin-top: 6px;
+  line-height: 1.4;
 }
 
