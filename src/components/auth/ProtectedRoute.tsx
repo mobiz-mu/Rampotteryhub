@@ -5,17 +5,30 @@ import { useAuth, type AppRole } from "@/contexts/AuthContext";
 
 type ProtectedRouteProps = {
   children: React.ReactNode;
-
-  /** If provided, user must have one of these roles */
   allowRoles?: AppRole[];
-
-  /** If provided, user must have this permission key (rp_users.permissions[key] === true) */
   requirePerm?: string;
 };
+
+/**
+ * Public bypass paths (print-only)
+ * If these routes are ever accidentally placed under ProtectedRoute,
+ * they will still be accessible without login.
+ */
+const PUBLIC_BYPASS: RegExp[] = [
+  /^\/invoices\/\d+\/print$/i,
+  /^\/credit-notes\/\d+\/print$/i,
+  /^\/quotations\/\d+\/print$/i,
+];
 
 export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedRouteProps) {
   const { session, loading, profile, role, can } = useAuth();
   const location = useLocation();
+
+  // ✅ Allow public print pages even without login (defensive)
+  const pathOnly = location.pathname || "";
+  if (PUBLIC_BYPASS.some((rx) => rx.test(pathOnly))) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (

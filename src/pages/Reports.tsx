@@ -1,6 +1,7 @@
 // src/pages/Reports.tsx
 import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +23,9 @@ import {
   UserRound,
   Layers,
   Receipt,
+  Mail,
+  MessageCircle,
+  Printer,
 } from "lucide-react";
 
 /* =========================
@@ -198,6 +202,7 @@ function PillTabs<T extends string>({
 ========================= */
 export default function Reports() {
   const qc = useQueryClient();
+  const nav = useNavigate();
 
   const [preset, setPreset] = useState<DatePreset>("MTD");
   const [from, setFrom] = useState<string>(startOfMonthISO());
@@ -205,6 +210,7 @@ export default function Reports() {
 
   const [granularity, setGranularity] = useState<Granularity>("DAILY");
 
+  // ✅ Added new report keys at end (existing unchanged)
   const REPORTS = [
     { key: "DAILY_INVOICES", label: "Daily Invoices", icon: <FileText className="h-4 w-4" /> },
     { key: "DAILY_PRODUCTS", label: "Daily Products Sold", icon: <Package className="h-4 w-4" /> },
@@ -214,10 +220,18 @@ export default function Reports() {
     { key: "CUSTOMER_MONTHLY", label: "Sales by Customer (Monthly)", icon: <Users className="h-4 w-4" /> },
     { key: "VAT", label: "VAT Report", icon: <Percent className="h-4 w-4" /> },
     { key: "DISCOUNT", label: "Discount Report", icon: <Receipt className="h-4 w-4" /> },
+
+    // ✅ NEW
+    { key: "SALESMAN_PERIOD", label: "Report by Salesman (Period)", icon: <UserRound className="h-4 w-4" /> },
+    { key: "PRODUCTS_PERIOD", label: "Report by Products Sold (Period)", icon: <Package className="h-4 w-4" /> },
+    { key: "STATEMENT_CUSTOMER", label: "Statement of Account (Customer PDF)", icon: <FileText className="h-4 w-4" /> },
   ] as const;
 
   type ActiveReport = (typeof REPORTS)[number]["key"];
   const [activeReport, setActiveReport] = useState<ActiveReport>("DAILY_INVOICES");
+
+  // New: selected customer for statement report
+  const [statementCustomerId, setStatementCustomerId] = useState<number>(0);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string>("");
@@ -345,7 +359,7 @@ export default function Reports() {
     invoiceItemsQ.isLoading;
 
   /* =========================
-    Maps (customer: client_name + name)
+    Maps
   ========================= */
   const customerById = useMemo(() => {
     const m = new Map<number, CustomerRow>();
@@ -691,6 +705,122 @@ export default function Reports() {
   }, [invoicesQ.data]);
 
   /* =========================
+    ✅ NEW: Salesman report (Period summary)
+  ========================= */
+  const salesmanPeriod = useMemo(() => {
+    const inv = invoicesQ.data ?? [];
+    const map = new Map<string, any>(); // rep
+
+    inv.forEach((i) => {
+      const rep = (i.sales_rep || "—").trim() || "—";
+      const cur = map.get(rep) || {
+        rep,
+        rep_phone: i.sales_rep_phone || "",
+        invoices: 0,
+        total: 0,
+        vat: 0,
+        discount: 0,
+      };
+
+      cur.invoices += 1;
+      cur.total += n(i.total_amount);
+      cur.vat += n(i.vat_amount);
+      cur.discount += n(i.discount_amount);
+
+      // prefer non-empty phone
+      if (!cur.rep_phone && i.sales_rep_phone) cur.rep_phone = i.sales_rep_phone;
+
+      map.set(rep, cur);
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [invoicesQ.data]);
+
+  /* =========================
+    ✅ NEW: Products sold (Period total)
+  ========================= */
+  const productsPeriod = useMemo(() => {
+    const items = invoiceItemsQ.data ?? [];
+    const invById = invoiceById;
+
+    // Only count items whose invoice is in range (it is, because we fetch items by invoice ids)
+    const map = new Map<number, any>(); // product_id
+
+    items.forEach((it) => {
+      const inv = invById.get(it.invoice_id);
+      if (!inv) return;
+
+      const pid = it.product_id;
+      const p = it.products || null;
+      const p2 = productById.get(pid);
+
+      const name = p?.name || p2?.name || it.description || `Product #${pid}`;
+      const sku = p?.sku || p2?.sku || p2?.item_code || String(pid);
+
+      const cur = map.get(pid) || {
+        product_id: pid,
+        sku,
+        product: name,
+        qty: 0,
+        sales: 0,
+      };
+
+      cur.qty += n(it.total_qty);
+      cur.sales += n(it.line_total);
+
+      map.set(pid, cur);
+    });
+
+    return Array.from(map.values()).sort((a, b) => b.sales - a.sales);
+  }, [invoiceItemsQ.data, invoiceById, productById]);
+
+  /* =========================
+    ✅ NEW: Statement helpers
+  ========================= */
+  const customersForSelect = useMemo(() => {
+    const list = (customersQ.data ?? []).map((c) => ({
+      id: c.id,
+      label: (String(c.client_name || "").trim() || String(c.name || "").trim() || `Customer #${c.id}`).trim(),
+      secondary: (String(c.client_name || "").trim() && String(c.name || "").trim() && String(c.client_name || "").trim() !== String(c.name || "").trim())
+        ? String(c.name || "").trim()
+        : "",
+    }));
+
+    // sort alpha
+    list.sort((a, b) => a.label.localeCompare(b.label));
+    return list;
+  }, [customersQ.data]);
+
+  function openStatementPrint(autoPrint = false) {
+    if (!statementCustomerId) return;
+    const sp = new URLSearchParams();
+    sp.set("customerId", String(statementCustomerId));
+    sp.set("from", from);
+    sp.set("to", to);
+    if (autoPrint) sp.set("autoprint", "1");
+    // You routed statement print as protected: /statement/print
+    nav(`/statement/print?${sp.toString()}`);
+  }
+
+  function statementShareText() {
+    const cust = customersForSelect.find((c) => c.id === statementCustomerId);
+    const cname = cust?.label || "Customer";
+    return `Ram Pottery Ltd — Statement of Account\nCustomer: ${cname}\nPeriod: ${from} → ${to}\n\nPlease find the statement attached (PDF).`;
+  }
+
+  function openStatementWhatsApp() {
+    const msg = statementShareText() + `\n\nTip: Save the PDF from the system and attach it in WhatsApp.`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
+  }
+  function openStatementEmail() {
+    const cust = customersForSelect.find((c) => c.id === statementCustomerId);
+    const cname = cust?.label || "Customer";
+    const subject = `Statement of Account — ${cname} (${from} to ${to})`;
+    const body = `Dear ${cname},\n\nPlease find attached the Statement of Account for the period ${from} to ${to}.\n\nRegards,\nRam Pottery Ltd`;
+    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
+  /* =========================
     Export
   ========================= */
   function exportActiveCSV() {
@@ -741,12 +871,44 @@ export default function Reports() {
       return downloadCSV(`vat_${granularity.toLowerCase()}_${from}_to_${to}.csv`, rows);
     }
 
-    const rows = (granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).map((r: any) => ({
-      ...base,
-      ...r,
-      discount: r.discount,
-    }));
-    return downloadCSV(`discount_${granularity.toLowerCase()}_${from}_to_${to}.csv`, rows);
+    if (activeReport === "DISCOUNT") {
+      const rows = (granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).map((r: any) => ({
+        ...base,
+        ...r,
+        discount: r.discount,
+      }));
+      return downloadCSV(`discount_${granularity.toLowerCase()}_${from}_to_${to}.csv`, rows);
+    }
+
+    // ✅ NEW exports
+    if (activeReport === "SALESMAN_PERIOD") {
+      return downloadCSV(
+        `salesman_period_${from}_to_${to}.csv`,
+        salesmanPeriod.map((r) => ({ ...base, ...r }))
+      );
+    }
+
+    if (activeReport === "PRODUCTS_PERIOD") {
+      return downloadCSV(
+        `products_sold_period_${from}_to_${to}.csv`,
+        productsPeriod.map((r) => ({ ...base, ...r }))
+      );
+    }
+
+    if (activeReport === "STATEMENT_CUSTOMER") {
+      const cust = customersForSelect.find((c) => c.id === statementCustomerId);
+      const cname = cust?.label || "";
+      const rows = (invoicesQ.data ?? [])
+        .filter((i) => i.customer_id === statementCustomerId)
+        .map((i, idx) => ({
+          sn: idx + 1,
+          date: i.invoice_date,
+          customer: cname,
+          invoice_no: i.invoice_number,
+          amount: i.total_amount,
+        }));
+      return downloadCSV(`statement_${statementCustomerId}_${from}_to_${to}.csv`, rows);
+    }
   }
 
   /* =========================
@@ -779,7 +941,7 @@ export default function Reports() {
             {isGenerating ? "Refreshing..." : "Refresh"}
           </Button>
 
-          <Button variant="outline" onClick={exportActiveCSV} disabled={anyLoading || isGenerating}>
+          <Button variant="outline" onClick={exportActiveCSV as any} disabled={anyLoading || isGenerating}>
             <Download className="h-4 w-4 mr-2" />
             Export CSV
           </Button>
@@ -918,6 +1080,76 @@ export default function Reports() {
             </div>
           ) : null}
 
+          {/* =========================
+              ✅ NEW: Statement of Account (Customer PDF)
+          ========================== */}
+          {activeReport === "STATEMENT_CUSTOMER" && !anyError && (
+            <Card className="shadow-premium">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Statement of Account (PDF)</CardTitle>
+                <CardDescription>Generate a statement with the required format and save as PDF.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                  <div className="space-y-2">
+                    <Label>Select Customer</Label>
+                    <select
+                      className="h-10 w-full rounded-md border px-3 bg-background"
+                      value={statementCustomerId || ""}
+                      onChange={(e) => setStatementCustomerId(Number(e.target.value) || 0)}
+                    >
+                      <option value="">— Choose customer —</option>
+                      {customersForSelect.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}{c.secondary ? ` (${c.secondary})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      disabled={!statementCustomerId}
+                      onClick={() => openStatementPrint(false)}
+                      title="Open statement view"
+                    >
+                      <FileText className="h-4 w-4 mr-2" />
+                      Open
+                    </Button>
+
+                    <Button
+                      disabled={!statementCustomerId}
+                      onClick={() => openStatementPrint(true)}
+                      className="gradient-primary shadow-glow text-primary-foreground"
+                      title="Open and auto print"
+                    >
+                      <Printer className="h-4 w-4 mr-2" />
+                      Save PDF / Print
+                    </Button>
+
+                    <Button variant="outline" disabled={!statementCustomerId} onClick={openStatementWhatsApp}>
+                      <MessageCircle className="h-4 w-4 mr-2" />
+                      WhatsApp
+                    </Button>
+
+                    <Button variant="outline" disabled={!statementCustomerId} onClick={openStatementEmail}>
+                      <Mail className="h-4 w-4 mr-2" />
+                      Email
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="text-xs text-muted-foreground">
+                  Tip: Click <b>Save PDF / Print</b> → choose <b>Save as PDF</b> → then attach the PDF in WhatsApp/email.
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* =========================
+              EXISTING REPORTS (UNCHANGED)
+          ========================== */}
           {/* DAILY INVOICES */}
           {activeReport === "DAILY_INVOICES" && !anyError && (
             <div className="overflow-auto rounded-xl border">
@@ -1177,6 +1409,76 @@ export default function Reports() {
             </div>
           )}
 
+          {/* ✅ NEW: SALESMAN PERIOD */}
+          {activeReport === "SALESMAN_PERIOD" && !anyError && (
+            <div className="overflow-auto rounded-xl border">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-muted/20">
+                  <tr>
+                    <th className="text-left p-3">Salesman</th>
+                    <th className="text-left p-3">Phone</th>
+                    <th className="text-right p-3">Invoices</th>
+                    <th className="text-right p-3">Discount</th>
+                    <th className="text-right p-3">VAT</th>
+                    <th className="text-right p-3">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {salesmanPeriod.map((r) => (
+                    <tr key={r.rep} className="hover:bg-muted/30">
+                      <td className="p-3 font-medium">{r.rep}</td>
+                      <td className="p-3 text-muted-foreground">{r.rep_phone || "—"}</td>
+                      <td className="p-3 text-right">{r.invoices}</td>
+                      <td className="p-3 text-right">Rs {money(r.discount)}</td>
+                      <td className="p-3 text-right">Rs {money(r.vat)}</td>
+                      <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
+                    </tr>
+                  ))}
+                  {salesmanPeriod.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                        No salesman sales in this range.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* ✅ NEW: PRODUCTS PERIOD */}
+          {activeReport === "PRODUCTS_PERIOD" && !anyError && (
+            <div className="overflow-auto rounded-xl border">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-muted/20">
+                  <tr>
+                    <th className="text-left p-3">SKU</th>
+                    <th className="text-left p-3">Product</th>
+                    <th className="text-right p-3">Qty Sold</th>
+                    <th className="text-right p-3">Sales</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {productsPeriod.map((r) => (
+                    <tr key={r.product_id} className="hover:bg-muted/30">
+                      <td className="p-3 font-medium">{r.sku}</td>
+                      <td className="p-3">{r.product}</td>
+                      <td className="p-3 text-right">{money(r.qty)}</td>
+                      <td className="p-3 text-right font-semibold">Rs {money(r.sales)}</td>
+                    </tr>
+                  ))}
+                  {productsPeriod.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                        No sold products in this range.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* VAT REPORT */}
           {activeReport === "VAT" && !anyError && (
             <div className="grid gap-6 lg:grid-cols-2">
@@ -1285,3 +1587,4 @@ export default function Reports() {
     </div>
   );
 }
+

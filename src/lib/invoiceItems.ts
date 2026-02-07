@@ -1,5 +1,5 @@
 // src/lib/invoiceItems.ts
-import { supabase, createPublicSupabase } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client";
 import type { InvoiceItem, InvoiceItemInsert } from "@/types/invoiceItem";
 
 const SELECT_JOIN = `
@@ -17,18 +17,42 @@ function normalizeRow(r: any) {
   };
 }
 
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || "").trim());
+}
+function apiBase() {
+  return (import.meta as any)?.env?.VITE_API_URL?.trim?.() || "";
+}
+
 /** ✅ Supports publicToken (for /invoices/:id/print?t=...) */
 export async function listInvoiceItems(invoiceId: number, opts?: { publicToken?: string }) {
-  const db = opts?.publicToken ? createPublicSupabase(opts.publicToken) : supabase;
+  // PUBLIC: go via server endpoint (NO browser supabase)
+  if (opts?.publicToken) {
+    const t = String(opts.publicToken || "").trim();
+    if (!isUuid(t)) throw new Error("Invoice not found / access denied.");
 
-  const { data, error } = await db
+    const base = apiBase();
+    const url = `${base}/api/public/invoice-print?id=${encodeURIComponent(String(invoiceId))}&t=${encodeURIComponent(t)}`;
+    const res = await fetch(url);
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok || !json?.ok) throw new Error(json?.error || "Invoice not found / access denied.");
+
+    // server already returns items with `product`
+    return (json.items || []).map((it: any) => ({
+      ...it,
+      product: it.product ?? null,
+    })) as InvoiceItem[];
+  }
+
+  // PRIVATE: direct supabase (authenticated)
+  const { data, error } = await supabase
     .from("invoice_items")
     .select(SELECT_JOIN)
     .eq("invoice_id", invoiceId)
     .order("id", { ascending: true });
 
   if (error) throw error;
-
   return (data || []).map(normalizeRow) as InvoiceItem[];
 }
 

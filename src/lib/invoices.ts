@@ -1,5 +1,5 @@
 // src/lib/invoices.ts
-import { supabase, createPublicSupabase } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client";
 import type { Invoice, InvoiceRow, InvoiceStatus } from "@/types/invoice";
 import type { InvoiceItem } from "@/types/invoiceItem";
 import { round2 } from "@/lib/invoiceTotals";
@@ -18,6 +18,42 @@ function n2(v: any) {
 function clampPct(v: any) {
   const x = n2(v);
   return Math.max(0, Math.min(100, x));
+}
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || "").trim());
+}
+
+/** Public print API base (same domain). */
+function apiBase() {
+  // Vite
+  return (import.meta as any)?.env?.VITE_API_URL?.trim?.() || "";
+}
+
+/** Fetch public print bundle from your Express server */
+async function fetchPublicInvoicePrint(invoiceId: number, token: string) {
+  const t = String(token || "").trim();
+  if (!isUuid(t)) {
+    // Keep behavior similar to server: invalid token acts like not found
+    throw new Error("Invoice not found / access denied.");
+  }
+
+  const base = apiBase();
+  const url = `${base}/api/public/invoice-print?id=${encodeURIComponent(String(invoiceId))}&t=${encodeURIComponent(t)}`;
+
+  const res = await fetch(url, { method: "GET" });
+  const json = await res.json().catch(() => null);
+
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error || "Invoice not found / access denied.");
+  }
+
+  return json as {
+    ok: true;
+    server_time: string;
+    invoice: any;
+    customer: any | null;
+    items: any[];
+  };
 }
 
 /* =========================
@@ -82,19 +118,66 @@ export async function listInvoices(params?: {
 
 /* =========================
    GET (single invoice)
-   ✅ supports public token for print route
+   ✅ Public token uses server API (NO browser Supabase)
 ========================= */
 export async function getInvoice(id: number, opts?: { publicToken?: string }) {
-  const db = opts?.publicToken ? createPublicSupabase(opts.publicToken) : supabase;
+  if (opts?.publicToken) {
+    const bundle = await fetchPublicInvoicePrint(id, opts.publicToken);
+    return bundle.invoice as Invoice;
+  }
 
-  const { data, error } = await db.from("invoices").select("*").eq("id", id).single();
+  const { data, error } = await supabase.from("invoices").select("*").eq("id", id).single();
   if (error) throw error;
-
   return data as Invoice;
 }
 
 /* =========================
-   GET invoice + items (for duplicate)
+   (Optional) If you ever want customer/items in one call
+   used by print pages to avoid double fetch
+========================= */
+export async function getInvoicePrintBundle(id: number, opts?: { publicToken?: string }) {
+  if (opts?.publicToken) {
+    return fetchPublicInvoicePrint(id, opts.publicToken);
+  }
+
+  // Private: build bundle from Supabase (authenticated)
+  const { data: inv, error: invErr } = await supabase.from("invoices").select("*").eq("id", id).single();
+  if (invErr) throw invErr;
+
+  const { data: items, error: itErr } = await supabase
+    .from("invoice_items")
+    .select(
+      `
+      id,invoice_id,product_id,box_qty,pcs_qty,uom,units_per_box,total_qty,
+      unit_price_excl_vat,unit_vat,unit_price_incl_vat,line_total,
+      description,vat_rate,
+      products:product_id ( id,sku,item_code,name,units_per_box,selling_price )
+    `
+    )
+    .eq("invoice_id", id)
+    .order("id", { ascending: true });
+
+  if (itErr) throw itErr;
+
+  const { data: customer, error: cErr } = await supabase
+    .from("customers")
+    .select("id,name,address,phone,whatsapp,brn,vat_no,customer_code")
+    .eq("id", (inv as any).customer_id)
+    .maybeSingle();
+
+  if (cErr) throw cErr;
+
+  return {
+    ok: true,
+    server_time: new Date().toISOString(),
+    invoice: inv,
+    customer: customer || null,
+    items: (items || []).map((r: any) => ({ ...r, product: r.products ?? null })),
+  };
+}
+
+/* =========================
+   GET invoice + items (for duplicate) - private only
 ========================= */
 export async function getInvoiceById(id: string | number) {
   const invoiceId = Number(id);
@@ -197,10 +280,7 @@ export async function createDraftInvoice(payload: {
   const { data, error } = await supabase.from("invoices").insert(insertRow).select("*").maybeSingle();
   if (error) throw error;
 
-  if (!data) {
-    throw new Error("Invoice creation blocked (RLS policy or trigger). No row returned from INSERT.");
-  }
-
+  if (!data) throw new Error("Invoice creation blocked (RLS policy or trigger). No row returned from INSERT.");
   return data as Invoice;
 }
 
@@ -251,7 +331,6 @@ export async function createInvoice(payload: any) {
 
   const fresh = await listInvoiceItemsForTotals(inv.id);
   const updated = await recalcAndSaveBaseTotalsNoDiscount(inv.id, inv, fresh);
-
   return updated;
 }
 
@@ -275,10 +354,7 @@ export function computeInvoiceTotalsOptionA(invoice: Invoice, items: InvoiceItem
   const list = items || [];
   const dp = clampPct((invoice as any).discount_percent ?? 0);
 
-  const baseSubtotalEx = round2(
-    list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_price_excl_vat), 0)
-  );
-
+  const baseSubtotalEx = round2(list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_price_excl_vat), 0));
   const discountAmount = dp > 0 ? round2((baseSubtotalEx * dp) / 100) : 0;
   const subtotalAfterDiscount = round2(baseSubtotalEx - discountAmount);
 
@@ -337,11 +413,7 @@ export async function recalcAndSaveInvoiceTotals(invoiceId: number, invoice: Inv
   return updateInvoiceHeader(invoiceId, patch);
 }
 
-export async function applyInvoiceDiscount(params: {
-  invoiceId: number;
-  discount_percent: number;
-  items: InvoiceItem[];
-}) {
+export async function applyInvoiceDiscount(params: { invoiceId: number; discount_percent: number; items: InvoiceItem[] }) {
   const { invoiceId, discount_percent, items } = params;
 
   const updated = await updateInvoiceHeader(invoiceId, {
@@ -354,12 +426,8 @@ export async function applyInvoiceDiscount(params: {
 export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoice: Invoice, items: InvoiceItem[]) {
   const list = items || [];
 
-  const subtotalEx = round2(
-    list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_price_excl_vat), 0)
-  );
-
+  const subtotalEx = round2(list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_price_excl_vat), 0));
   const vatAmount = round2(list.reduce((sum, it: any) => sum + n2(it.total_qty) * n2(it.unit_vat), 0));
-
   const totalAmount = round2(subtotalEx + vatAmount);
 
   const prev = n2((invoice as any).previous_balance);

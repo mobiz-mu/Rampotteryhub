@@ -1,7 +1,11 @@
+// server/index.ts
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { createClient } from "@supabase/supabase-js";
+import publicPrint from "./routes/publicPrint";
+import { supaAdmin } from "./supabaseAdmin";
+import { adminUsersRouter } from "./routes/adminUsers";
+
 
 /* =========================
    Types
@@ -9,17 +13,29 @@ import { createClient } from "@supabase/supabase-js";
 type RpUserHeader = { id?: number; username?: string; role?: string; name?: string };
 type RpUserDb = { id: number; username: string; role: string; is_active: boolean; permissions: any };
 
+
 /* =========================
    Supabase admin
 ========================= */
 function supaAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY; // strongly recommended
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url =
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-  if (!url || !(service || anon)) throw new Error("Missing Supabase env (URL + SERVICE_ROLE or ANON)");
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const anon =
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url) throw new Error("Missing SUPABASE_URL (or VITE_SUPABASE_URL) in env");
+  if (!service && !anon) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY (recommended) or SUPABASE_ANON_KEY");
+
   return createClient(url, (service || anon)!, { auth: { persistSession: false } });
 }
+
 
 /* =========================
    Auth (REAL) — validate rp_users
@@ -218,10 +234,8 @@ app.use((req, _res, next) => {
   next();
 });
 
-
-
 /* =========================
-   Debug auth (optional but VERY useful)
+   Debug auth (optional)
 ========================= */
 app.get("/api/auth/me", async (req, res) => {
   try {
@@ -232,6 +246,16 @@ app.get("/api/auth/me", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "Server error" });
   }
 });
+
+app.use("/api/public", publicPrint);
+
+app.use(
+  "/api/admin/users",
+  adminUsersRouter({
+    requireAdmin,
+  })
+);
+
 
 /* =========================
    CREDIT NOTES — LIST
@@ -602,7 +626,6 @@ app.post("/api/credit-notes/:id/restore", async (req, res) => {
 /* =========================
    Start
 ========================= */
-const PORT = Number(process.env.API_PORT || 3001);
+const PORT = Number(process.env.API_PORT || process.env.PORT || 3001);
 app.listen(PORT, () => console.log(`✅ API running on http://localhost:${PORT}`));
-
 

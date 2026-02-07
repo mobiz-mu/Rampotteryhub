@@ -43,6 +43,10 @@ import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import NotFound from "./pages/NotFound";
 
+// ✅ ADD THESE (adjust paths if your files differ)
+import AgingReport from "./pages/AgingReport";
+import StatementPrint from "./pages/StatementPrint";
+
 /** Create once */
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,18 +64,29 @@ export default function App() {
 
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthProvider>
-            {/* inside router context */}
+            {/* Inside router context */}
             <WhatsAppFab />
 
             <Routes>
-              {/* Auth */}
+              {/* =========================
+                  AUTH (PUBLIC)
+              ========================== */}
               <Route path="/login" element={<Navigate to="/auth" replace />} />
               <Route path="/auth" element={<Auth />} />
 
-              {/* ✅ PUBLIC VIEWER PRINT ROUTES (NO LOGIN) */}
+              {/* =========================
+                  PUBLIC PRINT ROUTES (NO LOGIN)
+              ========================== */}
               <Route path="/invoices/:id/print" element={<InvoicePrint />} />
+              <Route path="/credit-notes/:id/print" element={<CreditNotePrint />} />
+              <Route path="/quotations/:id/print" element={<QuotationPrint />} />
 
-              {/* ✅ PRIVATE SYSTEM (LOGIN REQUIRED) */}
+              {/* If you want statement print public too, move it here instead of inside Protected */}
+              {/* <Route path="/statement/print" element={<StatementPrint />} /> */}
+
+              {/* =========================
+                  PRIVATE APP (LOGIN REQUIRED)
+              ========================== */}
               <Route
                 path="/"
                 element={
@@ -83,38 +98,38 @@ export default function App() {
                 <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<Dashboard />} />
 
-                {/* Invoices */}
+                {/* Invoices (protected) */}
                 <Route path="invoices" element={<Invoices />} />
                 <Route path="invoices/create" element={<InvoiceCreate />} />
                 <Route path="invoices/:id" element={<InvoiceView />} />
-                {/* NOTE: keep this too (staff print from inside app) */}
-                <Route path="invoices/:id/print" element={<InvoicePrint />} />
 
-                {/* Credit Notes */}
+                {/* Credit Notes (protected) */}
                 <Route path="credit-notes" element={<CreditNotes />} />
                 <Route path="credit-notes/create" element={<CreditNoteCreate />} />
                 <Route path="credit-notes/:id" element={<CreditNoteView />} />
-                <Route path="credit-notes/:id/print" element={<CreditNotePrint />} />
 
-                {/* Quotations */}
+                {/* Quotations (protected) */}
                 <Route path="quotations" element={<Quotation />} />
                 <Route path="quotations/new" element={<QuotationCreate />} />
                 <Route path="quotations/create" element={<QuotationCreate />} />
                 <Route path="quotations/:id" element={<QuotationView />} />
-                <Route path="quotations/:id/print" element={<QuotationPrint />} />
 
-                {/* Stock */}
+                {/* Stock (protected) */}
                 <Route path="stock" element={<Stock />} />
                 <Route path="categories" element={<Categories />} />
                 <Route path="stock-movements" element={<StockMovements />} />
 
-                {/* Parties */}
+                {/* Parties (protected) */}
                 <Route path="customers" element={<Customers />} />
                 <Route path="suppliers" element={<Suppliers />} />
                 <Route path="ap/bills" element={<SupplierBills />} />
                 <Route path="ap/payments" element={<SupplierPayments />} />
 
-                {/* Reports (restricted roles) */}
+                {/* ✅ FIX: make these relative since they’re inside "/" shell */}
+                <Route path="aging" element={<AgingReport />} />
+                <Route path="statement/print" element={<StatementPrint />} />
+
+                {/* Reports (role restricted) */}
                 <Route
                   path="reports"
                   element={
@@ -124,7 +139,7 @@ export default function App() {
                   }
                 />
 
-                {/* Users (Admin only) */}
+                {/* Users (admin only) */}
                 <Route
                   path="users"
                   element={
@@ -135,6 +150,7 @@ export default function App() {
                 />
               </Route>
 
+              {/* Fallback */}
               <Route path="*" element={<NotFound />} />
             </Routes>
           </AuthProvider>
@@ -143,5 +159,4 @@ export default function App() {
     </QueryClientProvider>
   );
 }
-
 

@@ -31,20 +31,45 @@ export const supabase =
 
 globalThis.__rp_supabase__ = supabase;
 
-/** ✅ Public-print client: sends token header and does NOT use stored auth */
-export function createPublicSupabase(publicToken: string) {
-  const token = String(publicToken || "").trim();
-  return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      storageKey: "sb-rampotteryhub-public",
-    },
-    global: {
-      headers: {
-        "x-public-token": token,
-      },
-    },
-  });
+// =======================================================
+// 2) PUBLIC PRINT (NO SUPABASE IN BROWSER)
+//    Always go through your Express API:
+//    GET /api/public/invoice-print?id=48&t=<uuid>
+// =======================================================
+
+/** Optional: set VITE_API_URL for local dev (ex: http://localhost:3001) */
+export function apiBase() {
+  return (import.meta as any)?.env?.VITE_API_URL?.trim?.() || "";
 }
+
+function isUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || "").trim());
+}
+
+/** Shared fetch helper for public endpoints */
+export async function fetchPublic<T = any>(path: string, params?: Record<string, any>) {
+  const base = apiBase();
+
+  const url = new URL(`${base}${path}`, window.location.origin);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === "") return;
+    url.searchParams.set(k, String(v));
+  });
+
+  const res = await fetch(url.toString(), { method: "GET" });
+  const json = await res.json().catch(() => null);
+
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error || "Not found / access denied.");
+  }
+
+  return json as T;
+}
+
+/** Convenience: validate token early (same behavior as server: invalid => deny) */
+export function assertPublicToken(token: string) {
+  const t = String(token || "").trim();
+  if (!isUuid(t)) throw new Error("Not found / invalid link");
+  return t;
+}
+

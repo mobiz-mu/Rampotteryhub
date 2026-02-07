@@ -2,9 +2,55 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
+import { Copy, RefreshCw, ShieldCheck, Smartphone, AlertTriangle, Clock } from "lucide-react";
 
-type CreateResp = { ok: boolean; token?: string; approveUrl?: string; expiresAt?: string; error?: string };
-type StatusResp = { ok: boolean; status?: "PENDING" | "APPROVED" | "EXPIRED"; payload?: any; error?: string };
+type CreateResp = {
+  ok: boolean;
+  token?: string;
+  approveUrl?: string;
+  expiresAt?: string; // ISO string
+  error?: string;
+};
+
+type StatusResp = {
+  ok: boolean;
+  status?: "PENDING" | "APPROVED" | "EXPIRED";
+  payload?: any;
+  error?: string;
+};
+
+function s(v: any) {
+  return String(v ?? "").trim();
+}
+
+/** Hardened JSON reader to avoid “unexpected JSON input” */
+async function safeJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  if (!text || !text.trim()) throw new Error(`Empty response (HTTP ${res.status}).`);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const snippet = text.slice(0, 220).replace(/\s+/g, " ").trim();
+    throw new Error(`Server did not return JSON (HTTP ${res.status}): "${snippet}${text.length > 220 ? "…" : ""}"`);
+  }
+}
+
+/** ms until expires, clamp to 0 */
+function msUntil(iso?: string | null) {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, t - Date.now());
+}
+
+function fmtSecs(ms: number) {
+  const sec = Math.ceil(ms / 1000);
+  if (sec <= 0) return "0s";
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const r = sec % 60;
+  return `${m}m ${r}s`;
+}
 
 export default function AuthQR() {
   const nav = useNavigate();
@@ -14,84 +60,176 @@ export default function AuthQR() {
 
   const [token, setToken] = useState<string | null>(null);
   const [approveUrl, setApproveUrl] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+
   const [status, setStatus] = useState<"PENDING" | "APPROVED" | "EXPIRED" | null>(null);
 
-  const pollRef = useRef<number | null>(null);
+  // Poll/backoff refs
+  const stoppedRef = useRef(false);
+  const pollTimerRef = useRef<number | null>(null);
+  const backoffRef = useRef(1200); // start 1.2s, grow to max
+  const attemptRef = useRef(0);
+
+  // expiry tick timer
+  const expiryTickRef = useRef<number | null>(null);
+  const [timeLeftMs, setTimeLeftMs] = useState(0);
+
+  function stopAllTimers() {
+    if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    if (expiryTickRef.current) window.clearInterval(expiryTickRef.current);
+    pollTimerRef.current = null;
+    expiryTickRef.current = null;
+  }
+
+  function resetStateForNew() {
+    setErr(null);
+    setStatus(null);
+    setToken(null);
+    setApproveUrl(null);
+    setExpiresAt(null);
+    setTimeLeftMs(0);
+    backoffRef.current = 1200;
+    attemptRef.current = 0;
+  }
 
   async function createToken() {
-    setErr(null);
+    stopAllTimers();
+    stoppedRef.current = false;
+    resetStateForNew();
     setBusy(true);
-    setStatus(null);
 
     try {
       const r = await fetch("/api/qr/create", { method: "GET" });
-      const j = (await r.json()) as CreateResp;
-      if (!j.ok || !j.token || !j.approveUrl) throw new Error(j.error || "Failed to create QR token");
+      const j = await safeJson<CreateResp>(r);
+
+      if (!j.ok || !j.token || !j.approveUrl) {
+        throw new Error(j.error || "Failed to create QR token");
+      }
+
       setToken(j.token);
       setApproveUrl(j.approveUrl);
+      setExpiresAt(j.expiresAt || null);
       setStatus("PENDING");
+
+      // Start expiry ticker
+      const initialMs = msUntil(j.expiresAt || null);
+      setTimeLeftMs(initialMs);
+      expiryTickRef.current = window.setInterval(() => {
+        setTimeLeftMs((prev) => {
+          const next = msUntil(j.expiresAt || null);
+          return next;
+        });
+      }, 500);
+
+      // Start polling loop
+      schedulePoll(j.token);
     } catch (e: any) {
       setErr(e?.message || "Failed to create QR");
-      setToken(null);
-      setApproveUrl(null);
+      setStatus(null);
+      stoppedRef.current = true;
     } finally {
       setBusy(false);
     }
   }
 
-  async function poll(t: string) {
+  function schedulePoll(t: string) {
+    if (stoppedRef.current) return;
+
+    const delay = Math.min(backoffRef.current, 5000);
+    pollTimerRef.current = window.setTimeout(() => pollOnce(t), delay);
+  }
+
+  async function pollOnce(t: string) {
+    if (stoppedRef.current) return;
+
+    attemptRef.current += 1;
+
+    // If expired by time, stop early (client-side guard)
+    if (expiresAt && msUntil(expiresAt) <= 0) {
+      setStatus("EXPIRED");
+      stoppedRef.current = true;
+      stopAllTimers();
+      return;
+    }
+
     try {
-      const r = await fetch(`/api/qr/status?token=${encodeURIComponent(t)}`);
-      const j = (await r.json()) as StatusResp;
-      if (!j.ok) return;
+      const r = await fetch(`/api/qr/status?token=${encodeURIComponent(t)}`, { method: "GET" });
+      const j = await safeJson<StatusResp>(r);
+
+      if (!j.ok) {
+        // backoff grows on server problems
+        backoffRef.current = Math.min(backoffRef.current + 600, 5000);
+        schedulePoll(t);
+        return;
+      }
 
       const st = j.status || "PENDING";
       setStatus(st);
 
       if (st === "APPROVED") {
-        localStorage.setItem("rp_qr_session", JSON.stringify({ token: t, payload: j.payload, at: Date.now() }));
-        if (pollRef.current) window.clearInterval(pollRef.current);
-        nav("/dashboard", { replace: true });
+        // safer than localStorage for session token usage
+        const r = await fetch("/api/qr/exchange", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token }),
+     });
+
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || "Exchange failed");
+
+        // 🔐 REAL LOGIN
+       await supabase.auth.setSession({
+       access_token: j.session.access_token,
+       refresh_token: j.session.refresh_token,
+    });
+
+      nav("/dashboard", { replace: true });
+
+        return;
       }
 
       if (st === "EXPIRED") {
-        if (pollRef.current) window.clearInterval(pollRef.current);
+        stoppedRef.current = true;
+        stopAllTimers();
+        return;
       }
+
+      // Pending: light backoff increase to reduce spam
+      backoffRef.current = Math.min(backoffRef.current + 250, 3500);
+      schedulePoll(t);
     } catch {
-      // ignore transient errors
+      // transient network error => increase backoff
+      backoffRef.current = Math.min(backoffRef.current + 800, 5000);
+      schedulePoll(t);
     }
   }
 
   useEffect(() => {
     createToken();
     return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
+      stoppedRef.current = true;
+      stopAllTimers();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!token) return;
-
-    if (pollRef.current) window.clearInterval(pollRef.current);
-    pollRef.current = window.setInterval(() => poll(token), 1500);
-
-    return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
   const hint = useMemo(() => {
     if (busy) return "Generating secure QR…";
-    if (err) return "Could not generate QR. Try again.";
+    if (err) return "Could not generate QR. Please try again.";
     if (status === "PENDING") return "Scan with your phone to approve sign-in.";
     if (status === "APPROVED") return "Approved. Signing you in…";
     if (status === "EXPIRED") return "QR expired. Generate a new one.";
     return "";
   }, [busy, err, status]);
 
-  const showNoQR = !approveUrl && !busy;
+  const expiryLabel = useMemo(() => {
+    if (!expiresAt) return null;
+    if (status === "APPROVED") return null;
+    return timeLeftMs > 0 ? `Expires in ${fmtSecs(timeLeftMs)}` : "Expired";
+  }, [expiresAt, timeLeftMs, status]);
+
+  const canOpen = !!approveUrl && status === "PENDING";
+  const canCopy = !!approveUrl;
 
   return (
     <div className="rp-authRoot min-h-screen relative flex items-center justify-center p-6 bg-background text-foreground overflow-hidden">
@@ -106,75 +244,121 @@ export default function AuthQR() {
       {/* soft vignette */}
       <div className="pointer-events-none absolute inset-0 -z-10 rp-vignette" />
 
-      <div className="relative w-full max-w-md">
+      <div className="relative w-full max-w-[520px]">
         {/* Card */}
-        <div className="rp-card rounded-2xl border bg-card/85 backdrop-blur-xl p-6 shadow-premium text-center">
-          <div className="rp-enter">
-            <div className="text-2xl font-semibold tracking-tight">Ram Pottery Hub</div>
-            <div className="text-sm text-muted-foreground mt-1">{hint}</div>
+        <div className="rp-card rounded-2xl border bg-card/85 backdrop-blur-xl p-6 shadow-premium">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-2xl border bg-muted/20 flex items-center justify-center">
+                <ShieldCheck className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div>
+                <div className="text-2xl font-semibold tracking-tight">Ram Pottery Hub</div>
+                <div className="text-sm text-muted-foreground mt-1">{hint}</div>
+              </div>
+            </div>
+
+            {expiryLabel ? (
+              <div className="inline-flex items-center gap-2 rounded-xl border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                <Clock className="h-4 w-4" />
+                <span>{expiryLabel}</span>
+              </div>
+            ) : null}
           </div>
 
           {/* QR */}
-          <div className="mt-6 flex items-center justify-center rp-enterDelay">
+          <div className="mt-6 flex items-center justify-center">
             {approveUrl ? (
               <div className="rounded-2xl border bg-white p-4 shadow-[0_18px_50px_rgba(0,0,0,.12)]">
-                <QRCodeCanvas value={approveUrl} size={220} includeMargin />
+                <QRCodeCanvas value={approveUrl} size={230} includeMargin />
               </div>
             ) : (
-              <div className="relative">
-                <div className="h-[260px] w-[260px] rounded-2xl border bg-muted/40 flex items-center justify-center text-sm text-muted-foreground">
-                  {busy ? "Loading…" : "No QR"}
-                </div>
-
-                {/* comic pointer near empty QR */}
-                {showNoQR && (
-                  <div className="rp-comicPointer rp-comicPointerQR" aria-hidden="true">
-                    <span className="rp-comicBubble">Click “New QR”</span>
-                    <span className="rp-comicArrow" />
-                  </div>
-                )}
+              <div className="h-[270px] w-[270px] rounded-2xl border bg-muted/40 flex items-center justify-center text-sm text-muted-foreground">
+                {busy ? "Loading…" : "No QR"}
               </div>
             )}
+          </div>
+
+          {/* Status chips */}
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <span
+              className={
+                "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " +
+                (status === "PENDING"
+                  ? "bg-sky-500/10 text-sky-700 border-sky-200"
+                  : status === "APPROVED"
+                  ? "bg-emerald-500/10 text-emerald-700 border-emerald-200"
+                  : status === "EXPIRED"
+                  ? "bg-amber-500/10 text-amber-800 border-amber-200"
+                  : "bg-muted/20 text-muted-foreground border-muted")
+              }
+            >
+              {status || "—"}
+            </span>
+
+            {token ? (
+              <span className="inline-flex items-center rounded-full border bg-muted/20 px-3 py-1 text-xs text-muted-foreground">
+                Token: <span className="ml-1 font-mono">{token.slice(0, 8)}…</span>
+              </span>
+            ) : null}
           </div>
 
           {/* error */}
           {err && (
-            <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive text-left">
-              {err}
+            <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 mt-0.5" />
+                <div className="min-w-0">{err}</div>
+              </div>
             </div>
           )}
 
-          {/* buttons */}
-          <div className="mt-5 flex gap-2">
+          {/* actions */}
+          <div className="mt-5 grid gap-2 sm:grid-cols-3">
             <button
-              className="flex-1 rounded-xl border px-4 py-2 text-sm hover:bg-muted/30 transition disabled:opacity-60"
+              className="rounded-xl border px-4 py-2 text-sm hover:bg-muted/30 transition disabled:opacity-60"
               onClick={createToken}
               disabled={busy}
             >
+              <RefreshCw className="inline-block h-4 w-4 mr-2" />
               {busy ? "Please wait…" : "New QR"}
             </button>
 
-            {approveUrl && (
-              <div className="relative flex-1">
-                <a
-                  className="block w-full rounded-xl px-4 py-2 text-sm text-primary-foreground gradient-primary shadow-glow hover:opacity-95 transition"
-                  href={approveUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open on phone
-                </a>
+            <button
+              className="rounded-xl border px-4 py-2 text-sm hover:bg-muted/30 transition disabled:opacity-60"
+              disabled={!canCopy}
+              onClick={async () => {
+                try {
+                  if (!approveUrl) return;
+                  await navigator.clipboard.writeText(approveUrl);
+                } catch {
+                  // ignore
+                }
+              }}
+              title={approveUrl ? "Copy the approval link" : "No link yet"}
+            >
+              <Copy className="inline-block h-4 w-4 mr-2" />
+              Copy link
+            </button>
 
-                {/* comic pointer next to open button */}
-                <div className="rp-comicPointer rp-comicPointerBtn" aria-hidden="true" title="Open on phone">
-                  <span className="rp-comicBubble">Tap here</span>
-                  <span className="rp-comicArrow" />
-                </div>
-              </div>
-            )}
+            <a
+              className={
+                "rounded-xl px-4 py-2 text-sm text-center text-primary-foreground gradient-primary shadow-glow hover:opacity-95 transition " +
+                (!canOpen ? "pointer-events-none opacity-50" : "")
+              }
+              href={approveUrl || "#"}
+              target="_blank"
+              rel="noreferrer"
+              title={approveUrl ? "Open approval on phone" : "No link yet"}
+            >
+              <Smartphone className="inline-block h-4 w-4 mr-2" />
+              Open on phone
+            </a>
           </div>
 
-          <div className="mt-4 text-xs text-muted-foreground">Scan → approve → desktop signs in.</div>
+          <div className="mt-4 text-xs text-muted-foreground text-center">
+            Scan → approve → desktop signs in. Tokens expire automatically.
+          </div>
         </div>
       </div>
 
@@ -194,16 +378,14 @@ export default function AuthQR() {
           opacity: .55;
         }
 
-        /* =========================
-           4 orbs (premium + subtle)
-        ========================== */
+        /* 4 orbs */
         .rp-orbs{ position:absolute; inset:0; overflow:hidden; }
         .rp-orb{
           position:absolute;
           width: 220px;
           height: 220px;
           border-radius: 9999px;
-          opacity: .38;
+          opacity: .34;
           mix-blend-mode: screen;
           transform: translateZ(0);
         }
@@ -265,9 +447,7 @@ export default function AuthQR() {
           100% { transform: translate(0,0) rotate(-320deg) scale(1); }
         }
 
-        /* =========================
-           Card premium look
-        ========================== */
+        /* Card premium */
         .rp-card{
           position: relative;
           border-color: rgba(255,255,255,.10);
@@ -287,80 +467,6 @@ export default function AuthQR() {
           filter: blur(16px);
           opacity: .55;
           z-index:-1;
-        }
-
-        /* entrance */
-        .rp-enter{ animation: rpFadeUp .5s ease both; }
-        .rp-enterDelay{ animation: rpFadeUp .6s ease both; animation-delay: .08s; }
-        @keyframes rpFadeUp{
-          from{ opacity:0; transform: translateY(10px); }
-          to{ opacity:1; transform: translateY(0); }
-        }
-
-        /* =========================
-           Comic pointers (same style)
-        ========================== */
-        .rp-comicPointer{
-          position:absolute;
-          display:flex;
-          align-items:center;
-          gap:10px;
-          pointer-events:none;
-          animation: rpNudge 1.6s ease-in-out infinite;
-          z-index: 2;
-        }
-        @keyframes rpNudge{
-          0%,100%{ transform: translateX(0); }
-          50%{ transform: translateX(4px); }
-        }
-        .rp-comicBubble{
-          display:inline-flex;
-          align-items:center;
-          justify-content:center;
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: .2px;
-          color: rgba(255,255,255,.95);
-          padding: 7px 10px;
-          border-radius: 999px;
-          background: rgba(127,29,29,.92);
-          border: 1px solid rgba(255,255,255,.16);
-          box-shadow: 0 14px 38px rgba(0,0,0,.35);
-          white-space: nowrap;
-        }
-        .rp-comicArrow{
-          width: 18px;
-          height: 18px;
-          background: rgba(127,29,29,.92);
-          border-left: 1px solid rgba(255,255,255,.16);
-          border-bottom: 1px solid rgba(255,255,255,.16);
-          transform: rotate(45deg);
-          border-radius: 4px;
-          margin-left: -12px;
-          box-shadow: 0 14px 38px rgba(0,0,0,.25);
-        }
-
-        /* pointer positions */
-        .rp-comicPointerQR{
-          right: -14px;
-          top: 26px;
-        }
-        .rp-comicPointerBtn{
-          right: -14px;
-          top: 50%;
-          transform: translateY(-50%);
-          animation-name: rpNudgeBtn;
-        }
-        @keyframes rpNudgeBtn{
-          0%,100%{ transform: translateY(-50%) translateX(0); }
-          50%{ transform: translateY(-50%) translateX(4px); }
-        }
-
-        /* small screens: keep pointers inside */
-        @media (max-width: 420px){
-          .rp-comicPointerQR{ right: 10px; top: -6px; }
-          .rp-comicPointerBtn{ right: 10px; }
-          .rp-comicArrow{ display:none; }
         }
       `}</style>
     </div>

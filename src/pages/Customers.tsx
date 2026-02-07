@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 import {
   DropdownMenu,
@@ -22,7 +22,19 @@ import {
 
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
-import { MoreHorizontal, FileText, Plus, MessageCircle, BookOpen, Upload, Download, Undo2 } from "lucide-react";
+import {
+  MoreHorizontal,
+  FileText,
+  Plus,
+  MessageCircle,
+  BookOpen,
+  Upload,
+  Download,
+  Undo2,
+  RefreshCw,
+  FileClock,
+  ReceiptText,
+} from "lucide-react";
 
 /* =========================
    Helpers
@@ -52,6 +64,7 @@ function pick(row: Record<string, any>, keys: string[]) {
   for (const k of keys) if (row[k] !== undefined) return row[k];
   return undefined;
 }
+
 function normalizeExcelRow(row: Record<string, any>): CustomerUpsert {
   // Required format:
   // customer_code	name	address	phone	brn	vat_no	whatsapp	discount%
@@ -84,6 +97,9 @@ function normalizeExcelRow(row: Record<string, any>): CustomerUpsert {
     email,
     client_name: "",
     is_active: true,
+    whatsapp_template_invoice: "",
+    whatsapp_template_statement: "",
+    whatsapp_template_overdue: "",
   } as any;
 }
 
@@ -105,16 +121,16 @@ function downloadTemplateXlsx() {
 
   const ws = XLSX.utils.json_to_sheet(sheetRows);
   ws["!cols"] = [
-    { wch: 16 }, // customer_code
-    { wch: 28 }, // name
-    { wch: 36 }, // address
-    { wch: 14 }, // phone
-    { wch: 14 }, // brn
-    { wch: 14 }, // vat_no
-    { wch: 14 }, // whatsapp
-    { wch: 10 }, // discount%
-    { wch: 16 }, // opening_balance
-    { wch: 26 }, // email
+    { wch: 16 },
+    { wch: 28 },
+    { wch: 36 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 10 },
+    { wch: 16 },
+    { wch: 26 },
   ];
 
   const wb = XLSX.utils.book_new();
@@ -127,6 +143,56 @@ function waLink(to: string, text: string) {
   if (!phone) return "";
   const withCountry = phone.length === 8 ? `230${phone}` : phone;
   return `https://wa.me/${withCountry}?text=${encodeURIComponent(text)}`;
+}
+
+function Badge({ tone, children }: { tone: "ok" | "bad" | "muted"; children: React.ReactNode }) {
+  const cls =
+    tone === "ok"
+      ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/20"
+      : tone === "bad"
+      ? "bg-red-500/10 text-red-700 border-red-500/20"
+      : "bg-muted/30 text-muted-foreground border-border";
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{children}</span>;
+}
+
+/**
+ * ✅ IMPORTANT:
+ * Prevent "column does not exist" / "violates columns" by sending ONLY DB columns.
+ * If you haven't added whatsapp_template_* etc yet, this will still work.
+ */
+function sanitizeCustomerPayload(input: CustomerUpsert) {
+  const payload: any = {
+    name: s((input as any).name),
+    customer_code: s((input as any).customer_code),
+    address: s((input as any).address),
+    phone: s((input as any).phone),
+    whatsapp: s((input as any).whatsapp),
+    email: s((input as any).email),
+    brn: s((input as any).brn),
+    vat_no: s((input as any).vat_no),
+    client_name: s((input as any).client_name),
+    opening_balance: n0((input as any).opening_balance),
+    discount_percent: clampPct((input as any).discount_percent),
+    is_active: !!(input as any).is_active,
+
+    // Optional columns (safe even if you add later — but if your DB doesn't have them,
+    // you must run the SQL below OR comment these 3 lines)
+    whatsapp_template_invoice: s((input as any).whatsapp_template_invoice),
+    whatsapp_template_statement: s((input as any).whatsapp_template_statement),
+    whatsapp_template_overdue: s((input as any).whatsapp_template_overdue),
+
+    // Optional import tracking
+    import_batch_id: (input as any).import_batch_id ?? null,
+    import_source: (input as any).import_source ?? null,
+  };
+
+  // Remove empty strings for nullable fields (clean inserts)
+  const nullable = ["customer_code", "address", "phone", "whatsapp", "email", "brn", "vat_no", "client_name"];
+  for (const k of nullable) {
+    if (payload[k] === "") payload[k] = null;
+  }
+
+  return payload;
 }
 
 type ActiveFilter = "ACTIVE" | "INACTIVE" | "ALL";
@@ -168,23 +234,20 @@ export default function Customers() {
   // last import batch (for rollback convenience)
   const [lastBatchId, setLastBatchId] = useState<string>("");
 
-  const key = useMemo(() => ["customers", { q, activeFilter }], [q, activeFilter]);
+  const qTrim = q.trim();
+  const key = useMemo(() => ["customers", { q: qTrim, activeFilter }], [qTrim, activeFilter]);
 
   const customersQ = useQuery({
     queryKey: key,
     queryFn: async () => {
       const activeOnly = activeFilter === "ACTIVE";
-      const rows = await listCustomers({ q, activeOnly, limit: 5000 });
+      const rows = await listCustomers({ q: qTrim, activeOnly, limit: 5000 });
 
-      // If INACTIVE, filter client-side (since listCustomers only supports activeOnly)
       if (activeFilter === "INACTIVE") return (rows || []).filter((r: any) => !r.is_active);
 
-      // ALL: we need both active + inactive
       if (activeFilter === "ALL") {
-        const active = await listCustomers({ q, activeOnly: true, limit: 5000 });
-        const inactive = (await listCustomers({ q, activeOnly: false, limit: 5000 })) || [];
-        // listCustomers(activeOnly:false) likely returns all; if it does, return directly.
-        // But to be safe, merge unique by id.
+        const active = await listCustomers({ q: qTrim, activeOnly: true, limit: 5000 });
+        const inactive = (await listCustomers({ q: qTrim, activeOnly: false, limit: 5000 })) || [];
         const map = new Map<number, any>();
         [...(active || []), ...(inactive || [])].forEach((c: any) => map.set(c.id, c));
         return Array.from(map.values());
@@ -197,7 +260,15 @@ export default function Customers() {
 
   const rows = (customersQ.data || []) as Customer[];
 
-  // Find last batch id (best-effort, non-blocking)
+  const stats = useMemo(() => {
+    const total = rows.length;
+    const active = rows.filter((r) => !!(r as any).is_active).length;
+    const inactive = total - active;
+    const withWA = rows.filter((r) => !!s((r as any).whatsapp || (r as any).phone)).length;
+    return { total, active, inactive, withWA };
+  }, [rows]);
+
+  // Find last batch id (best-effort)
   useEffect(() => {
     (async () => {
       try {
@@ -217,7 +288,10 @@ export default function Customers() {
   }, []);
 
   const createM = useMutation({
-    mutationFn: (payload: CustomerUpsert) => createCustomer(payload),
+    mutationFn: async (payload: CustomerUpsert) => {
+      const clean = sanitizeCustomerPayload(payload);
+      return createCustomer(clean as any);
+    },
     onSuccess: () => {
       toast.success("Customer created");
       qc.invalidateQueries({ queryKey: ["customers"], exact: false });
@@ -227,7 +301,10 @@ export default function Customers() {
   });
 
   const updateM = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: CustomerUpsert }) => updateCustomer(id, payload),
+    mutationFn: async ({ id, payload }: { id: number; payload: CustomerUpsert }) => {
+      const clean = sanitizeCustomerPayload(payload);
+      return updateCustomer(id, clean as any);
+    },
     onSuccess: () => {
       toast.success("Customer updated");
       qc.invalidateQueries({ queryKey: ["customers"], exact: false });
@@ -266,6 +343,7 @@ export default function Customers() {
       brn: c.brn ?? "",
       client_name: (c as any).client_name ?? "",
       is_active: c.is_active,
+
       whatsapp_template_invoice: (c as any).whatsapp_template_invoice ?? "",
       whatsapp_template_statement: (c as any).whatsapp_template_statement ?? "",
       whatsapp_template_overdue: (c as any).whatsapp_template_overdue ?? "",
@@ -274,10 +352,7 @@ export default function Customers() {
   }
 
   function save() {
-    if (!form.name?.trim()) {
-      toast.error("Customer name is required");
-      return;
-    }
+    if (!form.name?.trim()) return toast.error("Customer name is required");
     if (editing) updateM.mutate({ id: editing.id, payload: form });
     else createM.mutate(form);
   }
@@ -317,7 +392,7 @@ export default function Customers() {
   };
 
   const importExcel = async (file: File) => {
-    const batchId = uid(); // uuid per import run
+    const batchId = uid();
     setLastBatchId(batchId);
 
     try {
@@ -328,13 +403,8 @@ export default function Customers() {
 
       const ws = wb.Sheets[sheetName];
       const json = XLSX.utils.sheet_to_json<any>(ws, { defval: "" });
+      if (!json.length) return toast.error("Excel is empty");
 
-      if (!json.length) {
-        toast.error("Excel is empty");
-        return;
-      }
-
-      // Build lookup maps
       const byCode = new Map<string, Customer>();
       const byNamePhone = new Map<string, Customer>();
 
@@ -363,11 +433,8 @@ export default function Customers() {
         }
 
         const matchByNamePhone = `${name.toLowerCase()}|${phone}`;
-        const existing =
-          (code ? byCode.get(code) : undefined) ||
-          (phone ? byNamePhone.get(matchByNamePhone) : undefined);
+        const existing = (code ? byCode.get(code) : undefined) || (phone ? byNamePhone.get(matchByNamePhone) : undefined);
 
-        // stamp batch id + source (for rollback)
         const stamped: any = {
           ...payload,
           import_batch_id: batchId,
@@ -375,14 +442,10 @@ export default function Customers() {
         };
 
         if (existing) {
-          await updateCustomer(existing.id, {
-            ...stamped,
-            // preserve active state unless Excel includes it (we don't)
-            is_active: existing.is_active,
-          } as any);
+          await updateCustomer(existing.id, sanitizeCustomerPayload({ ...(stamped as any), is_active: existing.is_active }) as any);
           updated++;
         } else {
-          await createCustomer(stamped);
+          await createCustomer(sanitizeCustomerPayload(stamped) as any);
           created++;
         }
       }
@@ -412,27 +475,12 @@ export default function Customers() {
     }
   };
 
-  const openStatement = (c: Customer) => {
-    // You can implement statement page under /reports/statement?customerId=...
-    nav(`/reports?tab=statement&customerId=${c.id}`);
-  };
-
-  const openLedger = (c: Customer) => {
-    // Ledger view under reports as well
-    nav(`/reports?tab=ledger&customerId=${c.id}`);
-  };
-
-  const createInvoiceForCustomer = (c: Customer) => {
-    // Your InvoiceCreate page should read ?customerId=...
-    nav(`/invoices/create?customerId=${c.id}`);
-  };
+  const openStatement = (c: Customer) => nav(`/statement/print?customerId=${c.id}`);
+  const openAging = (c: Customer) => nav(`/aging?customerId=${c.id}`);
+  const createInvoiceForCustomer = (c: Customer) => nav(`/invoices/create?customerId=${c.id}`);
 
   const whatsappCustomer = (c: Customer) => {
-    const msg =
-      `Hello ${c.name},\n` +
-      `\n` +
-      `This is Ram Pottery Ltd.\n` +
-      `How can we help you today?\n`;
+    const msg = `Hello ${c.name},\n\nThis is Ram Pottery Ltd.\nHow can we help you today?\n`;
     const link = waLink(c.whatsapp || c.phone, msg);
     if (!link) return toast.error("No WhatsApp/Phone on customer");
     window.open(link, "_blank", "noopener,noreferrer");
@@ -442,14 +490,18 @@ export default function Customers() {
     <div className="space-y-5">
       {/* Premium Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
+        <div className="space-y-2">
           <div className="text-2xl font-semibold tracking-tight">Customers</div>
-          <div className="text-sm text-muted-foreground">
-            customer_code • name • address • phone • brn • vat_no • whatsapp • discount% (opening_balance + email optional)
+
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="muted">Total: {stats.total}</Badge>
+            <Badge tone="ok">Active: {stats.active}</Badge>
+            <Badge tone="bad">Inactive: {stats.inactive}</Badge>
+            <Badge tone="muted">With WhatsApp/Phone: {stats.withWA}</Badge>
           </div>
 
           {lastBatchId ? (
-            <div className="mt-2 text-xs text-muted-foreground flex items-center gap-2">
+            <div className="text-xs text-muted-foreground flex items-center gap-2">
               <span className="inline-flex rounded-full border bg-muted/30 px-2 py-0.5">
                 Last import batch: <b className="ml-1">{lastBatchId}</b>
               </span>
@@ -473,19 +525,24 @@ export default function Customers() {
             }}
           />
 
+          <Button variant="outline" onClick={() => customersQ.refetch()} disabled={customersQ.isFetching}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            {customersQ.isFetching ? "Refreshing…" : "Refresh"}
+          </Button>
+
           <Button variant="outline" onClick={downloadTemplateXlsx}>
             <Download className="h-4 w-4 mr-2" />
-            Download Template
+            Template
           </Button>
 
           <Button variant="outline" onClick={() => fileRef.current?.click()}>
             <Upload className="h-4 w-4 mr-2" />
-            Import Excel
+            Import
           </Button>
 
           <Button variant="outline" onClick={exportExcel} disabled={rows.length === 0}>
             <Download className="h-4 w-4 mr-2" />
-            Export Excel
+            Export
           </Button>
 
           <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={openNew}>
@@ -498,11 +555,7 @@ export default function Customers() {
       {/* Filter Bar */}
       <Card className="p-4 shadow-premium">
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-center">
-          <Input
-            placeholder="Search: name, customer code, phone, whatsapp…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+          <Input placeholder="Search: name, code, phone, whatsapp…" value={q} onChange={(e) => setQ(e.target.value)} />
 
           <select
             className="h-10 rounded-md border px-3 bg-background"
@@ -515,23 +568,22 @@ export default function Customers() {
             <option value="ALL">All</option>
           </select>
 
-          <Button variant="outline" onClick={() => customersQ.refetch()} disabled={customersQ.isFetching}>
-            {customersQ.isFetching ? "Refreshing..." : "Refresh"}
-          </Button>
+          <div className="text-xs text-muted-foreground md:text-right">
+            Tip: Double click a row to edit • Use ⋯ for Statement/Aging/Invoice
+          </div>
         </div>
       </Card>
 
-      {/* Premium Table */}
+      {/* Table */}
       <Card className="p-0 overflow-hidden shadow-premium">
         <div className="border-b bg-gradient-to-r from-background to-muted/30 px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium">
-              Register
+              Register{" "}
               <span className="ml-2 text-xs text-muted-foreground">
                 {customersQ.isLoading ? "Loading…" : `${rows.length} customer(s)`}
               </span>
             </div>
-            <div className="text-xs text-muted-foreground">Tip: Double click a row to edit • Use the ⋯ menu for actions</div>
           </div>
         </div>
 
@@ -587,14 +639,7 @@ export default function Customers() {
                     <td className="px-4 py-4 align-top">
                       <div className="font-semibold tracking-wide">{c.customer_code || "-"}</div>
                       <div className="mt-2 flex items-center gap-2">
-                        <span
-                          className={
-                            "inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium " +
-                            (c.is_active ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600")
-                          }
-                        >
-                          {c.is_active ? "ACTIVE" : "INACTIVE"}
-                        </span>
+                        <Badge tone={c.is_active ? "ok" : "bad"}>{c.is_active ? "ACTIVE" : "INACTIVE"}</Badge>
                         <Switch
                           checked={!!c.is_active}
                           onCheckedChange={(v) => activeM.mutate({ id: c.id, active: !!v })}
@@ -605,7 +650,9 @@ export default function Customers() {
 
                     <td className="px-4 py-4 align-top">
                       <div className="font-semibold">{c.name}</div>
-                      {(c as any).email ? <div className="mt-1 text-xs text-muted-foreground">{String((c as any).email)}</div> : null}
+                      {(c as any).email ? (
+                        <div className="mt-1 text-xs text-muted-foreground">{String((c as any).email)}</div>
+                      ) : null}
                     </td>
 
                     <td className="px-4 py-4 align-top">
@@ -633,7 +680,7 @@ export default function Customers() {
                     </td>
 
                     <td className="px-4 py-4 align-top">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="outline" className="h-8 px-3">
@@ -641,7 +688,7 @@ export default function Customers() {
                             </Button>
                           </DropdownMenuTrigger>
 
-                          <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuContent align="end" className="w-64">
                             <DropdownMenuItem onClick={() => openEdit(c)}>
                               <BookOpen className="mr-2 h-4 w-4" />
                               Edit Customer
@@ -650,14 +697,16 @@ export default function Customers() {
                             <DropdownMenuSeparator />
 
                             <DropdownMenuItem onClick={() => openStatement(c)}>
-                              <FileText className="mr-2 h-4 w-4" />
-                              Open Statement
+                              <ReceiptText className="mr-2 h-4 w-4" />
+                              Statement PDF
                             </DropdownMenuItem>
 
-                            <DropdownMenuItem onClick={() => openLedger(c)}>
-                              <BookOpen className="mr-2 h-4 w-4" />
-                              View Ledger
+                            <DropdownMenuItem onClick={() => openAging(c)}>
+                              <FileClock className="mr-2 h-4 w-4" />
+                              Aging Report
                             </DropdownMenuItem>
+
+                            <DropdownMenuSeparator />
 
                             <DropdownMenuItem onClick={() => createInvoiceForCustomer(c)}>
                               <Plus className="mr-2 h-4 w-4" />
@@ -690,116 +739,81 @@ export default function Customers() {
 
         <div className="border-t px-4 py-3 text-xs text-muted-foreground">
           Excel format: <b>customer_code, name, address, phone, brn, vat_no, whatsapp, discount%</b> (+ optional{" "}
-          <b>opening_balance</b>, <b>email</b>) • Imports are stamped with <b>import_batch_id</b> for rollback.
+          <b>opening_balance</b>, <b>email</b>) • Imports stamped with <b>import_batch_id</b>.
         </div>
       </Card>
 
-      {/* Dialog */}
+      {/* Dialog (smaller premium modal) */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Customer" : "New Customer"}</DialogTitle>
+            <DialogDescription className="text-xs">
+              Keep it clean: Name is required. Other fields are optional.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium">Name *</label>
               <Input value={form.name} onChange={(e) => setForm((st) => ({ ...st, name: e.target.value }))} />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Customer Code</label>
-              <Input
-                value={(form as any).customer_code ?? ""}
-                onChange={(e) => setForm((st) => ({ ...st, customer_code: e.target.value } as any))}
-              />
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium">Address</label>
-              <Input
-                value={(form as any).address ?? ""}
-                onChange={(e) => setForm((st) => ({ ...st, address: e.target.value } as any))}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Phone</label>
-              <Input
-                value={(form as any).phone ?? ""}
-                onChange={(e) => setForm((st) => ({ ...st, phone: e.target.value } as any))}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">WhatsApp</label>
-              <Input
-                value={(form as any).whatsapp ?? ""}
-                onChange={(e) => setForm((st) => ({ ...st, whatsapp: e.target.value } as any))}
-              />
+              <Input value={(form as any).customer_code ?? ""} onChange={(e) => setForm((st) => ({ ...st, customer_code: e.target.value } as any))} />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Email</label>
-              <Input
-                value={(form as any).email ?? ""}
-                onChange={(e) => setForm((st) => ({ ...st, email: e.target.value } as any))}
-              />
+              <Input value={(form as any).email ?? ""} onChange={(e) => setForm((st) => ({ ...st, email: e.target.value } as any))} />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium">Address</label>
+              <Input value={(form as any).address ?? ""} onChange={(e) => setForm((st) => ({ ...st, address: e.target.value } as any))} />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Phone</label>
+              <Input value={(form as any).phone ?? ""} onChange={(e) => setForm((st) => ({ ...st, phone: e.target.value } as any))} />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">WhatsApp</label>
+              <Input value={(form as any).whatsapp ?? ""} onChange={(e) => setForm((st) => ({ ...st, whatsapp: e.target.value } as any))} />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Opening Balance</label>
-              <Input
-                inputMode="decimal"
-                value={String((form as any).opening_balance ?? 0)}
-                onChange={(e) => setForm((st) => ({ ...st, opening_balance: e.target.value as any } as any))}
-              />
+              <Input inputMode="decimal" value={String((form as any).opening_balance ?? 0)} onChange={(e) => setForm((st) => ({ ...st, opening_balance: e.target.value as any } as any))} />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">Discount %</label>
-              <Input
-                inputMode="decimal"
-                value={String((form as any).discount_percent ?? 0)}
-                onChange={(e) => setForm((st) => ({ ...st, discount_percent: e.target.value as any } as any))}
-              />
+              <Input inputMode="decimal" value={String((form as any).discount_percent ?? 0)} onChange={(e) => setForm((st) => ({ ...st, discount_percent: e.target.value as any } as any))} />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">BRN</label>
-              <Input
-                value={(form as any).brn ?? ""}
-                onChange={(e) => setForm((st) => ({ ...st, brn: e.target.value } as any))}
-              />
+              <Input value={(form as any).brn ?? ""} onChange={(e) => setForm((st) => ({ ...st, brn: e.target.value } as any))} />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">VAT No</label>
-              <Input
-                value={(form as any).vat_no ?? ""}
-                onChange={(e) => setForm((st) => ({ ...st, vat_no: e.target.value } as any))}
-              />
+              <Input value={(form as any).vat_no ?? ""} onChange={(e) => setForm((st) => ({ ...st, vat_no: e.target.value } as any))} />
             </div>
 
             <div className="flex items-center gap-2 md:col-span-2">
-              <Switch
-                checked={!!(form as any).is_active}
-                onCheckedChange={(v) => setForm((st) => ({ ...st, is_active: !!v } as any))}
-              />
+              <Switch checked={!!(form as any).is_active} onCheckedChange={(v) => setForm((st) => ({ ...st, is_active: !!v } as any))} />
               <div className="text-sm text-muted-foreground">Active</div>
             </div>
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-4">
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              className="gradient-primary shadow-glow text-primary-foreground"
-              onClick={save}
-              disabled={createM.isPending || updateM.isPending}
-            >
-              {editing ? (updateM.isPending ? "Saving..." : "Save Changes") : createM.isPending ? "Creating..." : "Create"}
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={save} disabled={createM.isPending || updateM.isPending}>
+              {editing ? (updateM.isPending ? "Saving…" : "Save Changes") : createM.isPending ? "Creating…" : "Create"}
             </Button>
           </div>
         </DialogContent>
@@ -807,6 +821,5 @@ export default function Customers() {
     </div>
   );
 }
-
 
 

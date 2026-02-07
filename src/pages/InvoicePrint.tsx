@@ -1,14 +1,12 @@
 // src/pages/InvoicePrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import html2pdf from "html2pdf.js";
 
 import RamPotteryDoc, { RamPotteryDocItem } from "@/components/print/RamPotteryDoc";
-import { getInvoice } from "@/lib/invoices";
-import { listInvoiceItems } from "@/lib/invoiceItems";
-import { listCustomers } from "@/lib/customers";
+import { supabase } from "@/integrations/supabase/client";
 
 import "@/styles/rpdoc.css";
 
@@ -58,6 +56,17 @@ async function waitForImages(root: HTMLElement) {
   );
 }
 
+/** Safe JSON parse (prevents “Unexpected end of JSON input”) */
+async function safeJson(res: Response) {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 /* =========================
    Component
 ========================= */
@@ -69,6 +78,32 @@ export default function InvoicePrint() {
   const [sp] = useSearchParams();
   const publicToken = (sp.get("t") || "").trim();
 
+  // ✅ if no token, require login
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      if (publicToken) {
+        if (alive) {
+          setIsLoggedIn(false);
+          setAuthChecked(true);
+        }
+        return;
+      }
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
+      setIsLoggedIn(!!data?.session);
+      setAuthChecked(true);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [publicToken]);
+
   // A4 wrapper root (exact node for print + pdf)
   const printRootRef = useRef<HTMLDivElement | null>(null);
 
@@ -79,69 +114,91 @@ export default function InvoicePrint() {
   const [printPreparing, setPrintPreparing] = useState(false);
 
   /* =========================
-     Load invoice (PUBLIC SAFE)
+     Load invoice (PUBLIC via server endpoint)
+     - avoids Supabase RLS issues
+     Endpoint: /api/public/invoice-print?id=48&t=TOKEN
   ========================= */
   const invoiceQ = useQuery({
-    queryKey: ["invoice_print", invoiceId, publicToken],
-    queryFn: () => getInvoice(invoiceId, publicToken ? { publicToken } : undefined),
-    enabled: isValidId(invoiceId),
+    queryKey: ["public_invoice_print", invoiceId, publicToken],
+    enabled: isValidId(invoiceId) && (!!publicToken || (authChecked && isLoggedIn)),
+    queryFn: async () => {
+      // If no token, still use same endpoint but with empty token? NO.
+      // Internal print should be protected pages anyway. Here we keep it strict:
+      if (!publicToken) {
+        throw new Error("Missing public token");
+      }
+
+      const res = await fetch(`/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`);
+      const json = await safeJson(res);
+
+      if (!json?.ok) throw new Error(json?.error || "Failed to load");
+      return json as {
+        ok: true;
+        invoice: any;
+        items: any[];
+        customer?: any;
+      };
+    },
     staleTime: 15_000,
   });
 
-  const inv = invoiceQ.data as any;
+  // Guard: if no token and not logged in → block
+  if (!publicToken) {
+    if (!authChecked) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    if (!isLoggedIn) return <Navigate to="/auth" replace />;
+    // If logged in but no token, you can decide:
+    // Option A: allow internal print by querying Supabase (not recommended here).
+    // Option B (strict): require token always for this route.
+    return (
+      <div className="p-6 text-sm text-destructive">
+        This print link requires a public token.
+        <div className="mt-2 text-xs text-muted-foreground">
+          Use a shared link like: <b>/invoices/{invoiceId}/print?t=...</b>
+        </div>
+      </div>
+    );
+  }
 
-  const itemsQ = useQuery({
-    queryKey: ["invoice_items_print", invoiceId, publicToken],
-    queryFn: () => listInvoiceItems(invoiceId, publicToken ? { publicToken } : undefined),
-    enabled: isValidId(invoiceId),
-    staleTime: 15_000,
-  });
-
-  const items = itemsQ.data || [];
-  const custId = inv?.customer_id;
-
-  const customersQ = useQuery({
-    queryKey: ["customers", "print-lite"],
-    queryFn: () => listCustomers({ activeOnly: false, limit: 5000 }),
-    enabled: !!custId,
-    staleTime: 60_000,
-  });
-
-  const customer = useMemo(() => {
-    if (!custId) return null;
-    return customersQ.data?.find((c: any) => c.id === custId) ?? null;
-  }, [customersQ.data, custId]);
+  const isLoading = invoiceQ.isLoading;
+  const payload = invoiceQ.data as any;
+  const inv = payload?.invoice;
+  const items = payload?.items || [];
+  const customer = payload?.customer || inv?.customers || inv?.customer || null;
 
   /* =========================
-     Map items (FIXED TYPES)
-     RamPotteryDoc expects:
-     - box, unit_per_box, total_qty (NOT uom/units_per_box)
+     Map items to RamPotteryDocItem
+     Your invoice_items columns:
+     - box_qty, units_per_box, total_qty, pcs_qty, description
   ========================= */
   const docItems: RamPotteryDocItem[] = useMemo(() => {
-    return (items || []).map((it: any, idx: number) => ({
-      sn: idx + 1,
-      item_code: it.product?.item_code || it.product?.sku || "",
-      box: String(it.uom || "BOX").toUpperCase(),
-      unit_per_box: Number(it.units_per_box || 0),
-      total_qty: Number(it.total_qty || 0),
-      description: it.description || it.product?.name || "",
-      unit_price_excl_vat: Number(it.unit_price_excl_vat || 0),
-      unit_vat: Number(it.unit_vat || 0),
-      unit_price_incl_vat: Number(it.unit_price_incl_vat || 0),
-      line_total: Number(it.line_total || 0),
-    }));
+    return (items || []).map((it: any, idx: number) => {
+      const p = it.product || it.products || null;
+
+      return {
+        sn: idx + 1,
+        item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
+        box: "BOX",
+        unit_per_box: Number(it.units_per_box ?? p?.units_per_box ?? 0),
+        total_qty: Number(it.total_qty ?? 0),
+        description: it.description || p?.name || "",
+        unit_price_excl_vat: Number(it.unit_price_excl_vat ?? 0),
+        unit_vat: Number(it.unit_vat ?? 0),
+        unit_price_incl_vat: Number(it.unit_price_incl_vat ?? 0),
+        line_total: Number(it.line_total ?? 0),
+      };
+    });
   }, [items]);
 
   /* =========================
      WhatsApp link
   ========================= */
   const origin = typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
-  const viewUrl = `${origin}/invoices/${invoiceId}/print${publicToken ? `?t=${encodeURIComponent(publicToken)}` : ""}`;
+  const viewUrl = `${origin}/invoices/${invoiceId}/print?t=${encodeURIComponent(publicToken)}`;
 
   const waHref = useMemo(() => {
     if (!inv) return "#";
 
-    const gross = n(inv.gross_total ?? inv.total_amount);
+    const gross = n(inv.gross_total ?? inv.total_amount ?? inv.total_incl_vat);
     const paid = n(inv.amount_paid);
     const due = n(inv.balance_remaining) || Math.max(0, gross - paid);
 
@@ -161,13 +218,11 @@ export default function InvoicePrint() {
       .join("\n");
 
     return `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`;
-  }, [inv?.id, inv?.invoice_number, inv?.gross_total, inv?.total_amount, inv?.amount_paid, inv?.balance_remaining, customer?.name, viewUrl]);
+  }, [inv, customer?.name, viewUrl, publicToken, invoiceId]);
 
   /* =========================
      Print (only once, after ready)
   ========================= */
-  const isLoading = invoiceQ.isLoading || itemsQ.isLoading || (customersQ.isLoading && !!custId);
-
   async function safePrintOnce() {
     if (printOnceRef.current) return;
     if (!printRootRef.current) return;
@@ -175,7 +230,6 @@ export default function InvoicePrint() {
     printOnceRef.current = true;
     setPrintPreparing(true);
 
-    // Fonts ready (helps “print stuck” in Chromium)
     try {
       // @ts-ignore
       if (document?.fonts?.ready) {
@@ -184,29 +238,25 @@ export default function InvoicePrint() {
       }
     } catch {}
 
-    // Images ready (logo etc.)
     await waitForImages(printRootRef.current);
 
-    // Small layout beat, then print
     window.setTimeout(() => {
       window.print();
       setPrintPreparing(false);
     }, 200);
   }
 
-  // Auto print once AFTER render (public links only)
+  // Auto print once AFTER render (public token links)
   useEffect(() => {
     if (isLoading) return;
     if (!inv) return;
-    if (!publicToken) return; // auto-print only for public links
+    if (!publicToken) return;
     safePrintOnce();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, inv?.id, publicToken]);
 
   /* =========================
      PDF download (Fallback only)
-     NOTE: Browser-generated PDF via html2pdf.
-     (Your “real server PDF” comes next when you add API/edge.)
   ========================= */
   async function downloadPdfClient() {
     if (!printRootRef.current || !inv) return;
@@ -217,13 +267,12 @@ export default function InvoicePrint() {
     html2pdf()
       .set({
         filename: `Invoice-${inv.invoice_number || inv.id}.pdf`,
-        margin: 0, // A4 wrapper already has margins in CSS
+        margin: 0,
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: {
           scale: 3,
           useCORS: true,
           backgroundColor: "#ffffff",
-          // Let html2canvas measure the actual node, don't force fake windowWidth
         },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
         pagebreak: { mode: ["css", "legacy"] },
@@ -233,16 +282,16 @@ export default function InvoicePrint() {
   }
 
   /* =========================
-     Guards
+     Render states
   ========================= */
   if (isLoading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading print…</div>;
   }
 
-  if (!inv) {
+  if (invoiceQ.isError || !inv) {
     return (
       <div className="p-6 text-sm text-destructive">
-        Invoice not found / access denied.
+        Invoice not found / invalid link.
         <div className="mt-2 text-xs text-muted-foreground">
           Public links must include a valid token (<b>?t=...</b>)
         </div>
@@ -257,14 +306,14 @@ export default function InvoicePrint() {
     <div className="print-shell p-4">
       {/* Toolbar (hidden on print) */}
       <div className="no-print flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="text-sm text-muted-foreground">Invoice {inv.invoice_number}</div>
+        <div className="text-sm text-muted-foreground">Invoice {inv.invoice_number || `#${inv.id}`}</div>
 
         <div className="flex flex-wrap gap-2">
-          {!publicToken && (
-            <Button variant="outline" onClick={() => nav(`/invoices/${invoiceId}`)}>
-              Back
-            </Button>
-          )}
+          {/* ✅ Public users: no back button */}
+          {/* If you later want internal users to print without token, add a separate internal route */}
+          <Button variant="outline" onClick={() => nav("/auth")}>
+            Close
+          </Button>
 
           <Button variant="outline" asChild>
             <a href={waHref} target="_blank" rel="noreferrer">
@@ -282,17 +331,15 @@ export default function InvoicePrint() {
         </div>
       </div>
 
-      {/* =========
-          A4 WRAPPER (perfect fit)
-      ========= */}
+      {/* A4 WRAPPER */}
       <div className="print-stage">
         <div ref={printRootRef} className="a4-sheet">
           <div className="a4-content">
             <RamPotteryDoc
               variant="INVOICE"
-              showFooterBar={false} // ✅ remove thank you bar
+              showFooterBar={false}
               docNoLabel="INVOICE NO:"
-              docNoValue={inv.invoice_number}
+              docNoValue={inv.invoice_number || `#${inv.id}`}
               dateLabel="DATE:"
               dateValue={fmtDDMMYYYY(inv.invoice_date)}
               purchaseOrderLabel="PURCHASE ORDER NO:"
@@ -327,7 +374,6 @@ export default function InvoicePrint() {
             />
           </div>
 
-          {/* Page numbering placeholder (print CSS controls output) */}
           <div className="rp-page-footer" />
         </div>
       </div>

@@ -4,8 +4,42 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
+import "@/styles/InvoiceCreate.css"; // ✅ reuse same CSS/theme as InvoiceCreate
+
 import RamPotteryDoc from "@/components/print/RamPotteryDoc";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+import {
+  ArrowLeft,
+  BadgePercent,
+  FileText,
+  MoreHorizontal,
+  Plus,
+  Printer,
+  RefreshCw,
+  Save,
+  Search,
+  Trash2,
+  Users,
+} from "lucide-react";
 
 import { listCustomers } from "@/lib/customers";
 import { listProducts } from "@/lib/invoices";
@@ -80,14 +114,12 @@ function repPhoneByName(name: string) {
 /* =========================
    Helpers
 ========================= */
-function n2(v: any) {
+const n2 = (v: any) => {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
-}
-function clampPct(v: any) {
-  const x = n2(v);
-  return Math.max(0, Math.min(100, x));
-}
+};
+const clampPct = (v: any) => Math.max(0, Math.min(100, n2(v)));
+
 function uid() {
   try {
     return crypto.randomUUID();
@@ -95,12 +127,20 @@ function uid() {
     return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
   }
 }
+
 function money(v: any) {
   const x = n2(v);
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
 }
 function intFmt(v: any) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(n2(v)));
+}
+
+function todayISO() {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 function recalc(row: QuoteLine): QuoteLine {
@@ -146,19 +186,29 @@ function blankLine(defaultVat: number): QuoteLine {
   });
 }
 
+function pickProductLabel(p?: ProductRow | null) {
+  if (!p) return "";
+  const code = p.item_code || p.sku || "";
+  const name = p.name || "";
+  return `${name}${code ? ` • ${code}` : ""}`;
+}
+
+/* =========================
+   Page
+========================= */
 export default function QuotationCreate() {
   const nav = useNavigate();
   const [params] = useSearchParams();
   const duplicateId = params.get("duplicate");
 
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
 
   const [printNameMode, setPrintNameMode] = useState<PrintNameMode>("CUSTOMER");
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [clientName, setClientName] = useState<string>("");
 
-  const [quotationDate, setQuotationDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [quotationDate, setQuotationDate] = useState<string>(todayISO());
   const [validUntil, setValidUntil] = useState<string>("");
 
   const [vatPercent, setVatPercent] = useState<number>(15);
@@ -169,39 +219,18 @@ export default function QuotationCreate() {
   const [quotationNumber, setQuotationNumber] = useState<string>("(Auto when saved)");
   const [lines, setLines] = useState<QuoteLine[]>([blankLine(15)]);
 
+  // row focus (Enter => next)
   const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  /* ===== Search Modals (same pattern as invoice) ===== */
-  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
-  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+  /* ===== Search modals (InvoiceCreate style) ===== */
+  const [custOpen, setCustOpen] = useState(false);
+  const [custSearch, setCustSearch] = useState("");
 
-  const [productSearchOpen, setProductSearchOpen] = useState(false);
-  const [productSearchRowId, setProductSearchRowId] = useState<string | null>(null);
-  const [productSearchTerm, setProductSearchTerm] = useState("");
+  const [prodOpen, setProdOpen] = useState(false);
+  const [prodSearch, setProdSearch] = useState("");
+  const [prodPickRowId, setProdPickRowId] = useState<string | null>(null);
 
-  function openCustomerSearch() {
-    setCustomerSearchTerm("");
-    setCustomerSearchOpen(true);
-    setTimeout(() => (document.getElementById("qCustomerSearchInput") as HTMLInputElement | null)?.focus?.(), 0);
-  }
-  function closeCustomerSearch() {
-    setCustomerSearchOpen(false);
-    setCustomerSearchTerm("");
-  }
-
-  function openProductSearch(rowId: string) {
-    setProductSearchRowId(rowId);
-    setProductSearchTerm("");
-    setProductSearchOpen(true);
-    setTimeout(() => (document.getElementById("qProductSearchInput") as HTMLInputElement | null)?.focus?.(), 0);
-  }
-  function closeProductSearch() {
-    setProductSearchOpen(false);
-    setProductSearchRowId(null);
-    setProductSearchTerm("");
-  }
-
-  /* ===== Sales reps dropdown (same UX) ===== */
+  /* ===== Sales reps dropdown (same UX / premium) ===== */
   const [repOpen, setRepOpen] = useState(false);
   const [salesReps, setSalesReps] = useState<SalesRepName[]>([]);
 
@@ -232,31 +261,6 @@ export default function QuotationCreate() {
 
   const customer = useMemo(() => customers.find((c) => c.id === customerId) || null, [customers, customerId]);
 
-  const filteredCustomers = useMemo(() => {
-    const t = customerSearchTerm.trim().toLowerCase();
-    if (!t) return customers;
-    return customers.filter((c) => {
-      const name = String(c.name || "").toLowerCase();
-      const phone = String(c.phone || "").toLowerCase();
-      const code = String(c.customer_code || "").toLowerCase();
-      const addr = String(c.address || "").toLowerCase();
-      return name.includes(t) || phone.includes(t) || code.includes(t) || addr.includes(t);
-    });
-  }, [customers, customerSearchTerm]);
-
-  const filteredProducts = useMemo(() => {
-    const t = productSearchTerm.trim().toLowerCase();
-    if (!t) return products;
-    return products.filter((p) => {
-      const code = String(p.item_code || "").toLowerCase();
-      const sku = String(p.sku || "").toLowerCase();
-      const name = String(p.name || "").toLowerCase();
-      const desc = String(p.description || "").toLowerCase();
-      return code.includes(t) || sku.includes(t) || name.includes(t) || desc.includes(t);
-    });
-  }, [products, productSearchTerm]);
-
-  /* ===== Which name prints ===== */
   const printedName = useMemo(() => {
     const cn = (customer?.name || "").trim();
     const cl = clientName.trim();
@@ -264,7 +268,7 @@ export default function QuotationCreate() {
     return cn || cl;
   }, [printNameMode, customer?.name, clientName]);
 
-  /* ===== Customer change ===== */
+  // auto discount from customer
   useEffect(() => {
     if (!customerId || !customer) return;
     if (!discountTouched) setDiscountPercent(clampPct(customer.discount_percent ?? 0));
@@ -272,13 +276,13 @@ export default function QuotationCreate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  /* ===== VAT applies to all ===== */
+  // VAT applies to all
   useEffect(() => {
     const v = clampPct(vatPercent);
     setLines((prev) => prev.map((r) => recalc({ ...r, vat_rate: v })));
   }, [vatPercent]);
 
-  /* ===== Discount recalculates unit_ex from base ===== */
+  // Discount recalculates unit_ex from base
   useEffect(() => {
     const dp = clampPct(discountPercent);
     setLines((prev) =>
@@ -302,7 +306,7 @@ export default function QuotationCreate() {
         const qClientName = String((qRow as any)?.customer_name || "").trim();
         setClientName(qClientName || "");
 
-        setQuotationDate(String((qRow as any).quotation_date || new Date().toISOString().slice(0, 10)));
+        setQuotationDate(String((qRow as any).quotation_date || todayISO()));
         setValidUntil(String((qRow as any).valid_until || ""));
 
         setVatPercent(clampPct((qRow as any).vat_percent ?? 15));
@@ -338,7 +342,7 @@ export default function QuotationCreate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [duplicateId]);
 
-  /* ===== Totals (Invoice-style, no balances) ===== */
+  /* ===== Totals ===== */
   const realLines = useMemo(() => lines.filter((l) => !!l.product_id), [lines]);
 
   const subtotalEx = useMemo(
@@ -346,14 +350,13 @@ export default function QuotationCreate() {
     [realLines]
   );
 
-  const vatAmount = useMemo(() => {
-    return realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_vat), 0);
-  }, [realLines]);
+  const vatAmount = useMemo(
+    () => realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_vat), 0),
+    [realLines]
+  );
 
-  // Total AFTER discount (because unit_price_excl_vat already includes discount)
   const totalAfterDiscount = useMemo(() => subtotalEx + vatAmount, [subtotalEx, vatAmount]);
 
-  // How much discount was applied vs base prices
   const discountAmount = useMemo(() => {
     const dp = clampPct(discountPercent);
     if (dp <= 0) return 0;
@@ -374,16 +377,16 @@ export default function QuotationCreate() {
     setLines((prev) => prev.map((r) => (r.id === id ? recalc({ ...r, ...patch } as QuoteLine) : r)));
   }
 
-  function addRowAndFocus() {
-    const newRow = blankLine(vatPercent);
-    setLines((prev) => [...prev, newRow]);
+  function addLine() {
+    const row = blankLine(vatPercent);
+    setLines((prev) => [...prev, row]);
     setTimeout(() => {
-      qtyRefs.current[newRow.id]?.focus?.();
-      qtyRefs.current[newRow.id]?.select?.();
+      qtyRefs.current[row.id]?.focus?.();
+      qtyRefs.current[row.id]?.select?.();
     }, 0);
   }
 
-  function removeRow(id: string) {
+  function removeLine(id: string) {
     setLines((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
   }
 
@@ -435,14 +438,42 @@ export default function QuotationCreate() {
   function focusNextQty(currentRowId: string) {
     const idx = lines.findIndex((x) => x.id === currentRowId);
     if (idx < 0) return;
-
     const next = lines[idx + 1];
     if (next) {
       qtyRefs.current[next.id]?.focus?.();
       qtyRefs.current[next.id]?.select?.();
       return;
     }
-    addRowAndFocus();
+    addLine();
+  }
+
+  /* ===== Search dialogs ===== */
+  const filteredCustomers = useMemo(() => {
+    const t = custSearch.trim().toLowerCase();
+    if (!t) return customers;
+    return customers.filter((c) => {
+      const hay = `${c.name || ""} ${c.phone || ""} ${c.customer_code || ""} ${c.address || ""}`.toLowerCase();
+      return hay.includes(t);
+    });
+  }, [customers, custSearch]);
+
+  const filteredProducts = useMemo(() => {
+    const t = prodSearch.trim().toLowerCase();
+    if (!t) return products;
+    return products.filter((p) => {
+      const hay = `${p.item_code || ""} ${p.sku || ""} ${p.name || ""} ${p.description || ""}`.toLowerCase();
+      return hay.includes(t);
+    });
+  }, [products, prodSearch]);
+
+  function openCustomerSearch() {
+    setCustSearch("");
+    setCustOpen(true);
+  }
+  function openProductSearch(rowId: string) {
+    setProdPickRowId(rowId);
+    setProdSearch("");
+    setProdOpen(true);
   }
 
   /* ===== Save / Print ===== */
@@ -457,7 +488,7 @@ export default function QuotationCreate() {
       return toast.error("Please enter a Client Name (or switch to Customer Name).");
     }
 
-    setSaving(true);
+    setBusy(true);
     try {
       const payload: any = {
         quotation_date: quotationDate,
@@ -511,12 +542,11 @@ export default function QuotationCreate() {
 
       toast.success(`Quotation saved: ${no}`);
 
-      // ✅ Go to view page
-      if (res?.id) nav(`/quotations/${res.id}`);
+      if (res?.id) nav(`/quotations/${res.id}`, { replace: true });
     } catch (e: any) {
       toast.error(e?.message || "Failed to save quotation");
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
 
@@ -531,507 +561,615 @@ export default function QuotationCreate() {
   const DocAny: any = RamPotteryDoc;
 
   return (
-    <div className="inv-page">
-      {/* TOP ACTIONS */}
-      <div className="inv-actions inv-screen inv-actions--tight">
-        <Button variant="outline" onClick={() => nav(-1)}>
-          ← Back
-        </Button>
-
-        <div className="inv-actions-right">
-          <Button variant="outline" onClick={onPrint} disabled={printing}>
-            {printing ? "Preparing…" : "Print"}
+    <div className="space-y-5">
+      {/* ========= Header (match InvoiceCreate) ========= */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <Button variant="outline" onClick={() => nav(-1)} className="mt-1">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
           </Button>
 
-          <Button onClick={onSave} disabled={saving}>
-            {saving ? "Saving…" : "Save Quotation"}
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="text-2xl font-semibold">New Quotation</div>
+              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
+                <FileText className="h-3.5 w-3.5" />
+                Quote Create
+              </span>
+            </div>
+            <div className="text-sm text-muted-foreground">Customer • Items • Totals • Save</div>
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              customersQ.refetch();
+              productsQ.refetch();
+            }}
+            disabled={busy}
+          >
+            <RefreshCw className={"mr-2 h-4 w-4 " + (busy ? "animate-spin" : "")} />
+            Refresh data
+          </Button>
+
+          <Button variant="outline" onClick={onPrint} disabled={printing}>
+            <Printer className="mr-2 h-4 w-4" />
+            {printing ? "Preparing..." : "Print"}
+          </Button>
+
+          <Button onClick={onSave} disabled={busy}>
+            <Save className="mr-2 h-4 w-4" />
+            {busy ? "Saving..." : "Save Quotation"}
           </Button>
         </div>
       </div>
 
-      {/* FORM */}
-      <div className="inv-screen inv-form-shell inv-form-shell--tight">
-        <div className="inv-form-card">
-          <div className="inv-form-head inv-form-head--tight">
-            <div>
-              <div className="inv-form-title">New Quotation</div>
-              <div className="inv-form-sub">UI matches invoice creation (A4 columns locked).</div>
+      {/* ========= Main grid (same as InvoiceCreate) ========= */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Left: details */}
+        <Card className="p-5 space-y-4 lg:col-span-2">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">Quotation Details</div>
+            <div className="text-xs text-muted-foreground">Auto number when saved</div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Quotation No</div>
+              <Input value={quotationNumber} readOnly />
             </div>
 
-            <div className="inv-form-meta">
-              <div className="inv-meta-row">
-                <span className="inv-meta-k">Quotation No</span>
-                <span className="inv-meta-v">{quotationNumber}</span>
-              </div>
-              <div className="inv-meta-row">
-                <span className="inv-meta-k">Date</span>
-                <span className="inv-meta-v">{quotationDate}</span>
-              </div>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Quotation Date</div>
+              <Input type="date" value={quotationDate} onChange={(e) => setQuotationDate(e.target.value)} />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Valid Until (optional)</div>
+              <Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
             </div>
           </div>
 
-          {/* ===== 2 ROWS ONLY ===== */}
-          <div className="inv-form-2rows">
-            {/* ROW 1 */}
-            <div className="inv-form-row inv-form-row--top">
-              <div className="inv-field inv-field--printname">
-                <label>Print Name</label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* Customer selector + search */}
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Customer (account)</div>
 
-                <div className="inv-radioRow">
-                  <label className="inv-radioOpt">
-                    <input
-                      type="radio"
-                      checked={printNameMode === "CUSTOMER"}
-                      onChange={() => setPrintNameMode("CUSTOMER")}
-                    />
-                    <span>Customer Name</span>
-                  </label>
+              <div className="flex gap-2">
+                <select
+                  className="h-10 rounded-md border px-3 bg-background w-full"
+                  value={customerId ?? ""}
+                  onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">Select customer...</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.customer_code ? `${c.name} (${c.customer_code})` : c.name}
+                    </option>
+                  ))}
+                </select>
 
-                  <label className="inv-radioOpt">
-                    <input
-                      type="radio"
-                      checked={printNameMode === "CLIENT"}
-                      onChange={() => setPrintNameMode("CLIENT")}
-                    />
-                    <span>Client Name</span>
-                  </label>
-                </div>
-
-                <div className="inv-help">Only one name prints on the quotation header.</div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 w-10 px-0"
+                  onClick={openCustomerSearch}
+                  title="Search customer"
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
               </div>
 
-              <div className="inv-field">
-                <label>Client Name</label>
-                <input
-                  className="inv-input"
+              <div className="text-[11px] text-muted-foreground">
+                Selected: <b className="text-slate-900">{customer?.name || "—"}</b>
+              </div>
+            </div>
+
+            {/* Print name & client name */}
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Name Printed on Quote</div>
+
+              <div className="flex gap-2">
+                <select
+                  className="h-10 rounded-md border px-3 bg-background w-[180px]"
+                  value={printNameMode}
+                  onChange={(e) => setPrintNameMode(e.target.value as PrintNameMode)}
+                >
+                  <option value="CUSTOMER">Customer</option>
+                  <option value="CLIENT">Client</option>
+                </select>
+
+                <Input
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Type a client name (optional)"
-                />
-                <div className="inv-help">If “Client Name” is selected, it prints as the customer name.</div>
-              </div>
-
-              <div className="inv-field inv-field--customerBig">
-                <label>Customer (account)</label>
-
-                <div className="inv-customerRow">
-                  <select
-                    className="inv-input inv-input--customerSelect"
-                    value={customerId ?? ""}
-                    onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
-                  >
-                    <option value="">Select…</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  <button type="button" className="inv-iconBtn" onClick={openCustomerSearch} title="Search customer">
-                    🔍
-                  </button>
-                </div>
-
-                <div className="inv-help">
-                  {customer ? (
-                    <>
-                      <span>{customer.address || ""}</span>
-                      {customer.phone ? (
-                        <>
-                          {" "}
-                          · <span>{customer.phone}</span>
-                        </>
-                      ) : null}
-                      {customer.customer_code ? (
-                        <>
-                          {" "}
-                          · <span className="inv-muted">{customer.customer_code}</span>
-                        </>
-                      ) : null}
-                    </>
-                  ) : (
-                    <span>Select a customer</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="inv-field">
-                <label>Quotation Date</label>
-                <input
-                  className="inv-input"
-                  type="date"
-                  value={quotationDate}
-                  onChange={(e) => setQuotationDate(e.target.value)}
+                  placeholder="Client name (optional)"
                 />
               </div>
 
-              <div className="inv-field">
-                <label>Valid Until (optional)</label>
-                <input className="inv-input" type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              <div className="text-[11px] text-muted-foreground">
+                Printed: <b className="text-slate-900">{printedName || "—"}</b>
               </div>
-            </div>
-
-            {/* ROW 2 */}
-            <div className="inv-form-row inv-form-row--bottom">
-              <div className="inv-field inv-field--salesrep">
-                <label>Sales Rep(s)</label>
-
-                <div className="inv-rep">
-                  <button
-                    type="button"
-                    className="inv-rep-btn"
-                    onClick={() => setRepOpen((v) => !v)}
-                    aria-expanded={repOpen}
-                  >
-                    <div className="inv-rep-chips">
-                      {salesReps.length ? (
-                        salesReps.map((n) => (
-                          <span key={n} className="inv-chip">
-                            {n} ({repPhoneByName(n)})
-                            <span
-                              className="inv-chip-x"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSalesReps((prev) => prev.filter((x) => x !== n));
-                              }}
-                              title="Remove"
-                            >
-                              ×
-                            </span>
-                          </span>
-                        ))
-                      ) : (
-                        <span className="inv-rep-placeholder">Select sales reps…</span>
-                      )}
-                    </div>
-                    <span className="inv-rep-caret">▾</span>
-                  </button>
-
-                  {repOpen ? (
-                    <div className="inv-rep-pop" onMouseDown={(e) => e.stopPropagation()}>
-                      {SALES_REPS.map((r) => {
-                        const active = salesReps.includes(r.name);
-                        return (
-                          <button
-                            key={r.name}
-                            type="button"
-                            className={"inv-rep-item" + (active ? " is-active" : "")}
-                            onClick={() => {
-                              setSalesReps((prev) => (active ? prev.filter((x) => x !== r.name) : [...prev, r.name]));
-                              setRepOpen(false);
-                            }}
-                          >
-                            <span className="inv-rep-name">{r.name}</span>
-                            <span className="inv-rep-phone">{r.phone}</span>
-                            <span className="inv-rep-check">{active ? "✓" : ""}</span>
-                          </button>
-                        );
-                      })}
-                      <div className="inv-rep-hint">Click to select. Click again to remove.</div>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="inv-help">Prints on quotation + saved to record.</div>
-              </div>
-
-              <div className="inv-field">
-                <label>VAT %</label>
-                <input
-                  className="inv-input inv-input--right inv-input--sm"
-                  inputMode="decimal"
-                  value={vatPercent}
-                  onChange={(e) => setVatPercent(clampPct(e.target.value))}
-                />
-                <div className="inv-help">0–100 allowed (applies to all items).</div>
-              </div>
-
-              <div className="inv-field">
-                <label>Discount %</label>
-                <input
-                  className="inv-input inv-input--right inv-input--sm"
-                  inputMode="decimal"
-                  value={discountPercent}
-                  onChange={(e) => {
-                    setDiscountTouched(true);
-                    setDiscountPercent(clampPct(e.target.value));
-                  }}
-                />
-                <div className="inv-help">Auto from customer unless you edit.</div>
-              </div>
-
-              {/* filler to keep row aligned like invoice */}
-              <div className="inv-field" />
-              <div className="inv-field" />
-              <div className="inv-field" />
             </div>
           </div>
 
-          {/* ITEMS */}
-          <div className="inv-items">
-            <div className="inv-items-head">
-              <div>
-                <div className="inv-items-title">Items</div>
-                <div className="inv-items-sub">Matches printed quotation columns (A4).</div>
-              </div>
-
-              <div className="inv-items-actions">
-                <Button onClick={addRowAndFocus}>+ Add Row</Button>
-              </div>
+          {/* Customer preview (same premium card) */}
+          <div className="rounded-xl border bg-white p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-muted-foreground">Customer Preview</div>
+              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
+                <Users className="h-3.5 w-3.5" />
+                Preview
+              </span>
             </div>
 
-            <div className="inv-table-wrap">
-              <table className="inv-table inv-table--invoiceCols">
-                <colgroup>
-                  <col style={{ width: "4%" }} />
-                  <col style={{ width: "32%" }} />
-                  <col style={{ width: "14%" }} />
-                  <col style={{ width: "7%" }} />
-                  <col style={{ width: "8%" }} />
-                  <col style={{ width: "10%" }} />
-                  <col style={{ width: "7%" }} />
-                  <col style={{ width: "10%" }} />
-                  <col style={{ width: "12%" }} />
-                  <col style={{ width: "4%" }} />
-                </colgroup>
+            <div className="mt-2 flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold text-slate-900">{customer?.name || "—"}</div>
+                {customer?.customer_code ? <div className="text-xs text-slate-500">{customer.customer_code}</div> : null}
+              </div>
+              <div className="text-right text-xs text-slate-500">
+                {customer?.phone ? <div>{customer.phone}</div> : null}
+                {customer?.address ? <div className="max-w-[320px] truncate">{customer.address}</div> : null}
+              </div>
+            </div>
+          </div>
 
-                <thead>
-                  <tr>
-                    <th className="inv-th inv-th-center">#</th>
-                    <th className="inv-th">PRODUCT</th>
-                    <th className="inv-th inv-th-center">BOX / PCS</th>
-                    <th className="inv-th inv-th-center">UNIT</th>
-                    <th className="inv-th inv-th-center">TOTAL QTY</th>
-                    <th className="inv-th inv-th-right">UNIT EX</th>
-                    <th className="inv-th inv-th-right">VAT</th>
-                    <th className="inv-th inv-th-right">UNIT INC</th>
-                    <th className="inv-th inv-th-right">TOTAL</th>
-                    <th className="inv-th inv-th-center" />
-                  </tr>
-                </thead>
+          {/* Sales reps (same premium multi-select) */}
+          <div className="rounded-xl border bg-white p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-muted-foreground">Sales Rep(s)</div>
+              <span className="text-[11px] text-slate-500">Required</span>
+            </div>
 
-                <tbody>
-                  {lines.map((r, idx) => {
-                    const isReal = !!r.product_id;
+            <div className="mt-2 relative">
+              <button
+                type="button"
+                className="w-full min-h-[40px] rounded-md border bg-background px-3 py-2 text-left"
+                onClick={() => setRepOpen((v) => !v)}
+                aria-expanded={repOpen}
+              >
+                <div className="flex flex-wrap gap-2">
+                  {salesReps.length ? (
+                    salesReps.map((n) => (
+                      <span
+                        key={n}
+                        className="inline-flex items-center gap-2 rounded-full border bg-white px-2 py-1 text-[12px]"
+                      >
+                        {n} <span className="text-slate-500">({repPhoneByName(n)})</span>
+                        <span
+                          className="cursor-pointer text-slate-500 hover:text-slate-900"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSalesReps((prev) => prev.filter((x) => x !== n));
+                          }}
+                          title="Remove"
+                        >
+                          ×
+                        </span>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-slate-500 text-sm">Select sales reps…</span>
+                  )}
+                </div>
+              </button>
 
-                    return (
-                      <tr key={r.id}>
-                        <td className="inv-td inv-center">{idx + 1}</td>
+              {repOpen ? (
+                <div className="absolute z-30 mt-2 w-full rounded-xl border bg-white shadow-lg overflow-hidden">
+                  <div className="max-h-[240px] overflow-auto">
+                    {SALES_REPS.map((r) => {
+                      const active = salesReps.includes(r.name);
+                      return (
+                        <button
+                          key={r.name}
+                          type="button"
+                          className={
+                            "w-full px-3 py-2 text-left hover:bg-slate-50 flex items-center justify-between " +
+                            (active ? "bg-slate-50" : "")
+                          }
+                          onClick={() => {
+                            setSalesReps((prev) =>
+                              active ? prev.filter((x) => x !== r.name) : [...prev, r.name]
+                            );
+                            setRepOpen(false);
+                          }}
+                        >
+                          <span className="font-medium text-slate-900">{r.name}</span>
+                          <span className="text-sm text-slate-500">{r.phone}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="px-3 py-2 text-[11px] text-slate-500 border-t">Click to select/remove.</div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </Card>
 
-                        <td className="inv-td">
-                          <div className="inv-prodRow">
-                            <select
-                              className="inv-input inv-input--prod"
-                              value={r.product_id ?? ""}
-                              onChange={(e) => {
-                                const pid = e.target.value ? Number(e.target.value) : null;
-                                const p = pid ? products.find((x) => x.id === pid) || null : null;
-                                applyProductToRow(r.id, p);
-                              }}
-                            >
-                              <option value="">Select…</option>
-                              {products.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {(p.item_code || p.sku || "").toString()} — {(p.name || "").toString()}
-                                </option>
-                              ))}
-                            </select>
+        {/* Right: totals + VAT/Discount */}
+        <Card className="p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">Totals</div>
+            <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
+              <BadgePercent className="h-3.5 w-3.5" />
+              Live calc
+            </span>
+          </div>
 
-                            <button
-                              type="button"
-                              className="inv-iconBtn inv-iconBtn--table"
-                              onClick={() => openProductSearch(r.id)}
-                              title="Search product"
-                            >
-                              🔍
-                            </button>
+          <div className="grid gap-3">
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">VAT % (applies to all items)</div>
+              <Input
+                inputMode="decimal"
+                value={String(vatPercent)}
+                onChange={(e) => setVatPercent(clampPct(e.target.value))}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Discount %</div>
+              <Input
+                inputMode="decimal"
+                value={String(discountPercent)}
+                onChange={(e) => {
+                  setDiscountTouched(true);
+                  setDiscountPercent(clampPct(e.target.value));
+                }}
+              />
+              <div className="text-[11px] text-muted-foreground">Auto from customer unless you edit.</div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border bg-white p-4 space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Subtotal (EX)</span>
+              <b className="text-slate-900">Rs {money(subtotalEx)}</b>
+            </div>
+
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">VAT</span>
+              <b className="text-slate-900">Rs {money(vatAmount)}</b>
+            </div>
+
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Discount</span>
+              <b className="text-slate-900">Rs {money(discountAmount)}</b>
+            </div>
+
+            <div className="h-px bg-slate-200 my-1" />
+
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Total</span>
+              <b className="text-xl text-slate-900">Rs {money(totalAfterDiscount)}</b>
+            </div>
+          </div>
+
+          <Button variant="outline" onClick={addLine}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Item
+          </Button>
+
+          <div className="text-[11px] text-muted-foreground">Tip: Use the 🔎 search button per row to find products fast.</div>
+        </Card>
+      </div>
+
+      {/* ========= Items table (invoice-style locked columns) ========= */}
+      <Card className="overflow-hidden">
+        <div className="overflow-auto">
+          <table className="w-full min-w-[1180px]">
+            <thead className="bg-slate-50">
+              <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
+                <th className="px-4 py-3 text-left">Product</th>
+                <th className="px-4 py-3 text-left">Box / PCS</th>
+                <th className="px-4 py-3 text-left">Unit</th>
+                <th className="px-4 py-3 text-left">Total Qty</th>
+                <th className="px-4 py-3 text-left">Unit Excl</th>
+                <th className="px-4 py-3 text-left">VAT</th>
+                <th className="px-4 py-3 text-left">Unit Incl</th>
+                <th className="px-4 py-3 text-left">Line Total</th>
+                <th className="px-3 py-3 text-right" />
+              </tr>
+            </thead>
+
+            <tbody className="divide-y">
+              {lines.map((r) => {
+                const isReal = !!r.product_id;
+
+                return (
+                  <tr key={r.id} className="hover:bg-slate-50/60">
+                    {/* product */}
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2 items-start">
+                        <div className="w-full">
+                          <select
+                            className="h-10 rounded-md border px-3 bg-background w-full min-w-[360px]"
+                            value={r.product_id ?? ""}
+                            onChange={(e) => {
+                              const pid = e.target.value ? Number(e.target.value) : null;
+                              const p = pid ? products.find((x) => x.id === pid) || null : null;
+                              applyProductToRow(r.id, p);
+                            }}
+                          >
+                            <option value="">Select product...</option>
+                            {products.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name || "—"}
+                                {p.item_code ? ` • ${p.item_code}` : ""}
+                                {p.sku ? ` • ${p.sku}` : ""}
+                              </option>
+                            ))}
+                          </select>
+
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {r.product_id ? pickProductLabel(products.find((p) => p.id === r.product_id) || null) : "—"}
                           </div>
-                        </td>
+                        </div>
 
-                        <td className="inv-td inv-center">
-                          <div className="inv-boxcell">
-                            <select
-                              className="inv-input inv-input--uom"
-                              value={r.uom}
-                              onChange={(e) => setLine(r.id, { uom: e.target.value as any })}
-                              disabled={!isReal}
-                            >
-                              <option value="BOX">BOX</option>
-                              <option value="PCS">PCS</option>
-                            </select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-10 w-10 px-0"
+                          onClick={() => openProductSearch(r.id)}
+                          title="Search product"
+                        >
+                          <Search className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </td>
 
-                            <input
-                              ref={(el) => (qtyRefs.current[r.id] = el)}
-                              className="inv-input inv-input--qty inv-input--qtywide inv-center"
-                              value={r.box_qty}
-                              onChange={(e) => setLine(r.id, { box_qty: n2(e.target.value) })}
-                              onKeyDown={(e) => {
-                                if (e.key !== "Enter") return;
-                                if (!isReal) return;
-                                e.preventDefault();
-                                focusNextQty(r.id);
-                              }}
-                              disabled={!isReal}
-                              inputMode="numeric"
-                              placeholder="0"
-                            />
-                          </div>
-                        </td>
+                    {/* box/pcs */}
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2 items-center">
+                        <select
+                          className="h-10 rounded-md border px-3 bg-background w-[110px]"
+                          value={r.uom}
+                          onChange={(e) => setLine(r.id, { uom: e.target.value as any })}
+                          disabled={!isReal}
+                        >
+                          <option value="BOX">BOX</option>
+                          <option value="PCS">PCS</option>
+                        </select>
 
-                        <td className="inv-td inv-center">
-                          <input className="inv-input inv-center" value={r.uom === "PCS" ? "" : intFmt(r.units_per_box)} readOnly />
-                        </td>
+                        <Input
+                          ref={(el) => (qtyRefs.current[r.id] = el)}
+                          inputMode="numeric"
+                          value={String(r.box_qty)}
+                          onChange={(e) => setLine(r.id, { box_qty: n2(e.target.value) })}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter") return;
+                            if (!isReal) return;
+                            e.preventDefault();
+                            focusNextQty(r.id);
+                          }}
+                          className="w-[120px]"
+                          disabled={!isReal}
+                          placeholder="0"
+                        />
+                      </div>
+                    </td>
 
-                        <td className="inv-td inv-center">
-                          <input className="inv-input inv-center" value={intFmt(r.total_qty)} readOnly />
-                        </td>
+                    {/* unit (UPB) */}
+                    <td className="px-4 py-3">
+                      <Input
+                        value={r.uom === "PCS" ? "—" : intFmt(r.units_per_box)}
+                        readOnly
+                        className="w-[110px]"
+                      />
+                    </td>
 
-                        <td className="inv-td inv-right">
-                          <input className="inv-input inv-input--right" value={money(r.unit_price_excl_vat)} readOnly />
-                        </td>
+                    {/* total qty */}
+                    <td className="px-4 py-3">
+                      <Input value={intFmt(r.total_qty)} readOnly className="w-[110px]" />
+                    </td>
 
-                        <td className="inv-td inv-right">
-                          <input className="inv-input inv-input--right" value={money(r.unit_vat)} readOnly />
-                        </td>
+                    {/* unit excl */}
+                    <td className="px-4 py-3 text-sm">
+                      <div className="text-slate-500">Rs</div>
+                      <div className="text-slate-900">{money(r.unit_price_excl_vat)}</div>
+                    </td>
 
-                        <td className="inv-td inv-right">
-                          <input className="inv-input inv-input--right" value={money(r.unit_price_incl_vat)} readOnly />
-                        </td>
+                    {/* unit vat */}
+                    <td className="px-4 py-3 text-sm">
+                      <div className="text-slate-500">Rs</div>
+                      <div className="text-slate-900">{money(r.unit_vat)}</div>
+                    </td>
 
-                        <td className="inv-td inv-right">
-                          <input className="inv-input inv-input--right inv-input--total" value={money(r.line_total)} readOnly />
-                        </td>
+                    {/* unit incl */}
+                    <td className="px-4 py-3 text-sm">
+                      <div className="text-slate-500">Rs</div>
+                      <div className="text-slate-900">{money(r.unit_price_incl_vat)}</div>
+                    </td>
 
-                        <td className="inv-td inv-center">
+                    {/* line total */}
+                    <td className="px-4 py-3 text-sm">
+                      <div className="text-slate-500">Rs</div>
+                      <div className="text-slate-900 font-semibold">{money(r.line_total)}</div>
+                    </td>
+
+                    {/* actions */}
+                    <td className="px-3 py-3 text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
                           <button
                             type="button"
-                            className="inv-xmini"
-                            onClick={() => removeRow(r.id)}
-                            title="Remove row"
-                            aria-label="Remove row"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-full border bg-white hover:bg-slate-50"
+                            aria-label="Row actions"
                           >
-                            ✕
+                            <MoreHorizontal className="h-5 w-5 text-slate-700" />
                           </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </DropdownMenuTrigger>
+
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem onClick={() => removeLine(r.id)}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Remove
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => addLine()}>
+                            <Plus className="mr-2 h-4 w-4" />
+                            Add row
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => nav("/quotations")}>
+          Cancel
+        </Button>
+        <Button onClick={onSave} disabled={busy}>
+          <Save className="mr-2 h-4 w-4" />
+          {busy ? "Saving..." : "Save Quotation"}
+        </Button>
+      </div>
+
+      {/* =========================
+          Customer Search Dialog
+      ========================= */}
+      <Dialog open={custOpen} onOpenChange={setCustOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Search Customer</DialogTitle>
+            <DialogDescription>Type name / code / phone / address, then click a row.</DialogDescription>
+          </DialogHeader>
+
+          <div className="flex gap-2">
+            <Input value={custSearch} onChange={(e) => setCustSearch(e.target.value)} placeholder="Search customers..." autoFocus />
+            <Button variant="outline" onClick={() => setCustSearch("")}>
+              Clear
+            </Button>
+          </div>
+
+          <div className="mt-3 rounded-xl border overflow-hidden">
+            <div className="max-h-[420px] overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
+                    <th className="px-3 py-2 text-left">Name</th>
+                    <th className="px-3 py-2 text-left">Code</th>
+                    <th className="px-3 py-2 text-left">Phone</th>
+                    <th className="px-3 py-2 text-left">Address</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredCustomers.map((c) => (
+                    <tr
+                      key={c.id}
+                      className="hover:bg-slate-50 cursor-pointer"
+                      onClick={() => {
+                        setCustomerId(c.id);
+                        setCustOpen(false);
+                      }}
+                      title="Select customer"
+                    >
+                      <td className="px-3 py-2 font-semibold text-slate-900">{c.name}</td>
+                      <td className="px-3 py-2 text-slate-700">{c.customer_code || "—"}</td>
+                      <td className="px-3 py-2 text-slate-700">{c.phone || "—"}</td>
+                      <td className="px-3 py-2 text-slate-700">
+                        <div className="max-w-[360px] truncate">{c.address || "—"}</div>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {filteredCustomers.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">
+                        No customers match your search.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
+          </div>
 
-            {/* Totals tiles (same vibe as invoice) */}
-            <div className="inv-totalsbar inv-totalsbar--premium">
-              <div className="inv-totalsbar__cell">
-                <span className="k">Subtotal</span>
-                <span className="v">Rs {money(subtotalEx)}</span>
-              </div>
-              <div className="inv-totalsbar__cell">
-                <span className="k">VAT</span>
-                <span className="v">Rs {money(vatAmount)}</span>
-              </div>
-              <div className="inv-totalsbar__cell">
-                <span className="k">Discount</span>
-                <span className="v">Rs {money(discountAmount)}</span>
-              </div>
-              <div className="inv-totalsbar__cell inv-totalsbar__cell--balance">
-                <span className="k">Total</span>
-                <span className="v">Rs {money(totalAfterDiscount)}</span>
-              </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setCustOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* =========================
+          Product Search Dialog
+      ========================= */}
+      <Dialog open={prodOpen} onOpenChange={setProdOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Search Product</DialogTitle>
+            <DialogDescription>Type name / item code / SKU / description, then click a row.</DialogDescription>
+          </DialogHeader>
+
+          <div className="flex gap-2">
+            <Input value={prodSearch} onChange={(e) => setProdSearch(e.target.value)} placeholder="Search products..." autoFocus />
+            <Button variant="outline" onClick={() => setProdSearch("")}>
+              Clear
+            </Button>
+          </div>
+
+          <div className="mt-3 rounded-xl border overflow-hidden">
+            <div className="max-h-[420px] overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
+                    <th className="px-3 py-2 text-left">Name</th>
+                    <th className="px-3 py-2 text-left">Item Code</th>
+                    <th className="px-3 py-2 text-left">SKU</th>
+                    <th className="px-3 py-2 text-right">UPB</th>
+                    <th className="px-3 py-2 text-right">Unit Ex</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredProducts.map((p) => (
+                    <tr
+                      key={p.id}
+                      className="hover:bg-slate-50 cursor-pointer"
+                      onClick={() => {
+                        const rowId = prodPickRowId;
+                        if (rowId) applyProductToRow(rowId, p);
+                        setProdOpen(false);
+                      }}
+                      title="Select product"
+                    >
+                      <td className="px-3 py-2 font-semibold text-slate-900">{p.name || "—"}</td>
+                      <td className="px-3 py-2 text-slate-700">{p.item_code || "—"}</td>
+                      <td className="px-3 py-2 text-slate-700">{p.sku || "—"}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{intFmt(p.units_per_box ?? 1)}</td>
+                      <td className="px-3 py-2 text-right text-slate-700">{money(p.selling_price ?? 0)}</td>
+                    </tr>
+                  ))}
+
+                  {filteredProducts.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">
+                        No products match your search.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* CUSTOMER SEARCH MODAL */}
-      {customerSearchOpen ? (
-        <div className="inv-modal-backdrop" onMouseDown={closeCustomerSearch}>
-          <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="inv-modal-head">
-              <div className="inv-modal-title">Search Customer</div>
-              <button className="inv-modal-x" onClick={closeCustomerSearch} type="button" aria-label="Close">
-                ✕
-              </button>
-            </div>
-
-            <div className="inv-modal-body">
-              <input
-                id="qCustomerSearchInput"
-                className="inv-input"
-                value={customerSearchTerm}
-                onChange={(e) => setCustomerSearchTerm(e.target.value)}
-                placeholder="Search by name, phone, code, address…"
-              />
-
-              <div className="inv-modal-list">
-                {filteredCustomers.slice(0, 250).map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="inv-modal-item"
-                    onClick={() => {
-                      setCustomerId(c.id);
-                      closeCustomerSearch();
-                    }}
-                  >
-                    <div className="inv-modal-item-title">
-                      <b>{c.name}</b> {c.customer_code ? <span className="inv-muted">({c.customer_code})</span> : null}
-                    </div>
-                    <div className="inv-modal-item-sub">{[c.phone, c.address].filter(Boolean).join(" · ")}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setProdOpen(false)}>
+              Close
+            </Button>
           </div>
-        </div>
-      ) : null}
-
-      {/* PRODUCT SEARCH MODAL */}
-      {productSearchOpen ? (
-        <div className="inv-modal-backdrop" onMouseDown={closeProductSearch}>
-          <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="inv-modal-head">
-              <div className="inv-modal-title">Search Product</div>
-              <button className="inv-modal-x" onClick={closeProductSearch} type="button" aria-label="Close">
-                ✕
-              </button>
-            </div>
-
-            <div className="inv-modal-body">
-              <input
-                id="qProductSearchInput"
-                className="inv-input"
-                value={productSearchTerm}
-                onChange={(e) => setProductSearchTerm(e.target.value)}
-                placeholder="Search by code, sku, name, description…"
-              />
-
-              <div className="inv-modal-list">
-                {filteredProducts.slice(0, 250).map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="inv-modal-item"
-                    onClick={() => {
-                      const rowId = productSearchRowId;
-                      if (rowId) applyProductToRow(rowId, p);
-                      closeProductSearch();
-                    }}
-                  >
-                    <div className="inv-modal-item-title">
-                      <b>{p.item_code || p.sku}</b> — {p.name}
-                    </div>
-                    <div className="inv-modal-item-sub">
-                      UNIT: {intFmt(p.units_per_box ?? 1)} · Unit Ex: {money(p.selling_price ?? 0)}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
 
       {/* PRINT ONLY */}
       <div className="inv-printonly">
@@ -1041,7 +1179,6 @@ export default function QuotationCreate() {
           docNoValue={quotationNumber}
           dateLabel="DATE:"
           dateValue={quotationDate}
-          // Use PO row as VALID UNTIL for quotation (no doc component change needed)
           purchaseOrderLabel={validUntil ? "VALID UNTIL:" : undefined}
           purchaseOrderValue={validUntil || ""}
           salesRepName={salesReps.join(", ")}
@@ -1054,7 +1191,6 @@ export default function QuotationCreate() {
             vat_no: customer?.vat_no || "",
             customer_code: customer?.customer_code || "",
           }}
-          // TODO: replace with your real company BRN/VAT from settings if you store it
           company={{ brn: "", vat_no: "" }}
           items={realLines.map((r: any, i: number) => ({
             sn: i + 1,
@@ -1087,4 +1223,5 @@ export default function QuotationCreate() {
     </div>
   );
 }
+
 

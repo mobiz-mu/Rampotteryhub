@@ -1,302 +1,441 @@
 // src/pages/Quotation.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+import {
+  MoreHorizontal,
+  Eye,
+  Printer,
+  RefreshCw,
+  Search,
+  Filter,
+  FileText,
+  BadgeCheck,
+  Send,
+  Ban,
+  PenLine,
+} from "lucide-react";
 
 import { listQuotations } from "@/lib/quotations";
 
+/* =========================
+   Helpers
+========================= */
 type QuotationStatus = "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "CANCELLED" | string;
+
+const n = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+const rs = (v: any) =>
+  `Rs ${n(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 function fmtDate(v: any) {
   const s = String(v || "").trim();
-  if (!s) return "";
+  if (!s) return "—";
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  try {
+    const d = new Date(v);
+    if (!Number.isNaN(d.getTime())) return d.toLocaleDateString();
+  } catch {}
+  return s || "—";
+}
+
+function normStatus(st: any): QuotationStatus {
+  const s = String(st || "DRAFT").toUpperCase();
+  if (s === "DRAFT") return "DRAFT";
+  if (s === "SENT") return "SENT";
+  if (s === "ACCEPTED") return "ACCEPTED";
+  if (s === "REJECTED") return "REJECTED";
+  if (s === "CANCELLED") return "CANCELLED";
   return s;
 }
 
-function money(v: any) {
-  const x = Number(v ?? 0);
-  const n = Number.isFinite(x) ? x : 0;
-  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+function statusLabel(st: QuotationStatus) {
+  const s = String(st || "DRAFT").toUpperCase();
+  if (s === "DRAFT") return "Draft";
+  if (s === "SENT") return "Sent";
+  if (s === "ACCEPTED") return "Accepted";
+  if (s === "REJECTED") return "Rejected";
+  if (s === "CANCELLED") return "Cancelled";
+  return s;
 }
 
-function statusMeta(st: string) {
+function statusPillClass(st: QuotationStatus) {
   const s = String(st || "DRAFT").toUpperCase();
-  // Keep compatible with your existing CSS palette (inv-* classes)
-  // We add small semantic classes you can style later, but it still looks good with default.
-  if (s === "ACCEPTED") return { label: "Accepted", tone: "good" as const };
-  if (s === "REJECTED" || s === "CANCELLED") return { label: s === "CANCELLED" ? "Cancelled" : "Rejected", tone: "bad" as const };
-  if (s === "SENT") return { label: "Sent", tone: "warn" as const };
-  return { label: "Draft", tone: "muted" as const };
+  if (s === "ACCEPTED") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (s === "SENT") return "bg-amber-50 text-amber-700 border-amber-200";
+  if (s === "REJECTED" || s === "CANCELLED") return "bg-rose-50 text-rose-700 border-rose-200";
+  return "bg-slate-50 text-slate-700 border-slate-200"; // DRAFT/default
 }
+
+/* =========================
+   Page
+========================= */
+type Row = any;
 
 export default function Quotation() {
   const nav = useNavigate();
 
+  // UI state (invoice-style)
+  const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<QuotationStatus | "ALL">("ALL");
 
-  const qTrim = q.trim();
+  // Debounced search
+  useEffect(() => {
+    const t = window.setTimeout(() => setQ(qInput.trim()), 250);
+    return () => window.clearTimeout(t);
+  }, [qInput]);
 
   const listQ = useQuery({
-    queryKey: ["quotations", { q: qTrim, status }],
-    queryFn: () => listQuotations({ q: qTrim, status, limit: 500 }),
-    staleTime: 15_000,
+    queryKey: ["quotations", q, status],
+    queryFn: () => listQuotations({ q, status, limit: 500 }),
+    staleTime: 12_000,
   });
 
-  const rows = (listQ.data || []) as any[];
+  const rows: Row[] = Array.isArray(listQ.data) ? listQ.data : [];
 
-  const stats = useMemo(() => {
-    const total = rows.length;
-    const draft = rows.filter((r) => String(r.status || "DRAFT").toUpperCase() === "DRAFT").length;
-    const sent = rows.filter((r) => String(r.status || "").toUpperCase() === "SENT").length;
-    const accepted = rows.filter((r) => String(r.status || "").toUpperCase() === "ACCEPTED").length;
-    const rejected = rows.filter((r) => {
-      const s = String(r.status || "").toUpperCase();
+  const kpis = useMemo(() => {
+    const totalValue = rows.reduce((sum, r) => sum + n(r.total_amount), 0);
+
+    const draft = rows.filter((r) => normStatus(r.status) === "DRAFT").length;
+    const sent = rows.filter((r) => normStatus(r.status) === "SENT").length;
+    const accepted = rows.filter((r) => normStatus(r.status) === "ACCEPTED").length;
+    const closed = rows.filter((r) => {
+      const s = normStatus(r.status);
       return s === "REJECTED" || s === "CANCELLED";
     }).length;
 
-    const amount = rows.reduce((sum, r) => sum + Number(r.total_amount || 0), 0);
-
-    return { total, draft, sent, accepted, rejected, amount };
+    return { count: rows.length, totalValue, draft, sent, accepted, closed };
   }, [rows]);
 
-  const filtered = useMemo(() => rows, [rows]);
-
   return (
-    <div className="inv-page">
-      {/* PREMIUM HEADER STRIP */}
-      <div className="inv-screen inv-actions inv-actions--tight">
+    <div className="space-y-5">
+      {/* Premium background hint (same theme you used on invoice/credit note list) */}
+      <div className="pointer-events-none fixed inset-0 -z-10 opacity-60">
+        <div className="absolute -top-24 left-1/2 h-72 w-[60rem] -translate-x-1/2 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-40 right-[-10rem] h-96 w-96 rounded-full bg-white/5 blur-3xl" />
+      </div>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-start gap-3">
-          <div>
-            <div className="inv-form-title" style={{ lineHeight: 1.05 }}>
-              Quotations
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Create, track, and print quotations — same engine & columns as invoices.
-            </div>
+          <div className="mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-2xl border bg-white shadow-sm">
+            <FileText className="h-5 w-5 text-slate-800" />
           </div>
 
-          {/* quick stats chips */}
-          <div className="hidden md:flex flex-wrap gap-2 ml-4">
-            <span className="inv-chip inv-chip--soft" title="Total quotations">
-              Total: <b>{stats.total}</b>
-            </span>
-            <span className="inv-chip inv-chip--soft" title="Draft">
-              Draft: <b>{stats.draft}</b>
-            </span>
-            <span className="inv-chip inv-chip--soft" title="Sent">
-              Sent: <b>{stats.sent}</b>
-            </span>
-            <span className="inv-chip inv-chip--soft" title="Accepted">
-              Accepted: <b>{stats.accepted}</b>
-            </span>
-            <span className="inv-chip inv-chip--soft" title="Rejected/Cancelled">
-              Closed: <b>{stats.rejected}</b>
-            </span>
-            <span className="inv-chip inv-chip--soft" title="Sum of totals in current list">
-              Amount: <b>Rs {money(stats.amount)}</b>
-            </span>
+          <div>
+            <div className="text-2xl font-semibold tracking-tight">Quotations</div>
+            <div className="text-sm text-muted-foreground">
+              Draft • Send • Accept • Print — invoice-style engine & layout
+            </div>
           </div>
         </div>
 
-        <div className="inv-actions-right">
-          <Button variant="outline" onClick={() => listQ.refetch()}>
-            Refresh
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => nav("/dashboard")}>
+            Back
           </Button>
           <Button onClick={() => nav("/quotations/new")}>+ New Quotation</Button>
         </div>
       </div>
 
-      {/* CONTENT SHELL */}
-      <div className="inv-screen inv-form-shell inv-form-shell--tight">
-        <div className="inv-form-card">
-          {/* FILTER BAR */}
-          <div className="inv-form-head inv-form-head--tight">
-            <div>
-              <div className="inv-form-title">Quotation Register</div>
-              <div className="inv-form-sub">
-                Search by quotation no, customer name or code • Print-ready A4 layout.
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inv-field" style={{ minWidth: 320 }}>
-                <input
-                  className="inv-input"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search: quotation no, customer, code…"
-                />
-              </div>
-
-              <select className="inv-input" value={status} onChange={(e) => setStatus(e.target.value)}>
-                <option value="ALL">All Status</option>
-                <option value="DRAFT">Draft</option>
-                <option value="SENT">Sent</option>
-                <option value="ACCEPTED">Accepted</option>
-                <option value="REJECTED">Rejected</option>
-                <option value="CANCELLED">Cancelled</option>
-              </select>
-
-              <Button variant="outline" onClick={() => setQ("")}>
-                Clear
-              </Button>
+      {/* KPIs */}
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Quotations</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <FileText className="h-4 w-4 text-slate-700" />
             </div>
           </div>
+          <div className="mt-2 text-2xl font-semibold">{kpis.count}</div>
+          <div className="mt-1 text-xs text-muted-foreground">In current filter</div>
+        </Card>
 
-          {/* TABLE */}
-          <div className="inv-table-wrap">
-            <table className="inv-table inv-table--premiumList">
-              <colgroup>
-                <col style={{ width: "12%" }} />
-                <col style={{ width: "14%" }} />
-                <col style={{ width: "42%" }} />
-                <col style={{ width: "12%" }} />
-                <col style={{ width: "10%" }} />
-                <col style={{ width: "10%" }} />
-              </colgroup>
-
-              <thead>
-                <tr>
-                  <th className="inv-th">QUOTE #</th>
-                  <th className="inv-th">DATE</th>
-                  <th className="inv-th">CUSTOMER</th>
-                  <th className="inv-th inv-th-right">TOTAL</th>
-                  <th className="inv-th inv-th-center">STATUS</th>
-                  <th className="inv-th inv-th-right">ACTIONS</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {listQ.isLoading ? (
-                  <tr>
-                    <td className="inv-td" colSpan={6}>
-                      Loading…
-                    </td>
-                  </tr>
-                ) : filtered.length === 0 ? (
-                  <tr>
-                    <td className="inv-td" colSpan={6}>
-                      No quotations found.
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((r) => {
-                    const id = r.id;
-                    const no = String(r.quotation_number || r.quotation_no || r.number || id);
-                    const cust = String(r.customer_name || "");
-                    const code = String(r.customer_code || "");
-                    const stRaw = String(r.status || "DRAFT");
-                    const st = statusMeta(stRaw);
-
-                    return (
-                      <tr
-                        key={id}
-                        className="inv-rowHover"
-                        onDoubleClick={() => nav(`/quotations/${id}`)}
-                        title="Double-click to open"
-                      >
-                        <td className="inv-td">
-                          <div className="flex items-center gap-2">
-                            <span className="inv-kbd">Q</span>
-                            <b>{no}</b>
-                          </div>
-                        </td>
-
-                        <td className="inv-td">{fmtDate(r.quotation_date)}</td>
-
-                        <td className="inv-td">
-                          <div className="flex flex-col">
-                            <span className="font-medium">
-                              {cust || <span className="text-muted-foreground">(No customer)</span>}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {code ? `Code: ${code}` : "—"}
-                              {r.valid_until ? ` · Valid until: ${fmtDate(r.valid_until)}` : ""}
-                            </span>
-                          </div>
-                        </td>
-
-                        <td className="inv-td inv-right">
-                          <div className="flex flex-col items-end">
-                            <span className="font-semibold">Rs {money(r.total_amount)}</span>
-                            <span className="text-xs text-muted-foreground">
-                              VAT: Rs {money(r.vat_amount)} {Number(r.discount_amount || 0) > 0 ? `· Disc: Rs ${money(r.discount_amount)}` : ""}
-                            </span>
-                          </div>
-                        </td>
-
-                        <td className="inv-td inv-center">
-                          <span className={`inv-badge inv-badge--${st.tone}`}>{st.label}</span>
-                        </td>
-
-                        <td className="inv-td inv-right">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => nav(`/quotations/${id}`)}>
-                              View
-                            </Button>
-                            <Button variant="outline" onClick={() => nav(`/quotations/${id}/print`)}>
-                              Print
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Total Value</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <BadgeCheck className="h-4 w-4 text-slate-700" />
+            </div>
           </div>
+          <div className="mt-2 text-2xl font-semibold">{rs(kpis.totalValue)}</div>
+          <div className="mt-1 text-xs text-muted-foreground">Sum of totals</div>
+        </Card>
 
-          {/* FOOTER NOTE */}
-          <div className="p-3 text-xs text-muted-foreground">
-            Tip: Double-click a row to open. Use <b>New Quotation</b> for invoice-style creation (BOX / UPB / TOTAL QTY + VAT columns).
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Sent</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <Send className="h-4 w-4 text-slate-700" />
+            </div>
           </div>
-        </div>
+          <div className="mt-2 text-2xl font-semibold">{kpis.sent}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Draft: <b className="text-slate-800">{kpis.draft}</b>
+          </div>
+        </Card>
+
+        <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-muted-foreground">Accepted</div>
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
+              <BadgeCheck className="h-4 w-4 text-slate-700" />
+            </div>
+          </div>
+          <div className="mt-2 text-2xl font-semibold">{kpis.accepted}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Closed: <b className="text-slate-800">{kpis.closed}</b>
+          </div>
+        </Card>
       </div>
 
-      {/* Small CSS add-on (premium chips/badges) */}
-      <style>{`
-        /* If your project already has these classnames, this block is harmless. */
-        .inv-chip{
-          display:inline-flex; align-items:center; gap:6px;
-          padding:6px 10px; border-radius:999px;
-          border:1px solid rgba(15,23,42,.14);
-          background: rgba(248,250,252,.9);
-          box-shadow: 0 8px 22px rgba(2,6,23,.06);
-          font-size:12px;
-          white-space:nowrap;
-        }
-        .inv-chip--soft b{ font-weight:700; }
+      {/* Filters */}
+      <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full max-w-[520px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              placeholder="Search: quote no • customer • code"
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              className="pl-9"
+            />
+          </div>
 
-        .inv-kbd{
-          display:inline-flex; align-items:center; justify-content:center;
-          width:18px; height:18px; border-radius:6px;
-          border:1px solid rgba(15,23,42,.18);
-          background: rgba(2,6,23,.04);
-          font-size:11px; font-weight:700;
-        }
+          <div className="inline-flex items-center gap-2">
+            <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white">
+              <Filter className="h-4 w-4 text-slate-700" />
+            </div>
 
-        .inv-badge{
-          display:inline-flex; align-items:center; justify-content:center;
-          padding:6px 10px; border-radius:999px;
-          font-size:12px; font-weight:700;
-          border:1px solid rgba(15,23,42,.14);
-          background: rgba(2,6,23,.04);
-        }
-        .inv-badge--good{ background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.25); }
-        .inv-badge--warn{ background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.28); }
-        .inv-badge--bad{  background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.26); }
-        .inv-badge--muted{ background: rgba(2,6,23,.04); }
+            <select
+              className="h-10 rounded-xl border px-3 bg-white"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as any)}
+            >
+              <option value="ALL">All</option>
+              <option value="DRAFT">Draft</option>
+              <option value="SENT">Sent</option>
+              <option value="ACCEPTED">Accepted</option>
+              <option value="REJECTED">Rejected</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
 
-        .inv-rowHover{ cursor:pointer; }
-        .inv-rowHover:hover td{
-          background: rgba(2,6,23,.03);
-        }
-      `}</style>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setQInput("");
+                setStatus("ALL");
+              }}
+              className="rounded-xl"
+            >
+              Clear
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => listQ.refetch()}
+              disabled={listQ.isFetching}
+              className="rounded-xl"
+            >
+              <RefreshCw className={"mr-2 h-4 w-4 " + (listQ.isFetching ? "animate-spin" : "")} />
+              {listQ.isFetching ? "Refreshing..." : "Refresh"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Table */}
+      <Card className="overflow-hidden rounded-2xl border bg-white/80 shadow-sm">
+        <div className="overflow-auto">
+          <table className="w-full min-w-[1080px]">
+            <thead className="bg-slate-50">
+              <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
+                <th className="px-4 py-3 text-left">Quotation</th>
+                <th className="px-4 py-3 text-left">Date</th>
+                <th className="px-4 py-3 text-left">Customer</th>
+                <th className="px-4 py-3 text-left">Total</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-3 py-3 text-right" />
+              </tr>
+            </thead>
+
+            <tbody className="divide-y">
+              {rows.map((r: any) => {
+                const st = normStatus(r.status);
+                const quoteNo = String(r.quotation_number || r.quotation_no || r.number || `#${r.id}`);
+
+                const custName = String(r.customer_name || r.customers?.name || "").trim() || "—";
+                const custCode = String(r.customer_code || r.customers?.customer_code || "").trim();
+                const validUntil = r.valid_until ? fmtDate(r.valid_until) : null;
+
+                return (
+                  <tr
+                    key={r.id}
+                    className="hover:bg-slate-50/60"
+                    onDoubleClick={() => nav(`/quotations/${r.id}`)}
+                    title="Double-click to open"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="inline-flex items-center gap-2">
+                        <div className="inline-flex items-center justify-center rounded-xl border bg-white px-3 py-2 font-semibold tracking-wide text-slate-900 shadow-sm">
+                          {quoteNo}
+                        </div>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">ID: {r.id}</div>
+                    </td>
+
+                    <td className="px-4 py-3 text-sm text-slate-700">{fmtDate(r.quotation_date)}</td>
+
+                    <td className="px-4 py-3">
+                      <div className="font-semibold text-slate-900">{custName}</div>
+                      <div className="text-xs text-slate-500">
+                        {custCode ? `Code: ${custCode}` : "—"}
+                        {validUntil ? ` • Valid until: ${validUntil}` : ""}
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <div className="text-xs text-slate-500">Total</div>
+                      <div className="text-sm font-semibold text-slate-900">{rs(r.total_amount)}</div>
+                      <div className="text-[11px] text-slate-500">
+                        VAT: {rs(r.vat_amount)}
+                        {n(r.discount_amount) > 0 ? ` • Disc: ${rs(r.discount_amount)}` : ""}
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <span
+                        className={
+                          "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " +
+                          statusPillClass(st)
+                        }
+                      >
+                        {statusLabel(st)}
+                      </span>
+                    </td>
+
+                    {/* actions */}
+                    <td className="px-3 py-3 text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-full border bg-white hover:bg-slate-50"
+                            aria-label="Actions"
+                          >
+                            <MoreHorizontal className="h-5 w-5 text-slate-700" />
+                          </button>
+                        </DropdownMenuTrigger>
+
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuItem onClick={() => nav(`/quotations/${r.id}`)}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            Open
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem
+                            onClick={() => window.open(`/quotations/${r.id}/print`, "_blank", "noopener,noreferrer")}
+                          >
+                            <Printer className="mr-2 h-4 w-4" />
+                            Print
+                          </DropdownMenuItem>
+
+                          <DropdownMenuSeparator />
+
+                          <DropdownMenuItem onClick={() => nav(`/quotations/${r.id}`)}>
+                            <PenLine className="mr-2 h-4 w-4" />
+                            Edit / Update
+                          </DropdownMenuItem>
+
+                          <DropdownMenuSeparator />
+
+                          {/* purely informational: no mutation hooks here (keeps logic intact) */}
+                          <DropdownMenuItem disabled>
+                            {st === "DRAFT" ? <FileText className="mr-2 h-4 w-4" /> : null}
+                            {st === "SENT" ? <Send className="mr-2 h-4 w-4" /> : null}
+                            {st === "ACCEPTED" ? <BadgeCheck className="mr-2 h-4 w-4" /> : null}
+                            {st === "REJECTED" || st === "CANCELLED" ? <Ban className="mr-2 h-4 w-4" /> : null}
+                            Status: {statusLabel(st)}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {!listQ.isLoading && rows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="p-10 text-center">
+                    <div className="mx-auto max-w-sm">
+                      <div className="text-base font-semibold text-slate-900">No quotations found</div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        Try clearing filters or create your first quotation.
+                      </div>
+                      <div className="mt-4 flex items-center justify-center gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setQInput("");
+                            setStatus("ALL");
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                        <Button onClick={() => nav("/quotations/new")}>+ New Quotation</Button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t bg-white/70 px-4 py-3 text-xs text-slate-600 flex items-center justify-between">
+          <div>
+            Showing <b>{rows.length}</b> results
+            {status !== "ALL" ? (
+              <>
+                {" "}
+                • Status: <b>{statusLabel(status as QuotationStatus)}</b>
+              </>
+            ) : null}
+            {q ? (
+              <>
+                {" "}
+                • Search: <b>{q}</b>
+              </>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-2">
+              <span className={"h-2 w-2 rounded-full " + (listQ.isFetching ? "bg-amber-500" : "bg-emerald-500")} />
+              {listQ.isFetching ? "Updating…" : "Live"}
+            </span>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
+

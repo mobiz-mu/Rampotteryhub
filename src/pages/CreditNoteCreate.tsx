@@ -1,7 +1,9 @@
 // src/pages/CreditNoteCreate.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+
+import "@/styles/InvoiceCreate.css"; // ✅ reuse same theme/css as InvoiceCreate
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +24,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+import { toast } from "sonner";
+
 import {
   MoreHorizontal,
   Plus,
@@ -33,6 +37,7 @@ import {
   Receipt,
   BadgePercent,
   FileText,
+  AlertTriangle,
 } from "lucide-react";
 
 /* =========================
@@ -89,14 +94,7 @@ type ProductOpt = {
   sku?: string | null;
 };
 
-/** NOTE:
- *  We keep the same “editable boxes” structure as InvoiceCreate:
- *  - product select + quick search
- *  - qty editable
- *  - unit_excl editable
- *  - vat_rate editable
- *  - derived: unitVat/unitInc/lineTotal
- */
+/** Same editable row structure as InvoiceCreate */
 type Line = {
   key: string;
   product_id: number | null;
@@ -136,7 +134,7 @@ export default function CreditNoteCreate() {
 
   // links / metadata
   const [customerId, setCustomerId] = useState<number | null>(null);
-  const [invoiceId, setInvoiceId] = useState<string>(""); // optional (string input)
+  const [invoiceId, setInvoiceId] = useState<string>(""); // optional
   const [reason, setReason] = useState<string>("");
 
   // options
@@ -154,6 +152,9 @@ export default function CreditNoteCreate() {
   const [custSearch, setCustSearch] = useState("");
   const [prodSearch, setProdSearch] = useState("");
   const [prodPickForLine, setProdPickForLine] = useState<string | null>(null);
+
+  // refs (nice UX like InvoiceCreate)
+  const saveBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const customerLabel = useMemo(() => {
     const c = customers.find((x) => x.id === customerId);
@@ -213,12 +214,34 @@ export default function CreditNoteCreate() {
       setProducts((prodQ.data || []) as any);
     } catch (e: any) {
       setErr(e?.message || "Failed to load options");
+      toast("Failed to load data", { description: e?.message || "Error" });
     }
   }
 
   useEffect(() => {
     void loadOptions();
   }, []);
+
+  // keyboard shortcuts like a "pro" create screen
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (prodOpen) setProdOpen(false);
+        if (custOpen) setCustOpen(false);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveBtnRef.current?.click();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCustOpen(true);
+        setCustSearch("");
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [prodOpen, custOpen]);
 
   function setLine(key: string, patch: Partial<Line>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -262,12 +285,24 @@ export default function CreditNoteCreate() {
     setProdOpen(false);
   }
 
+  function validate(): string | null {
+    if (!creditNoteNo.trim()) return "Missing credit note number";
+    if (!date.trim()) return "Missing date";
+    if (!customerId) return "Please select a customer";
+    const okLines = lines.some((l) => l.product_id && n(l.qty) > 0);
+    if (!okLines) return "Select products + quantity > 0";
+    return null;
+  }
+
   async function save() {
     setErr(null);
 
-    if (!creditNoteNo.trim()) return setErr("Missing credit note number");
-    if (!date.trim()) return setErr("Missing date");
-    if (!customerId) return setErr("Please select a customer");
+    const v = validate();
+    if (v) {
+      setErr(v);
+      toast("Cannot save", { description: v });
+      return;
+    }
 
     const cleanLines = lines
       .map((l) => {
@@ -283,8 +318,6 @@ export default function CreditNoteCreate() {
         };
       })
       .filter((x) => x.ok);
-
-    if (cleanLines.length === 0) return setErr("Select products + quantity > 0");
 
     setBusy(true);
     try {
@@ -325,44 +358,55 @@ export default function CreditNoteCreate() {
 
       if (itErr) throw new Error(itErr.message);
 
+      toast("Saved", { description: `Credit note ${creditNoteNo} created.` });
       nav(`/credit-notes/${credit_note_id}`, { replace: true });
     } catch (e: any) {
-      setErr(e?.message || "Failed to save credit note");
+      const msg = e?.message || "Failed to save credit note";
+      setErr(msg);
+      toast("Save failed", { description: msg });
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="space-y-5">
-      {/* ========= Header (Premium like InvoiceCreate) ========= */}
-      <div className="flex items-start justify-between gap-3">
+    <div className="space-y-5 invoiceCreate">
+      {/* Premium background hint (same vibe as InvoiceCreate) */}
+      <div className="pointer-events-none fixed inset-0 -z-10 opacity-60">
+        <div className="absolute -top-24 left-1/2 h-72 w-[60rem] -translate-x-1/2 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-40 right-[-10rem] h-96 w-96 rounded-full bg-white/5 blur-3xl" />
+      </div>
+
+      {/* ========= Header (same structure as InvoiceCreate) ========= */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <Button variant="outline" onClick={() => nav("/credit-notes")} className="mt-1">
+          <Button variant="outline" onClick={() => nav("/credit-notes")} className="mt-1 rounded-xl">
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back
           </Button>
 
           <div>
             <div className="flex items-center gap-2">
-              <div className="text-2xl font-semibold">New Credit Note</div>
+              <div className="text-2xl font-semibold tracking-tight">New Credit Note</div>
               <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
                 <Receipt className="h-3.5 w-3.5" />
                 CN Create
               </span>
+              <span className="hidden sm:inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
+                <FileText className="h-3.5 w-3.5" />
+                Ctrl/⌘ + S to save
+              </span>
             </div>
-            <div className="text-sm text-muted-foreground">
-              Customer • Items • Totals • Save
-            </div>
+            <div className="text-sm text-muted-foreground">Customer • Items • Totals • Save</div>
           </div>
         </div>
 
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => loadOptions()} disabled={busy}>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => loadOptions()} disabled={busy} className="rounded-xl">
             <RefreshCw className={"mr-2 h-4 w-4 " + (busy ? "animate-spin" : "")} />
             Refresh data
           </Button>
-          <Button onClick={save} disabled={busy}>
+          <Button ref={saveBtnRef as any} onClick={save} disabled={busy} className="rounded-xl">
             <Save className="mr-2 h-4 w-4" />
             {busy ? "Saving..." : "Save Credit Note"}
           </Button>
@@ -370,15 +414,20 @@ export default function CreditNoteCreate() {
       </div>
 
       {err ? (
-        <Card className="p-4 border-rose-200 bg-rose-50 text-rose-700 text-sm">
-          <b>Error:</b> {err}
+        <Card className="p-4 rounded-2xl border-rose-200 bg-rose-50 text-rose-800 text-sm">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4" />
+            <div>
+              <b>Error:</b> {err}
+            </div>
+          </div>
         </Card>
       ) : null}
 
       {/* ========= Main layout ========= */}
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Left: details + customer */}
-        <Card className="p-5 space-y-4 lg:col-span-2">
+        <Card className="p-5 rounded-2xl border bg-white/80 shadow-sm space-y-4 lg:col-span-2">
           <div className="flex items-center justify-between">
             <div className="font-semibold">Credit Note Details</div>
             <div className="text-xs text-muted-foreground">Auto-numbered • editable</div>
@@ -402,12 +451,12 @@ export default function CreditNoteCreate() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            {/* Customer row with small search button */}
+            {/* Customer row with quick search */}
             <div className="space-y-1">
               <div className="text-xs text-muted-foreground">Customer</div>
               <div className="flex gap-2">
                 <select
-                  className="h-10 rounded-md border px-3 bg-background w-full"
+                  className="h-10 rounded-xl border px-3 bg-white w-full text-sm text-slate-900 outline-none"
                   value={customerId ?? ""}
                   onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
                 >
@@ -422,9 +471,9 @@ export default function CreditNoteCreate() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 w-10 px-0"
+                  className="h-10 w-10 px-0 rounded-xl"
                   onClick={openCustomerSearch}
-                  title="Search customer"
+                  title="Search customer (Ctrl/⌘+K)"
                 >
                   <Search className="h-4 w-4" />
                 </Button>
@@ -445,8 +494,8 @@ export default function CreditNoteCreate() {
             </div>
           </div>
 
-          {/* Customer preview card (premium) */}
-          <div className="rounded-xl border bg-white p-4">
+          {/* Customer preview (same premium panel style) */}
+          <div className="rounded-2xl border bg-white p-4">
             <div className="flex items-center justify-between">
               <div className="text-xs text-muted-foreground">Customer Preview</div>
               <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
@@ -473,7 +522,7 @@ export default function CreditNoteCreate() {
         </Card>
 
         {/* Right: totals */}
-        <Card className="p-5 space-y-3">
+        <Card className="p-5 rounded-2xl border bg-white/80 shadow-sm space-y-3">
           <div className="flex items-center justify-between">
             <div className="font-semibold">Totals</div>
             <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
@@ -482,7 +531,7 @@ export default function CreditNoteCreate() {
             </span>
           </div>
 
-          <div className="rounded-xl border bg-white p-4 space-y-2">
+          <div className="rounded-2xl border bg-white p-4 space-y-2">
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Subtotal</span>
               <b className="text-slate-900">{rs(totals.subtotal)}</b>
@@ -501,7 +550,7 @@ export default function CreditNoteCreate() {
             </div>
           </div>
 
-          <Button variant="outline" onClick={addLine}>
+          <Button variant="outline" onClick={addLine} className="rounded-xl">
             <Plus className="mr-2 h-4 w-4" />
             Add Item
           </Button>
@@ -512,8 +561,8 @@ export default function CreditNoteCreate() {
         </Card>
       </div>
 
-      {/* ========= Items table (editable like InvoiceCreate) ========= */}
-      <Card className="overflow-hidden">
+      {/* ========= Items table (same structure as InvoiceCreate, keep logic CN) ========= */}
+      <Card className="overflow-hidden rounded-2xl border bg-white/80 shadow-sm">
         <div className="overflow-auto">
           <table className="w-full min-w-[1120px]">
             <thead className="bg-slate-50">
@@ -539,7 +588,7 @@ export default function CreditNoteCreate() {
                       <div className="flex gap-2 items-start">
                         <div className="w-full">
                           <select
-                            className="h-10 rounded-md border px-3 bg-background w-full min-w-[360px]"
+                            className="h-10 rounded-xl border px-3 bg-white w-full min-w-[360px] text-sm text-slate-900 outline-none"
                             value={l.product_id ?? ""}
                             onChange={(e) => pickProduct(l.key, Number(e.target.value))}
                           >
@@ -553,17 +602,13 @@ export default function CreditNoteCreate() {
                             ))}
                           </select>
 
-                          {l.product_label ? (
-                            <div className="text-xs text-muted-foreground mt-1">{l.product_label}</div>
-                          ) : (
-                            <div className="text-xs text-muted-foreground mt-1">—</div>
-                          )}
+                          <div className="text-xs text-muted-foreground mt-1">{l.product_label || "—"}</div>
                         </div>
 
                         <Button
                           type="button"
                           variant="outline"
-                          className="h-10 w-10 px-0"
+                          className="h-10 w-10 px-0 rounded-xl"
                           onClick={() => openProductSearch(l.key)}
                           title="Search product"
                         >
@@ -640,13 +685,26 @@ export default function CreditNoteCreate() {
             </tbody>
           </table>
         </div>
+
+        <div className="border-t bg-white/70 px-4 py-3 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            Lines: <b>{lines.length}</b> • Subtotal: <b>{rs(totals.subtotal)}</b> • VAT:{" "}
+            <b>{rs(totals.vat_amount)}</b> • Total: <b>{rs(totals.total_amount)}</b>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={addLine} className="h-8 rounded-xl">
+              <Plus className="mr-2 h-4 w-4" />
+              Add
+            </Button>
+          </div>
+        </div>
       </Card>
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => nav("/credit-notes")}>
+        <Button variant="outline" onClick={() => nav("/credit-notes")} className="rounded-xl">
           Cancel
         </Button>
-        <Button onClick={save} disabled={busy}>
+        <Button onClick={save} disabled={busy} className="rounded-xl">
           <Save className="mr-2 h-4 w-4" />
           {busy ? "Saving..." : "Save Credit Note"}
         </Button>
@@ -670,12 +728,12 @@ export default function CreditNoteCreate() {
               className="flex-1"
               autoFocus
             />
-            <Button variant="outline" onClick={() => setCustSearch("")}>
+            <Button variant="outline" onClick={() => setCustSearch("")} className="rounded-xl">
               Clear
             </Button>
           </div>
 
-          <div className="mt-3 rounded-xl border overflow-hidden">
+          <div className="mt-3 rounded-2xl border overflow-hidden">
             <div className="max-h-[420px] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50">
@@ -716,7 +774,7 @@ export default function CreditNoteCreate() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCustOpen(false)}>
+            <Button variant="outline" onClick={() => setCustOpen(false)} className="rounded-xl">
               Close
             </Button>
           </div>
@@ -741,12 +799,12 @@ export default function CreditNoteCreate() {
               className="flex-1"
               autoFocus
             />
-            <Button variant="outline" onClick={() => setProdSearch("")}>
+            <Button variant="outline" onClick={() => setProdSearch("")} className="rounded-xl">
               Clear
             </Button>
           </div>
 
-          <div className="mt-3 rounded-xl border overflow-hidden">
+          <div className="mt-3 rounded-2xl border overflow-hidden">
             <div className="max-h-[420px] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50">
@@ -783,7 +841,7 @@ export default function CreditNoteCreate() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setProdOpen(false)}>
+            <Button variant="outline" onClick={() => setProdOpen(false)} className="rounded-xl">
               Close
             </Button>
           </div>
