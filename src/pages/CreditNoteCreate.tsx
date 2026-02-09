@@ -1,61 +1,193 @@
 // src/pages/CreditNoteCreate.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
-import "@/styles/InvoiceCreate.css"; // ✅ reuse same theme/css as InvoiceCreate
+import "@/styles/InvoiceCreate.css"; // ✅ reuse same exact CSS/theme as InvoiceCreate
 
-import { Card } from "@/components/ui/card";
+import RamPotteryDoc from "@/components/print/RamPotteryDoc";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-
 import { toast } from "sonner";
 
-import {
-  MoreHorizontal,
-  Plus,
-  Save,
-  Trash2,
-  Search,
-  ArrowLeft,
-  RefreshCw,
-  Receipt,
-  BadgePercent,
-  FileText,
-  AlertTriangle,
-} from "lucide-react";
+/* ============================
+   Types (match InvoiceCreate)
+============================= */
+type CustomerRow = {
+  id: number;
+  name: string;
+  address?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
+  brn?: string | null;
+  vat_no?: string | null;
+  customer_code?: string | null;
+  opening_balance?: number | null;
+  discount_percent?: number | null;
+};
 
-/* =========================
-   Helpers
-========================= */
-const n = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+type ProductRow = {
+  id: number;
+  item_code?: string | null;
+  sku?: string | null;
+  name?: string | null;
+  description?: string | null;
+  units_per_box?: number | null;
+  selling_price: number; // VAT-exclusive
+};
 
-function rs(v: any) {
-  return `Rs ${n(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+type Uom = "BOX" | "PCS" | "KG";
+
+type CreditLine = {
+  id: string;
+  product_id: number | null;
+
+  item_code: string;
+  description: string;
+
+  uom: Uom;
+
+  box_qty: number; // qty input (BOX/PCS integer, KG decimal)
+  units_per_box: number; // BOX only (editable)
+  total_qty: number; // computed
+
+  vat_rate: number; // per-row editable
+
+  base_unit_price_excl_vat: number; // product base ex (used for discount calc)
+  unit_price_excl_vat: number; // editable (ex)
+  unit_vat: number;
+  unit_price_incl_vat: number; // editable (inc)
+  line_total: number;
+
+  price_overridden?: boolean;
+};
+
+type PrintNameMode = "CUSTOMER" | "CLIENT";
+
+/* ============================
+   Sales reps (same as InvoiceCreate)
+============================= */
+const SALES_REPS = [
+  { name: "Mr Koushal", phone: "59193239" },
+  { name: "Mr Akash", phone: "59194918" },
+  { name: "Mr Manish", phone: "57788884" },
+  { name: "Mr Adesh", phone: "57788884" },
+] as const;
+
+type SalesRepName = (typeof SALES_REPS)[number]["name"];
+
+function repPhoneByName(name: string) {
+  const r = SALES_REPS.find((x) => x.name === name);
+  return r?.phone || "";
 }
 
-function todayISO() {
-  const d = new Date();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${mm}-${dd}`;
+/* ============================
+   Helpers (same logic style)
+============================= */
+function n2(v: any) {
+  const x = Number(v ?? 0);
+  return Number.isFinite(x) ? x : 0;
+}
+function clampPct(v: any) {
+  const x = n2(v);
+  return Math.max(0, Math.min(100, x));
+}
+function uid() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+  }
+}
+function r2(v: any) {
+  return Math.round(n2(v) * 100) / 100;
+}
+function money(v: any) {
+  const x = n2(v);
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
+}
+function intFmt(v: any) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(n2(v)));
+}
+function roundKg(v: number) {
+  return Math.round(n2(v) * 1000) / 1000;
+}
+function safeUpb(v: any) {
+  return Math.max(1, Math.trunc(n2(v) || 1));
+}
+function roundTo(v: any, dp: number) {
+  const x = n2(v);
+  const m = Math.pow(10, dp);
+  return Math.round(x * m) / m;
 }
 
+function parseNumInput(s: string) {
+  // allow "1,200.50" or "1200.50" while typing
+  const cleaned = String(s ?? "").replace(/,/g, "").trim();
+  return cleaned === "" ? 0 : n2(cleaned);
+}
+
+function rawNum(v: any) {
+  // plain text for inputs, no commas, allow decimals, keep 0 as ""
+  const x = n2(v);
+  return x === 0 ? "" : String(x);
+}
+
+function recalc(row: CreditLine): CreditLine {
+  const uom: Uom = row.uom === "PCS" ? "PCS" : row.uom === "KG" ? "KG" : "BOX";
+
+  const rawQty = n2(row.box_qty);
+  const qtyInput = uom === "KG" ? Math.max(0, roundKg(rawQty)) : Math.max(0, Math.trunc(rawQty));
+
+  const upb = uom === "BOX" ? safeUpb(row.units_per_box) : 1;
+  const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
+
+  const rate = clampPct(row.vat_rate);
+
+  const unitEx = Math.max(0, n2(row.unit_price_excl_vat));
+  const unitVatRaw = unitEx * (rate / 100);
+  const unitIncRaw = unitEx + unitVatRaw;
+
+  const unitVat = roundTo(unitVatRaw, 3);
+  const unitInc = roundTo(unitIncRaw, 3);
+
+  const lineTotal = r2(n2(totalQty) * unitIncRaw);
+
+  return {
+    ...row,
+    uom,
+    box_qty: qtyInput,
+    units_per_box: upb,
+    total_qty: totalQty,
+    vat_rate: rate,
+    unit_vat: unitVat,
+    unit_price_incl_vat: unitInc,
+    line_total: lineTotal,
+  };
+}
+
+function blankLine(defaultVat: number): CreditLine {
+  return recalc({
+    id: uid(),
+    product_id: null,
+    item_code: "",
+    description: "",
+    uom: "BOX",
+    box_qty: 0,
+    units_per_box: 1,
+    total_qty: 0,
+    vat_rate: clampPct(defaultVat),
+    base_unit_price_excl_vat: 0,
+    unit_price_excl_vat: 0,
+    unit_vat: 0,
+    unit_price_incl_vat: 0,
+    line_total: 0,
+    price_overridden: false,
+  });
+}
+
+/* ============================
+   Credit Note numbering (CN-0001…)
+============================= */
 function pad4(x: number) {
   return String(x).padStart(4, "0");
 }
@@ -76,145 +208,135 @@ async function nextCreditNoteNumber(): Promise<string> {
   return `CN-${pad4(next)}`;
 }
 
-/* =========================
-   Types
-========================= */
-type CustomerOpt = {
-  id: number;
-  name: string;
-  customer_code?: string | null;
-  phone?: string | null;
-  address?: string | null;
-};
-
-type ProductOpt = {
-  id: number;
-  name: string;
-  item_code?: string | null;
-  sku?: string | null;
-};
-
-/** Same editable row structure as InvoiceCreate */
-type Line = {
-  key: string;
-  product_id: number | null;
-  product_label: string;
-  qty: number;
-  unit_excl: number;
-  vat_rate: number; // percent
-};
-
-function lineCalc(l: Line) {
-  const qty = Math.max(0, n(l.qty));
-  const unitEx = Math.max(0, n(l.unit_excl));
-  const rate = Math.max(0, n(l.vat_rate));
-  const unitVat = unitEx * (rate / 100);
-  const unitInc = unitEx + unitVat;
-  const lineTotal = qty * unitInc;
-  return { qty, unitEx, unitVat, unitInc, lineTotal };
-}
-
-function pickLabel(p?: ProductOpt | null) {
-  if (!p) return "";
-  return `${p.name}${p.item_code ? ` • ${p.item_code}` : ""}${p.sku ? ` • ${p.sku}` : ""}`;
-}
-
-/* =========================
+/* ============================
    Page
-========================= */
+============================= */
 export default function CreditNoteCreate() {
   const nav = useNavigate();
+  const [params] = useSearchParams();
+  const duplicateId = params.get("duplicate"); // optional future use
 
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
 
-  // header fields
-  const [creditNoteNo, setCreditNoteNo] = useState<string>("");
-  const [date, setDate] = useState<string>(todayISO());
-
-  // links / metadata
+  // ✅ SAME FIELDS as InvoiceCreate
+  const [printNameMode, setPrintNameMode] = useState<PrintNameMode>("CUSTOMER");
   const [customerId, setCustomerId] = useState<number | null>(null);
-  const [invoiceId, setInvoiceId] = useState<string>(""); // optional
-  const [reason, setReason] = useState<string>("");
+  const [clientName, setClientName] = useState<string>("");
+
+  const [creditNoteDate, setCreditNoteDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [purchaseOrderNo, setPurchaseOrderNo] = useState<string>("");
+
+  const [vatPercentText, setVatPercentText] = useState<string>("15");
+  const [discountPercentText, setDiscountPercentText] = useState<string>("");
+  const [discountTouched, setDiscountTouched] = useState(false);
+
+  const [previousBalanceText, setPreviousBalanceText] = useState<string>("");
+  const [amountPaidText, setAmountPaidText] = useState<string>("");
+
+  const [balanceTouched, setBalanceTouched] = useState(false);
+  const [balanceManualText, setBalanceManualText] = useState<string>("");
+
+  const [creditNoteNumber, setCreditNoteNumber] = useState<string>("(Auto when saved)");
+
+  const vatDefault = clampPct(vatPercentText);
+  const discountPercent = clampPct(discountPercentText);
+
+  const [lines, setLines] = useState<CreditLine[]>([blankLine(15)]);
+  const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // decimal-safe edit buffers (like your InvoiceCreate)
+  const [editingEx, setEditingEx] = useState<Record<string, string>>({});
+  const [editingVat, setEditingVat] = useState<Record<string, string>>({});
+  const [editingInc, setEditingInc] = useState<Record<string, string>>({});
+
+  // search modals (same UX as InvoiceCreate)
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+
+  const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [productSearchRowId, setProductSearchRowId] = useState<string | null>(null);
+  const [productSearchTerm, setProductSearchTerm] = useState("");
+
+  // sales reps (same)
+  const [repOpen, setRepOpen] = useState(false);
+  const [salesReps, setSalesReps] = useState<SalesRepName[]>([]);
 
   // options
-  const [customers, setCustomers] = useState<CustomerOpt[]>([]);
-  const [products, setProducts] = useState<ProductOpt[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>([]);
+  const [products, setProducts] = useState<ProductRow[]>([]);
 
-  // lines
-  const [lines, setLines] = useState<Line[]>([
-    { key: crypto.randomUUID(), product_id: null, product_label: "", qty: 1, unit_excl: 0, vat_rate: 15 },
-  ]);
-
-  // dialogs
-  const [custOpen, setCustOpen] = useState(false);
-  const [prodOpen, setProdOpen] = useState(false);
-  const [custSearch, setCustSearch] = useState("");
-  const [prodSearch, setProdSearch] = useState("");
-  const [prodPickForLine, setProdPickForLine] = useState<string | null>(null);
-
-  // refs (nice UX like InvoiceCreate)
-  const saveBtnRef = useRef<HTMLButtonElement | null>(null);
-
-  const customerLabel = useMemo(() => {
-    const c = customers.find((x) => x.id === customerId);
-    if (!c) return "";
-    return c.customer_code ? `${c.name} (${c.customer_code})` : c.name;
-  }, [customers, customerId]);
-
-  const selectedCustomer = useMemo(
-    () => customers.find((c) => c.id === customerId) || null,
-    [customers, customerId]
-  );
-
-  const totals = useMemo(() => {
-    const computed = lines.map(lineCalc);
-    const subtotal = computed.reduce((s, r) => s + r.qty * r.unitEx, 0);
-    const vat_amount = computed.reduce((s, r) => s + r.qty * r.unitVat, 0);
-    const total_amount = subtotal + vat_amount;
-    return { subtotal, vat_amount, total_amount };
-  }, [lines]);
+  const customer = useMemo(() => customers.find((c) => c.id === customerId) || null, [customers, customerId]);
 
   const filteredCustomers = useMemo(() => {
-    const q = custSearch.trim().toLowerCase();
-    if (!q) return customers;
+    const t = customerSearchTerm.trim().toLowerCase();
+    if (!t) return customers;
     return customers.filter((c) => {
-      const hay = `${c.name || ""} ${c.customer_code || ""} ${c.phone || ""} ${c.address || ""}`.toLowerCase();
-      return hay.includes(q);
+      const name = String(c.name || "").toLowerCase();
+      const phone = String(c.phone || "").toLowerCase();
+      const code = String(c.customer_code || "").toLowerCase();
+      const addr = String(c.address || "").toLowerCase();
+      return name.includes(t) || phone.includes(t) || code.includes(t) || addr.includes(t);
     });
-  }, [customers, custSearch]);
+  }, [customers, customerSearchTerm]);
 
   const filteredProducts = useMemo(() => {
-    const q = prodSearch.trim().toLowerCase();
-    if (!q) return products;
+    const t = productSearchTerm.trim().toLowerCase();
+    if (!t) return products;
     return products.filter((p) => {
-      const hay = `${p.name || ""} ${p.item_code || ""} ${p.sku || ""}`.toLowerCase();
-      return hay.includes(q);
+      const code = String(p.item_code || "").toLowerCase();
+      const sku = String(p.sku || "").toLowerCase();
+      const name = String(p.name || "").toLowerCase();
+      const desc = String(p.description || "").toLowerCase();
+      return code.includes(t) || sku.includes(t) || name.includes(t) || desc.includes(t);
     });
-  }, [products, prodSearch]);
+  }, [products, productSearchTerm]);
 
+  // name printed (same logic)
+  const printedName = useMemo(() => {
+    const cn = (customer?.name || "").trim();
+    const cl = clientName.trim();
+    if (printNameMode === "CLIENT") return cl || cn;
+    return cn || cl;
+  }, [printNameMode, customer?.name, clientName]);
+
+  // close rep pop on outside click
+  useEffect(() => {
+    function close() {
+      setRepOpen(false);
+    }
+    if (!repOpen) return;
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [repOpen]);
+
+  /* ============================
+     Load options + CN number
+============================= */
   async function loadOptions() {
-    setErr(null);
     try {
       const [cnNo, custQ, prodQ] = await Promise.all([
         nextCreditNoteNumber(),
         supabase
           .from("customers")
-          .select("id,name,customer_code,phone,address")
+          .select("id,name,address,phone,whatsapp,brn,vat_no,customer_code,opening_balance,discount_percent")
           .order("name", { ascending: true })
-          .limit(2000),
-        supabase.from("products").select("id,name,item_code,sku").order("name", { ascending: true }).limit(5000),
+          .limit(5000),
+        supabase
+          .from("products")
+          .select("id,item_code,sku,name,description,units_per_box,selling_price")
+          .order("name", { ascending: true })
+          .limit(5000),
       ]);
 
       if (custQ.error) throw new Error(custQ.error.message);
       if (prodQ.error) throw new Error(prodQ.error.message);
 
-      setCreditNoteNo(cnNo);
+      setCreditNoteNumber(cnNo);
       setCustomers((custQ.data || []) as any);
       setProducts((prodQ.data || []) as any);
     } catch (e: any) {
-      setErr(e?.message || "Failed to load options");
-      toast("Failed to load data", { description: e?.message || "Error" });
+      toast.error(e?.message || "Failed to load customers/products");
     }
   }
 
@@ -222,632 +344,1059 @@ export default function CreditNoteCreate() {
     void loadOptions();
   }, []);
 
-  // keyboard shortcuts like a "pro" create screen
+  /* ============================
+     Customer change (same behavior)
+============================= */
   useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        if (prodOpen) setProdOpen(false);
-        if (custOpen) setCustOpen(false);
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        saveBtnRef.current?.click();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setCustOpen(true);
-        setCustSearch("");
-      }
+    if (!customerId || !customer) return;
+
+    const ob = customer.opening_balance ?? null;
+    if (ob !== null && ob !== undefined && String(ob) !== "0") setPreviousBalanceText(String(ob));
+    else setPreviousBalanceText("");
+
+    if (!discountTouched) {
+      const dp = customer.discount_percent ?? null;
+      if (dp !== null && dp !== undefined && String(dp) !== "0") setDiscountPercentText(String(dp));
+      else setDiscountPercentText("");
     }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [prodOpen, custOpen]);
 
-  function setLine(key: string, patch: Partial<Line>) {
-    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+    if (!clientName.trim()) setClientName(customer.name || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId]);
+
+  /* ============================
+     Discount recalculates unit_ex from base
+============================= */
+  useEffect(() => {
+    const dp = clampPct(discountPercentText);
+    setLines((prev) =>
+      prev.map((r) => {
+        if (!r.product_id) return r;
+        if (r.price_overridden) return r;
+        const base = n2(r.base_unit_price_excl_vat);
+        const discounted = roundTo(base * (1 - dp / 100), 6);
+        return recalc({ ...r, unit_price_excl_vat: discounted } as CreditLine);
+      })
+    );
+  }, [discountPercentText]);
+
+  /* ============================
+     Row helpers (same)
+============================= */
+  function setLine(id: string, patch: Partial<CreditLine>) {
+    setLines((prev) => prev.map((r) => (r.id === id ? recalc({ ...r, ...patch } as CreditLine) : r)));
   }
 
-  function addLine() {
-    setLines((prev) => [
-      ...prev,
-      { key: crypto.randomUUID(), product_id: null, product_label: "", qty: 1, unit_excl: 0, vat_rate: 15 },
-    ]);
+  function setLinePriceEx(id: string, unitEx: number) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        return recalc({ ...r, unit_price_excl_vat: Math.max(0, n2(unitEx)), price_overridden: true } as CreditLine);
+      })
+    );
   }
 
-  function removeLine(key: string) {
-    setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.key !== key)));
+  function setLinePriceInc(id: string, unitInc: number) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const rate = clampPct(r.vat_rate);
+        const inc = Math.max(0, n2(unitInc));
+        const denom = 1 + rate / 100;
+        const ex = denom > 0 ? inc / denom : inc;
+        return recalc({ ...r, unit_price_excl_vat: Math.max(0, ex), price_overridden: true } as CreditLine);
+      })
+    );
   }
 
-  function pickProduct(lineKey: string, productId: number) {
-    const p = products.find((x) => x.id === productId) || null;
-    setLine(lineKey, { product_id: productId, product_label: pickLabel(p) });
+  function setLineTotalQty(id: string, totalQty: number) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const tq = Math.max(0, r.uom === "KG" ? roundKg(totalQty) : Math.trunc(totalQty));
+
+        if (r.uom === "BOX") {
+          const upb = safeUpb(r.units_per_box);
+          const bq = upb > 0 ? tq / upb : 0;
+          return recalc({ ...r, box_qty: bq, total_qty: tq } as CreditLine);
+        }
+
+        return recalc({ ...r, box_qty: tq, total_qty: tq } as CreditLine);
+      })
+    );
   }
 
-  function openCustomerSearch() {
-    setCustSearch("");
-    setCustOpen(true);
+  function addRowAndFocus() {
+    const newRow = blankLine(vatDefault);
+    setLines((prev) => [...prev, newRow]);
+    setTimeout(() => {
+      qtyRefs.current[newRow.id]?.focus?.();
+      qtyRefs.current[newRow.id]?.select?.();
+    }, 0);
   }
 
-  function openProductSearch(lineKey: string) {
-    setProdPickForLine(lineKey);
-    setProdSearch("");
-    setProdOpen(true);
+  function removeRow(id: string) {
+    setLines((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
   }
 
-  function selectCustomerFromModal(c: CustomerOpt) {
-    setCustomerId(c.id);
-    setCustOpen(false);
+  function applyProductToRow(rowId: string, product: ProductRow | null) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowId) return r;
+
+        if (!product) {
+          return recalc({
+            ...r,
+            product_id: null,
+            item_code: "",
+            description: "",
+            units_per_box: 1,
+            base_unit_price_excl_vat: 0,
+            unit_price_excl_vat: 0,
+            vat_rate: vatDefault,
+            uom: "BOX",
+            box_qty: 0,
+            price_overridden: false,
+          } as CreditLine);
+        }
+
+        const dp = clampPct(discountPercentText);
+        const baseEx = n2((product as any).selling_price || 0);
+        const discountedEx = roundTo(baseEx * (1 - dp / 100), 6);
+
+        const nextUom: Uom = r.uom === "KG" ? "KG" : r.uom === "PCS" ? "PCS" : "BOX";
+
+        return recalc({
+          ...r,
+          product_id: product.id,
+          item_code: String(product.item_code || product.sku || ""),
+          description: String(product.description || product.name || "").trim(),
+          units_per_box: Math.max(1, Math.trunc(n2(product.units_per_box || 1))),
+          base_unit_price_excl_vat: baseEx,
+          unit_price_excl_vat: discountedEx,
+          vat_rate: clampPct(r.vat_rate || vatDefault),
+          uom: nextUom,
+          box_qty: nextUom === "KG" ? Math.max(0, roundKg(n2(r.box_qty || 0))) : Math.max(1, Math.trunc(n2(r.box_qty || 1))),
+          price_overridden: false,
+        } as CreditLine);
+      })
+    );
+
+    setTimeout(() => {
+      qtyRefs.current[rowId]?.focus?.();
+      qtyRefs.current[rowId]?.select?.();
+    }, 0);
   }
 
-  function selectProductFromModal(p: ProductOpt) {
-    if (!prodPickForLine) return;
-    pickProduct(prodPickForLine, p.id);
-    setProdOpen(false);
-  }
+  function focusNextQty(currentRowId: string) {
+    const idx = lines.findIndex((x) => x.id === currentRowId);
+    if (idx < 0) return;
 
-  function validate(): string | null {
-    if (!creditNoteNo.trim()) return "Missing credit note number";
-    if (!date.trim()) return "Missing date";
-    if (!customerId) return "Please select a customer";
-    const okLines = lines.some((l) => l.product_id && n(l.qty) > 0);
-    if (!okLines) return "Select products + quantity > 0";
-    return null;
-  }
-
-  async function save() {
-    setErr(null);
-
-    const v = validate();
-    if (v) {
-      setErr(v);
-      toast("Cannot save", { description: v });
+    const next = lines[idx + 1];
+    if (next) {
+      qtyRefs.current[next.id]?.focus?.();
+      qtyRefs.current[next.id]?.select?.();
       return;
     }
+    addRowAndFocus();
+  }
 
-    const cleanLines = lines
-      .map((l) => {
-        const c = lineCalc(l);
-        return {
-          product_id: l.product_id,
-          total_qty: c.qty,
-          unit_price_excl_vat: c.unitEx,
-          unit_vat: c.unitVat,
-          unit_price_incl_vat: c.unitInc,
-          line_total: c.lineTotal,
-          ok: !!l.product_id && c.qty > 0,
-        };
-      })
-      .filter((x) => x.ok);
+  /* ============================
+     Search modals
+============================= */
+  function openCustomerSearch() {
+    setCustomerSearchTerm("");
+    setCustomerSearchOpen(true);
+    setTimeout(() => {
+      const el = document.getElementById("invCustomerSearchInput") as HTMLInputElement | null;
+      el?.focus?.();
+    }, 0);
+  }
+  function closeCustomerSearch() {
+    setCustomerSearchOpen(false);
+    setCustomerSearchTerm("");
+  }
 
-    setBusy(true);
+  function openProductSearch(rowId: string) {
+    setProductSearchRowId(rowId);
+    setProductSearchTerm("");
+    setProductSearchOpen(true);
+    setTimeout(() => {
+      const el = document.getElementById("invProductSearchInput") as HTMLInputElement | null;
+      el?.focus?.();
+    }, 0);
+  }
+  function closeProductSearch() {
+    setProductSearchOpen(false);
+    setProductSearchRowId(null);
+    setProductSearchTerm("");
+  }
+
+  /* ============================
+     Totals (same as InvoiceCreate)
+============================= */
+  const realLines = useMemo(() => lines.filter((l) => !!l.product_id), [lines]);
+
+  const subtotalEx = useMemo(() => {
+    return r2(realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_price_excl_vat), 0));
+  }, [realLines]);
+
+  const vatAmount = useMemo(() => {
+    return r2(
+      realLines.reduce((sum, r) => {
+        const rate = clampPct(r.vat_rate);
+        const ex = n2(r.unit_price_excl_vat);
+        return sum + n2(r.total_qty) * (ex * (rate / 100));
+      }, 0)
+    );
+  }, [realLines]);
+
+  const totalAmount = useMemo(() => r2(subtotalEx + vatAmount), [subtotalEx, vatAmount]);
+
+  const discountAmount = useMemo(() => {
+    const baseEx = realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.base_unit_price_excl_vat), 0);
+    const discEx = realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_price_excl_vat), 0);
+    return Math.max(0, r2(baseEx - discEx));
+  }, [realLines]);
+
+  const previousBalance = useMemo(() => n2(previousBalanceText), [previousBalanceText]);
+  const amountPaid = useMemo(() => n2(amountPaidText), [amountPaidText]);
+
+  const grossTotal = useMemo(() => r2(totalAmount + previousBalance), [totalAmount, previousBalance]);
+
+  const balanceAuto = useMemo(() => Math.max(0, r2(grossTotal - amountPaid)), [grossTotal, amountPaid]);
+
+  const balanceRemaining = useMemo(() => {
+    if (!balanceTouched) return balanceAuto;
+    const wanted = Math.max(0, n2(balanceManualText));
+    return r2(wanted);
+  }, [balanceTouched, balanceManualText, balanceAuto]);
+
+  useEffect(() => {
+    if (!balanceTouched) return;
+    const wanted = Math.max(0, n2(balanceManualText));
+    const newPaid = Math.max(0, r2(grossTotal - wanted));
+    setAmountPaidText(newPaid ? String(newPaid) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balanceManualText, balanceTouched, grossTotal]);
+
+  /* ============================
+     Save / Print
+============================= */
+  function isQtyValid(l: CreditLine) {
+    const q = n2(l.box_qty);
+    if (l.uom === "KG") return q > 0;
+    return Math.trunc(q) > 0;
+  }
+
+  async function onSave() {
+    if (!customerId) return toast.error("Please select a customer.");
+    if (!creditNoteDate) return toast.error("Please select credit note date.");
+    if (!salesReps.length) return toast.error("Please select at least one sales rep.");
+    if (realLines.length === 0) return toast.error("Please add at least one item.");
+    if (realLines.some((l) => !isQtyValid(l))) return toast.error("Qty must be greater than 0.");
+
+    if (printNameMode === "CLIENT" && !clientName.trim()) {
+      return toast.error("Please enter a Client Name (or switch to Customer Name).");
+    }
+
+    setSaving(true);
     try {
-      const invIdNum = invoiceId.trim() ? Number(invoiceId.trim()) : null;
+      // ✅ prefer same payload shape as InvoiceCreate (but we must be safe with DB columns)
+      const payloadFull: any = {
+        credit_note_number: creditNoteNumber,
+        credit_note_date: creditNoteDate,
+        customer_id: customerId,
 
-      const { data: cn, error: cnErr } = await supabase
-        .from("credit_notes")
-        .insert({
-          credit_note_number: creditNoteNo.trim(),
-          credit_note_date: date,
+        client_name: printNameMode === "CLIENT" ? clientName.trim() : null,
+        print_name_mode: printNameMode,
+        purchase_order_no: purchaseOrderNo || null,
+
+        vat_percent: vatDefault,
+        discount_percent: discountPercent,
+
+        previous_balance: previousBalance,
+        amount_paid: amountPaid,
+        balance_remaining: balanceRemaining,
+
+        sales_rep: salesReps.join(", "),
+        sales_rep_phone: salesReps.map(repPhoneByName).filter(Boolean).join(", "),
+
+        subtotal: subtotalEx,
+        vat_amount: vatAmount,
+        total_amount: totalAmount,
+        gross_total: grossTotal,
+        discount_amount: discountAmount,
+
+        status: "ISSUED",
+      };
+
+      // Insert credit note (try full, fallback to minimal if table is strict)
+      let cnId: number | null = null;
+
+      const tryInsertFull = await supabase.from("credit_notes").insert(payloadFull).select("id, credit_note_number").single();
+
+      if (!tryInsertFull.error && tryInsertFull.data?.id) {
+        cnId = tryInsertFull.data.id as number;
+        if (tryInsertFull.data.credit_note_number) setCreditNoteNumber(String(tryInsertFull.data.credit_note_number));
+      } else {
+        const msg = tryInsertFull.error?.message || "Failed to create credit note";
+        // fallback: minimal columns (matches your current CN create table usage)
+        const payloadMin: any = {
+          credit_note_number: creditNoteNumber,
+          credit_note_date: creditNoteDate,
           customer_id: customerId,
-          invoice_id: Number.isFinite(Number(invIdNum)) ? invIdNum : null,
-          reason: reason.trim() || null,
-          subtotal: totals.subtotal,
-          vat_amount: totals.vat_amount,
-          total_amount: totals.total_amount,
+          subtotal: subtotalEx,
+          vat_amount: vatAmount,
+          total_amount: totalAmount,
           status: "ISSUED",
-        })
-        .select("id")
-        .single();
+        };
+        const tryInsertMin = await supabase.from("credit_notes").insert(payloadMin).select("id, credit_note_number").single();
+        if (tryInsertMin.error) throw new Error(msg);
+        cnId = tryInsertMin.data?.id ?? null;
+        toast.warning("Saved with minimal fields", { description: "Some extra fields may not exist in credit_notes table yet." });
+      }
 
-      if (cnErr) throw new Error(cnErr.message);
-      if (!cn?.id) throw new Error("Failed to create credit note");
+      if (!cnId) throw new Error("Failed to create credit note");
 
-      const credit_note_id = cn.id as number;
+      // Items insert: full attempt (includes uom/qty breakdown), fallback to minimal known columns
+      const itemsFull = realLines.map((l) => {
+        const uom: Uom = l.uom === "PCS" ? "PCS" : l.uom === "KG" ? "KG" : "BOX";
 
-      const { error: itErr } = await supabase.from("credit_note_items").insert(
-        cleanLines.map((x) => ({
-          credit_note_id,
-          product_id: x.product_id,
-          total_qty: x.total_qty,
-          unit_price_excl_vat: x.unit_price_excl_vat,
-          unit_vat: x.unit_vat,
-          unit_price_incl_vat: x.unit_price_incl_vat,
-          line_total: x.line_total,
-        }))
-      );
+        const qtyInput = uom === "KG" ? Math.max(0, roundKg(n2(l.box_qty))) : Math.max(0, Math.trunc(n2(l.box_qty)));
+        const upb = uom === "BOX" ? safeUpb(l.units_per_box) : 1;
+        const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
 
-      if (itErr) throw new Error(itErr.message);
+        const rate = clampPct(l.vat_rate);
+        const unitEx = Math.max(0, n2(l.unit_price_excl_vat));
+        const unitVat = r2(unitEx * (rate / 100));
+        const unitInc = r2(unitEx + unitVat);
 
-      toast("Saved", { description: `Credit note ${creditNoteNo} created.` });
-      nav(`/credit-notes/${credit_note_id}`, { replace: true });
+        return {
+          credit_note_id: cnId,
+          product_id: l.product_id,
+          item_code: l.item_code || null,
+          description: l.description || null,
+          uom,
+          box_qty: uom === "BOX" || uom === "KG" ? qtyInput : null,
+          pcs_qty: uom === "PCS" ? qtyInput : null,
+          units_per_box: upb,
+          total_qty: totalQty,
+          unit_price_excl_vat: unitEx,
+          vat_rate: rate,
+          unit_vat: unitVat,
+          unit_price_incl_vat: unitInc,
+          line_total: r2(totalQty * unitInc),
+          price_overridden: !!l.price_overridden,
+          base_unit_price_excl_vat: n2(l.base_unit_price_excl_vat),
+        };
+      });
+
+      const insFull = await supabase.from("credit_note_items").insert(itemsFull as any);
+      if (insFull.error) {
+        const itemsMin = realLines.map((l) => ({
+          credit_note_id: cnId,
+          product_id: l.product_id,
+          total_qty: n2(l.total_qty),
+          unit_price_excl_vat: n2(l.unit_price_excl_vat),
+          unit_vat: n2(l.unit_vat),
+          unit_price_incl_vat: n2(l.unit_price_incl_vat),
+          line_total: n2(l.line_total),
+        }));
+        const insMin = await supabase.from("credit_note_items").insert(itemsMin as any);
+        if (insMin.error) throw new Error(insFull.error.message);
+        toast.warning("Items saved (minimal)", { description: "Some item fields may not exist in credit_note_items table yet." });
+      }
+
+      toast.success(`Credit note saved: ${creditNoteNumber}`);
+      nav(`/credit-notes/${cnId}`, { replace: true });
     } catch (e: any) {
-      const msg = e?.message || "Failed to save credit note";
-      setErr(msg);
-      toast("Save failed", { description: msg });
+      toast.error(e?.message || "Failed to save credit note");
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
+  function onPrint() {
+    setPrinting(true);
+    setTimeout(() => {
+      window.print();
+      setPrinting(false);
+    }, 120);
+  }
+
+  const DocAny: any = RamPotteryDoc;
+
   return (
-    <div className="space-y-5 invoiceCreate">
-      {/* Premium background hint (same vibe as InvoiceCreate) */}
-      <div className="pointer-events-none fixed inset-0 -z-10 opacity-60">
-        <div className="absolute -top-24 left-1/2 h-72 w-[60rem] -translate-x-1/2 rounded-full bg-white/10 blur-3xl" />
-        <div className="absolute -bottom-40 right-[-10rem] h-96 w-96 rounded-full bg-white/5 blur-3xl" />
-      </div>
+    <div className="inv-page">
+      {/* TOP ACTIONS (same as InvoiceCreate) */}
+      <div className="inv-actions inv-screen inv-actions--tight">
+        <Button variant="outline" onClick={() => nav(-1)}>
+          ← Back
+        </Button>
 
-      {/* ========= Header (same structure as InvoiceCreate) ========= */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <Button variant="outline" onClick={() => nav("/credit-notes")} className="mt-1 rounded-xl">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
+        <div className="inv-actions-right">
+          <Button variant="outline" onClick={onPrint} disabled={printing}>
+            {printing ? "Preparing…" : "Print"}
           </Button>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="text-2xl font-semibold tracking-tight">New Credit Note</div>
-              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
-                <Receipt className="h-3.5 w-3.5" />
-                CN Create
-              </span>
-              <span className="hidden sm:inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
-                <FileText className="h-3.5 w-3.5" />
-                Ctrl/⌘ + S to save
-              </span>
-            </div>
-            <div className="text-sm text-muted-foreground">Customer • Items • Totals • Save</div>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => loadOptions()} disabled={busy} className="rounded-xl">
-            <RefreshCw className={"mr-2 h-4 w-4 " + (busy ? "animate-spin" : "")} />
-            Refresh data
-          </Button>
-          <Button ref={saveBtnRef as any} onClick={save} disabled={busy} className="rounded-xl">
-            <Save className="mr-2 h-4 w-4" />
-            {busy ? "Saving..." : "Save Credit Note"}
+          <Button onClick={onSave} disabled={saving}>
+            {saving ? "Saving…" : "Save Credit Note"}
           </Button>
         </div>
       </div>
 
-      {err ? (
-        <Card className="p-4 rounded-2xl border-rose-200 bg-rose-50 text-rose-800 text-sm">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4" />
+      {/* FORM (same shell) */}
+      <div className="inv-screen inv-form-shell inv-form-shell--tight">
+        <div className="inv-form-card">
+          <div className="inv-form-head inv-form-head--tight">
             <div>
-              <b>Error:</b> {err}
-            </div>
-          </div>
-        </Card>
-      ) : null}
-
-      {/* ========= Main layout ========= */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Left: details + customer */}
-        <Card className="p-5 rounded-2xl border bg-white/80 shadow-sm space-y-4 lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <div className="font-semibold">Credit Note Details</div>
-            <div className="text-xs text-muted-foreground">Auto-numbered • editable</div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Credit Note No</div>
-              <Input value={creditNoteNo} onChange={(e) => setCreditNoteNo(e.target.value)} />
+              <div className="inv-form-title">New Credit Note</div>
+              <div className="inv-form-sub">A4 Print Template Locked (Ram Pottery Ltd)</div>
             </div>
 
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Date</div>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Invoice ID (optional)</div>
-              <Input value={invoiceId} onChange={(e) => setInvoiceId(e.target.value)} placeholder="e.g. 28" />
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* Customer row with quick search */}
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Customer</div>
-              <div className="flex gap-2">
-                <select
-                  className="h-10 rounded-xl border px-3 bg-white w-full text-sm text-slate-900 outline-none"
-                  value={customerId ?? ""}
-                  onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">Select customer...</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.customer_code ? `${c.name} (${c.customer_code})` : c.name}
-                    </option>
-                  ))}
-                </select>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 w-10 px-0 rounded-xl"
-                  onClick={openCustomerSearch}
-                  title="Search customer (Ctrl/⌘+K)"
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
+            <div className="inv-form-meta">
+              <div className="inv-meta-row">
+                <span className="inv-meta-k">Credit Note No</span>
+                <span className="inv-meta-v">{creditNoteNumber}</span>
               </div>
-
-              <div className="text-[11px] text-muted-foreground">
-                Selected: <b className="text-slate-900">{customerLabel || "—"}</b>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Reason (optional)</div>
-              <Input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Return / price adjustment / damage..."
-              />
-            </div>
-          </div>
-
-          {/* Customer preview (same premium panel style) */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-muted-foreground">Customer Preview</div>
-              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
-                <FileText className="h-3.5 w-3.5" />
-                Preview
-              </span>
-            </div>
-
-            <div className="mt-2 flex items-start justify-between gap-3">
-              <div>
-                <div className="font-semibold text-slate-900">{selectedCustomer?.name || "—"}</div>
-                {selectedCustomer?.customer_code ? (
-                  <div className="text-xs text-slate-500">{selectedCustomer.customer_code}</div>
-                ) : null}
-              </div>
-              <div className="text-right text-xs text-slate-500">
-                {selectedCustomer?.phone ? <div>{selectedCustomer.phone}</div> : null}
-                {selectedCustomer?.address ? (
-                  <div className="max-w-[320px] truncate">{selectedCustomer.address}</div>
-                ) : null}
+              <div className="inv-meta-row">
+                <span className="inv-meta-k">Date</span>
+                <span className="inv-meta-v">{creditNoteDate}</span>
               </div>
             </div>
           </div>
-        </Card>
 
-        {/* Right: totals */}
-        <Card className="p-5 rounded-2xl border bg-white/80 shadow-sm space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="font-semibold">Totals</div>
-            <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
-              <BadgePercent className="h-3.5 w-3.5" />
-              Live calc
-            </span>
-          </div>
+          {/* 2 STRAIGHT ROWS (same) */}
+          <div className="inv-form-2rows">
+            {/* ROW 1 */}
+            <div className="inv-form-row inv-form-row--top inv-row-red">
+              <div className="inv-field inv-field--printblock">
+                <label>Print Name</label>
 
-          <div className="rounded-2xl border bg-white p-4 space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <b className="text-slate-900">{rs(totals.subtotal)}</b>
+                <div className="inv-printblock-inner">
+                  <div className="inv-radioRow">
+                    <label className="inv-radioOpt">
+                      <input type="radio" checked={printNameMode === "CUSTOMER"} onChange={() => setPrintNameMode("CUSTOMER")} />
+                      <span>Customer Name</span>
+                    </label>
+
+                    <label className="inv-radioOpt">
+                      <input type="radio" checked={printNameMode === "CLIENT"} onChange={() => setPrintNameMode("CLIENT")} />
+                      <span>Client Name</span>
+                    </label>
+                  </div>
+
+                  <input className="inv-input" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Type a client name (optional)" />
+
+                  <div className="inv-help">
+                    Only one name prints on the credit note header (based on selection).
+                    <br />
+                    If “Client Name” is selected, this input prints as the customer name.
+                  </div>
+                </div>
+              </div>
+
+              <div className="inv-field inv-field--customerBig">
+                <label>Customer (account)</label>
+
+                <div className="inv-customerRow">
+                  <select className="inv-input inv-input--customerSelect" value={customerId ?? ""} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">Select…</option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button type="button" className="inv-iconBtn" onClick={openCustomerSearch} title="Search customer">
+                    🔍
+                  </button>
+                </div>
+
+                <div className="inv-help">
+                  {customer ? (
+                    <>
+                      <span>{customer.address || ""}</span>
+                      {customer.phone ? (
+                        <>
+                          {" "}
+                          · <span>{customer.phone}</span>
+                        </>
+                      ) : null}
+                      {customer.customer_code ? (
+                        <>
+                          {" "}
+                          · <span className="inv-muted">{customer.customer_code}</span>
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span>Select a customer</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="inv-field">
+                <label>Credit Note Date</label>
+                <input className="inv-input" type="date" value={creditNoteDate} onChange={(e) => setCreditNoteDate(e.target.value)} />
+              </div>
+
+              <div className="inv-field">
+                <label>Purchase Order No (optional)</label>
+                <input className="inv-input" value={purchaseOrderNo} onChange={(e) => setPurchaseOrderNo(e.target.value)} placeholder="Optional" />
+              </div>
             </div>
 
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">VAT</span>
-              <b className="text-slate-900">{rs(totals.vat_amount)}</b>
-            </div>
+            {/* ROW 2 */}
+            <div className="inv-form-row inv-form-row--bottom inv-row-red">
+              <div className="inv-field inv-field--salesrep">
+                <label>Sales Rep(s)</label>
 
-            <div className="h-px bg-slate-200 my-1" />
+                <div className="inv-rep">
+                  <button type="button" className="inv-rep-btn" onClick={() => setRepOpen((v) => !v)} aria-expanded={repOpen}>
+                    <div className="inv-rep-chips">
+                      {salesReps.length ? (
+                        salesReps.map((n) => (
+                          <span key={n} className="inv-chip">
+                            {n} ({repPhoneByName(n)})
+                            <span
+                              className="inv-chip-x"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSalesReps(salesReps.filter((x) => x !== n));
+                              }}
+                              title="Remove"
+                            >
+                              ×
+                            </span>
+                          </span>
+                        ))
+                      ) : (
+                        <span className="inv-rep-placeholder">Select sales reps…</span>
+                      )}
+                    </div>
+                    <span className="inv-rep-caret">▾</span>
+                  </button>
 
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Total</span>
-              <b className="text-xl text-slate-900">{rs(totals.total_amount)}</b>
-            </div>
-          </div>
-
-          <Button variant="outline" onClick={addLine} className="rounded-xl">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Item
-          </Button>
-
-          <div className="text-[11px] text-muted-foreground">
-            Tip: Use the 🔎 search button per row to find products fast.
-          </div>
-        </Card>
-      </div>
-
-      {/* ========= Items table (same structure as InvoiceCreate, keep logic CN) ========= */}
-      <Card className="overflow-hidden rounded-2xl border bg-white/80 shadow-sm">
-        <div className="overflow-auto">
-          <table className="w-full min-w-[1120px]">
-            <thead className="bg-slate-50">
-              <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
-                <th className="px-4 py-3 text-left">Product</th>
-                <th className="px-4 py-3 text-left">Qty</th>
-                <th className="px-4 py-3 text-left">Unit Excl</th>
-                <th className="px-4 py-3 text-left">VAT %</th>
-                <th className="px-4 py-3 text-left">Unit VAT</th>
-                <th className="px-4 py-3 text-left">Unit Incl</th>
-                <th className="px-4 py-3 text-left">Line Total</th>
-                <th className="px-3 py-3 text-right" />
-              </tr>
-            </thead>
-
-            <tbody className="divide-y">
-              {lines.map((l) => {
-                const c = lineCalc(l);
-
-                return (
-                  <tr key={l.key} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-3">
-                      <div className="flex gap-2 items-start">
-                        <div className="w-full">
-                          <select
-                            className="h-10 rounded-xl border px-3 bg-white w-full min-w-[360px] text-sm text-slate-900 outline-none"
-                            value={l.product_id ?? ""}
-                            onChange={(e) => pickProduct(l.key, Number(e.target.value))}
+                  {repOpen ? (
+                    <div className="inv-rep-pop" onMouseDown={(e) => e.stopPropagation()}>
+                      {SALES_REPS.map((r) => {
+                        const active = salesReps.includes(r.name);
+                        return (
+                          <button
+                            key={r.name}
+                            type="button"
+                            className={"inv-rep-item" + (active ? " is-active" : "")}
+                            onClick={() => {
+                              const next = active ? salesReps.filter((x) => x !== r.name) : [...salesReps, r.name];
+                              setSalesReps(next);
+                              setRepOpen(false);
+                            }}
                           >
-                            <option value="">Select product...</option>
+                            <span className="inv-rep-name">{r.name}</span>
+                            <span className="inv-rep-phone">{r.phone}</span>
+                            <span className="inv-rep-check">{active ? "✓" : ""}</span>
+                          </button>
+                        );
+                      })}
+                      <div className="inv-rep-hint">Click to select. Click again to remove.</div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="inv-help">This prints on the credit note + is saved to the record.</div>
+              </div>
+
+              <div className="inv-field">
+                <label>Default VAT %</label>
+                <input className="inv-input inv-input--right inv-input--sm" inputMode="decimal" value={vatPercentText} onChange={(e) => setVatPercentText(e.target.value)} />
+                <div className="inv-help">Used for NEW rows only. Each row VAT is editable.</div>
+              </div>
+
+              <div className="inv-field">
+                <label>Discount %</label>
+                <input
+                  className="inv-input inv-input--right inv-input--sm"
+                  inputMode="decimal"
+                  value={discountPercentText}
+                  onChange={(e) => {
+                    setDiscountTouched(true);
+                    setDiscountPercentText(e.target.value);
+                  }}
+                  placeholder="e.g. 2.5"
+                />
+                <div className="inv-help">Decimals allowed. Will not overwrite edited row prices.</div>
+              </div>
+
+              <div className="inv-field">
+                <label>Previous Balance</label>
+                <input className="inv-input inv-input--right inv-input--sm" inputMode="decimal" value={previousBalanceText} onChange={(e) => setPreviousBalanceText(e.target.value)} />
+              </div>
+
+              <div className="inv-field">
+                <label>Amount Paid</label>
+                <input
+                  className="inv-input inv-input--right inv-input--sm"
+                  inputMode="decimal"
+                  value={amountPaidText}
+                  onChange={(e) => {
+                    setBalanceTouched(false);
+                    setAmountPaidText(e.target.value);
+                  }}
+                />
+              </div>
+
+              <div className="inv-field">
+                <label>Amount Remaining</label>
+                <input
+                  className="inv-input inv-input--right inv-input--sm"
+                  inputMode="decimal"
+                  value={balanceTouched ? balanceManualText : balanceRemaining ? String(balanceRemaining) : ""}
+                  onChange={(e) => {
+                    setBalanceTouched(true);
+                    setBalanceManualText(e.target.value);
+                  }}
+                />
+                <div className="inv-help">Editable → updates Amount Paid automatically.</div>
+              </div>
+            </div>
+          </div>
+
+          {/* ITEMS (same table structure as InvoiceCreate) */}
+          <div className="inv-items">
+            <div className="inv-items-head">
+              <div>
+                <div className="inv-items-title">Items</div>
+                <div className="inv-items-sub">All fields editable. Row VAT does not affect other rows.</div>
+              </div>
+
+              <div className="inv-items-actions">
+                <Button onClick={addRowAndFocus}>+ Add Row</Button>
+              </div>
+            </div>
+
+            <div className="inv-table-wrap">
+              <table className="inv-table inv-table--invoiceCols">
+                <colgroup>
+                  <col style={{ width: "4%" }} />
+                  <col style={{ width: "29%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "4%" }} />
+                </colgroup>
+
+                <thead>
+                  <tr>
+                    <th className="inv-th inv-th-center">#</th>
+                    <th className="inv-th">PRODUCT</th>
+                    <th className="inv-th inv-th-center" />
+                    <th className="inv-th inv-th-center">QTY</th>
+                    <th className="inv-th inv-th-center">UNIT</th>
+                    <th className="inv-th inv-th-center">TOTAL QTY</th>
+                    <th className="inv-th inv-th-right">UNIT EX</th>
+                    <th className="inv-th inv-th-right">VAT %</th>
+                    <th className="inv-th inv-th-right">UNIT INC</th>
+                    <th className="inv-th inv-th-right">TOTAL</th>
+                    <th className="inv-th inv-th-center" />
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {lines.map((r, idx) => {
+                    const isReal = !!r.product_id;
+
+                    return (
+                      <tr key={r.id} className="inv-tr-red">
+                        <td className="inv-td inv-center">{idx + 1}</td>
+
+                        <td className="inv-td">
+                          <select
+                            className="inv-input inv-input--prod"
+                            value={r.product_id ?? ""}
+                            onChange={(e) => {
+                              const pid = e.target.value ? Number(e.target.value) : null;
+                              const p = pid ? products.find((x) => x.id === pid) || null : null;
+                              applyProductToRow(r.id, p);
+                            }}
+                          >
+                            <option value="">Select…</option>
                             {products.map((p) => (
                               <option key={p.id} value={p.id}>
-                                {p.name}
-                                {p.item_code ? ` • ${p.item_code}` : ""}
-                                {p.sku ? ` • ${p.sku}` : ""}
+                                {(p.item_code || p.sku || "").toString()} — {(p.name || "").toString()}
                               </option>
                             ))}
                           </select>
+                        </td>
 
-                          <div className="text-xs text-muted-foreground mt-1">{l.product_label || "—"}</div>
-                        </div>
-
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-10 w-10 px-0 rounded-xl"
-                          onClick={() => openProductSearch(l.key)}
-                          title="Search product"
-                        >
-                          <Search className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <Input
-                        inputMode="decimal"
-                        value={String(l.qty)}
-                        onChange={(e) => setLine(l.key, { qty: n(e.target.value) })}
-                        className="w-[110px]"
-                      />
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <Input
-                        inputMode="decimal"
-                        value={String(l.unit_excl)}
-                        onChange={(e) => setLine(l.key, { unit_excl: n(e.target.value) })}
-                        className="w-[140px]"
-                      />
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <Input
-                        inputMode="decimal"
-                        value={String(l.vat_rate)}
-                        onChange={(e) => setLine(l.key, { vat_rate: n(e.target.value) })}
-                        className="w-[110px]"
-                      />
-                    </td>
-
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900">{c.unitVat.toFixed(2)}</div>
-                    </td>
-
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900">{c.unitInc.toFixed(2)}</div>
-                    </td>
-
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900 font-semibold">{c.lineTotal.toFixed(2)}</div>
-                    </td>
-
-                    <td className="px-3 py-3 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-full border bg-white hover:bg-slate-50"
-                            aria-label="Row actions"
-                          >
-                            <MoreHorizontal className="h-5 w-5 text-slate-700" />
+                        <td className="inv-td inv-center">
+                          <button type="button" className="inv-iconBtn inv-iconBtn--table inv-prodSearchBtn" onClick={() => openProductSearch(r.id)} title="Search product">
+                            🔍
                           </button>
-                        </DropdownMenuTrigger>
+                        </td>
 
-                        <DropdownMenuContent align="end" className="w-44">
-                          <DropdownMenuItem onClick={() => removeLine(l.key)}>
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Remove
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        <td className="inv-td inv-center">
+                          <div className="inv-boxcell inv-boxcell--oneRow">
+                            <select className="inv-input inv-input--uom" value={r.uom} onChange={(e) => setLine(r.id, { uom: e.target.value as any })} disabled={!isReal}>
+                              <option value="BOX">BOX</option>
+                              <option value="PCS">PCS</option>
+                              <option value="KG">Kg</option>
+                            </select>
 
-        <div className="border-t bg-white/70 px-4 py-3 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            Lines: <b>{lines.length}</b> • Subtotal: <b>{rs(totals.subtotal)}</b> • VAT:{" "}
-            <b>{rs(totals.vat_amount)}</b> • Total: <b>{rs(totals.total_amount)}</b>
+                            <input
+                              ref={(el) => (qtyRefs.current[r.id] = el)}
+                              className="inv-input inv-input--qty inv-center"
+                              value={rawNum(r.box_qty)}
+                              onChange={(e) => setLine(r.id, { box_qty: parseNumInput(e.target.value) })}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
+                              onKeyDown={(e) => {
+                                if (e.key !== "Enter") return;
+                                if (!isReal) return;
+                                e.preventDefault();
+                                focusNextQty(r.id);
+                              }}
+                              disabled={!isReal}
+                              inputMode="decimal"
+                              step="any"
+                              placeholder={r.uom === "KG" ? "0.000" : "0"}
+                            />
+                          </div>
+                        </td>
+
+                        <td className="inv-td inv-center">
+                          {r.uom === "BOX" ? (
+                            <input
+                              className="inv-input inv-center"
+                              value={rawNum(r.units_per_box)}
+                              onChange={(e) => setLine(r.id, { units_per_box: parseNumInput(e.target.value) })}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
+                              disabled={!isReal}
+                              inputMode="decimal"
+                              step="any"
+                            />
+                          ) : (
+                            <input className="inv-input inv-center" value={r.uom === "KG" ? "Kg" : ""} readOnly />
+                          )}
+                        </td>
+
+                        <td className="inv-td inv-center">
+                          <input
+                            className="inv-input inv-center"
+                            value={rawNum(r.total_qty)}
+                            onChange={(e) => setLineTotalQty(r.id, parseNumInput(e.target.value))}
+                            onFocus={(e) => e.currentTarget.select()}
+                            onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
+                            disabled={!isReal}
+                            inputMode="decimal"
+                            step="any"
+                          />
+                        </td>
+
+                        {/* UNIT EX (decimal-safe) */}
+                        <td className="inv-td inv-right">
+                          <input
+                            className="inv-input inv-input--right"
+                            inputMode="decimal"
+                            placeholder="0.0000"
+                            value={editingEx[r.id] !== undefined ? editingEx[r.id] : rawNum(r.unit_price_excl_vat) || ""}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/,/g, "");
+                              if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
+                              setEditingEx((prev) => ({ ...prev, [r.id]: v }));
+                            }}
+                            onBlur={() => {
+                              const v = editingEx[r.id];
+                              const commit = v === undefined ? rawNum(r.unit_price_excl_vat) : v;
+                              setLinePriceEx(r.id, parseNumInput(commit === "." || commit === "" ? "0" : commit));
+                              setEditingEx((prev) => {
+                                const { [r.id]: _, ...rest } = prev;
+                                return rest;
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                setEditingEx((prev) => {
+                                  const { [r.id]: _, ...rest } = prev;
+                                  return rest;
+                                });
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            disabled={!isReal}
+                          />
+                        </td>
+
+                        {/* VAT % (decimal-safe) */}
+                        <td className="inv-td inv-right">
+                          <input
+                            className="inv-input inv-input--right"
+                            inputMode="decimal"
+                            placeholder="15"
+                            value={editingVat?.[r.id] !== undefined ? editingVat[r.id] : rawNum(r.vat_rate) || ""}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/,/g, "");
+                              if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
+                              setEditingVat((prev) => ({ ...prev, [r.id]: v }));
+                            }}
+                            onBlur={() => {
+                              const v = editingVat?.[r.id];
+                              const commit = v === undefined ? rawNum(r.vat_rate) : v;
+                              setLine(r.id, { vat_rate: parseNumInput(commit === "." || commit === "" ? "0" : commit) });
+                              setEditingVat((prev) => {
+                                const copy = { ...prev };
+                                delete copy[r.id];
+                                return copy;
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                setEditingVat((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[r.id];
+                                  return copy;
+                                });
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            disabled={!isReal}
+                          />
+                        </td>
+
+                        {/* UNIT INC (decimal-safe) */}
+                        <td className="inv-td inv-right">
+                          <input
+                            className="inv-input inv-input--right"
+                            inputMode="decimal"
+                            placeholder="0.0000"
+                            value={editingInc?.[r.id] !== undefined ? editingInc[r.id] : rawNum(r.unit_price_incl_vat) || ""}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/,/g, "");
+                              if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
+                              setEditingInc((prev) => ({ ...prev, [r.id]: v }));
+                            }}
+                            onBlur={() => {
+                              const v = editingInc?.[r.id];
+                              const commit = v === undefined ? rawNum(r.unit_price_incl_vat) : v;
+                              setLinePriceInc(r.id, parseNumInput(commit === "." || commit === "" ? "0" : commit));
+                              setEditingInc((prev) => {
+                                const copy = { ...prev };
+                                delete copy[r.id];
+                                return copy;
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                setEditingInc((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[r.id];
+                                  return copy;
+                                });
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            disabled={!isReal}
+                          />
+                        </td>
+
+                        {/* TOTAL (read-only) */}
+                        <td className="inv-td inv-right inv-td-total">
+                          <input className="inv-input inv-input--right inv-input--total" value={money(r.line_total)} readOnly />
+                        </td>
+
+                        {/* DELETE */}
+                        <td className="inv-td inv-center inv-td-del">
+                          <button type="button" className="inv-xmini inv-xmini--red" onClick={() => removeRow(r.id)} title="Remove row" aria-label="Remove row">
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Bottom action row — OUTSIDE table (same) */}
+            <div className="inv-bottomRow">
+              <div className="inv-bottomLeft">
+                <button type="button" className="inv-addrows" onClick={addRowAndFocus}>
+                  + Add Row
+                </button>
+                <div className="inv-addrows-help">
+                  Adds 1 row. Press <b>Enter</b> in Qty to create the next row.
+                </div>
+              </div>
+
+              <div className="inv-totalsbar inv-totalsbar--red">
+                <div className="inv-totalsbar__cell">
+                  <span className="k">Discount</span>
+                  <span className="v">Rs {money(discountAmount)}</span>
+                </div>
+
+                <div className="inv-totalsbar__cell">
+                  <span className="k">VAT</span>
+                  <span className="v">Rs {money(vatAmount)}</span>
+                </div>
+
+                <div className="inv-totalsbar__cell">
+                  <span className="k">Total</span>
+                  <span className="v">Rs {money(totalAmount)}</span>
+                </div>
+
+                <div className="inv-totalsbar__cell">
+                  <span className="k">Gross</span>
+                  <span className="v">Rs {money(grossTotal)}</span>
+                </div>
+
+                <div className="inv-totalsbar__cell inv-totalsbar__cell--balance">
+                  <span className="k">Balance</span>
+                  <span className="v">Rs {money(balanceRemaining)}</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={addLine} className="h-8 rounded-xl">
-              <Plus className="mr-2 h-4 w-4" />
-              Add
-            </Button>
-          </div>
         </div>
-      </Card>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => nav("/credit-notes")} className="rounded-xl">
-          Cancel
-        </Button>
-        <Button onClick={save} disabled={busy} className="rounded-xl">
-          <Save className="mr-2 h-4 w-4" />
-          {busy ? "Saving..." : "Save Credit Note"}
-        </Button>
       </div>
 
-      {/* =========================
-          Customer Search Dialog
-      ========================= */}
-      <Dialog open={custOpen} onOpenChange={setCustOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Search Customer</DialogTitle>
-            <DialogDescription>Type name / code / phone / address, then click a row.</DialogDescription>
-          </DialogHeader>
+      {/* Customer Search Modal (same IDs/classes so CSS matches) */}
+      {customerSearchOpen ? (
+        <div className="inv-modal-backdrop" onMouseDown={closeCustomerSearch}>
+          <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="inv-modal-head">
+              <div className="inv-modal-title">Search Customer</div>
+              <button className="inv-modal-x" onClick={closeCustomerSearch} type="button" aria-label="Close">
+                ✕
+              </button>
+            </div>
 
-          <div className="flex gap-2">
-            <Input
-              value={custSearch}
-              onChange={(e) => setCustSearch(e.target.value)}
-              placeholder="Search customers..."
-              className="flex-1"
-              autoFocus
-            />
-            <Button variant="outline" onClick={() => setCustSearch("")} className="rounded-xl">
-              Clear
-            </Button>
-          </div>
+            <div className="inv-modal-body">
+              <input id="invCustomerSearchInput" className="inv-input" value={customerSearchTerm} onChange={(e) => setCustomerSearchTerm(e.target.value)} placeholder="Search by name, phone, code, address…" />
 
-          <div className="mt-3 rounded-2xl border overflow-hidden">
-            <div className="max-h-[420px] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
-                    <th className="px-3 py-2 text-left">Name</th>
-                    <th className="px-3 py-2 text-left">Code</th>
-                    <th className="px-3 py-2 text-left">Phone</th>
-                    <th className="px-3 py-2 text-left">Address</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filteredCustomers.map((c) => (
-                    <tr
-                      key={c.id}
-                      className="hover:bg-slate-50 cursor-pointer"
-                      onClick={() => selectCustomerFromModal(c)}
-                      title="Select customer"
-                    >
-                      <td className="px-3 py-2 font-semibold text-slate-900">{c.name}</td>
-                      <td className="px-3 py-2 text-slate-700">{c.customer_code || "—"}</td>
-                      <td className="px-3 py-2 text-slate-700">{c.phone || "—"}</td>
-                      <td className="px-3 py-2 text-slate-700">
-                        <div className="max-w-[360px] truncate">{c.address || "—"}</div>
-                      </td>
-                    </tr>
-                  ))}
-
-                  {filteredCustomers.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">
-                        No customers match your search.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+              <div className="inv-modal-list">
+                {filteredCustomers.slice(0, 250).map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="inv-modal-item"
+                    onClick={() => {
+                      setCustomerId(c.id);
+                      closeCustomerSearch();
+                    }}
+                  >
+                    <div className="inv-modal-item-title">
+                      <b>{c.name}</b> {c.customer_code ? <span className="inv-muted">({c.customer_code})</span> : null}
+                    </div>
+                    <div className="inv-modal-item-sub">{[c.phone, c.address].filter(Boolean).join(" · ")}</div>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
+        </div>
+      ) : null}
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCustOpen(false)} className="rounded-xl">
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Product Search Modal */}
+      {productSearchOpen ? (
+        <div className="inv-modal-backdrop" onMouseDown={closeProductSearch}>
+          <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="inv-modal-head">
+              <div className="inv-modal-title">Search Product</div>
+              <button className="inv-modal-x" onClick={closeProductSearch} type="button" aria-label="Close">
+                ✕
+              </button>
+            </div>
 
-      {/* =========================
-          Product Search Dialog
-      ========================= */}
-      <Dialog open={prodOpen} onOpenChange={setProdOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Search Product</DialogTitle>
-            <DialogDescription>Type name / item code / SKU, then click a row.</DialogDescription>
-          </DialogHeader>
+            <div className="inv-modal-body">
+              <input id="invProductSearchInput" className="inv-input" value={productSearchTerm} onChange={(e) => setProductSearchTerm(e.target.value)} placeholder="Search by code, sku, name, description…" />
 
-          <div className="flex gap-2">
-            <Input
-              value={prodSearch}
-              onChange={(e) => setProdSearch(e.target.value)}
-              placeholder="Search products..."
-              className="flex-1"
-              autoFocus
-            />
-            <Button variant="outline" onClick={() => setProdSearch("")} className="rounded-xl">
-              Clear
-            </Button>
-          </div>
-
-          <div className="mt-3 rounded-2xl border overflow-hidden">
-            <div className="max-h-[420px] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
-                    <th className="px-3 py-2 text-left">Name</th>
-                    <th className="px-3 py-2 text-left">Item Code</th>
-                    <th className="px-3 py-2 text-left">SKU</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filteredProducts.map((p) => (
-                    <tr
-                      key={p.id}
-                      className="hover:bg-slate-50 cursor-pointer"
-                      onClick={() => selectProductFromModal(p)}
-                      title="Select product"
-                    >
-                      <td className="px-3 py-2 font-semibold text-slate-900">{p.name}</td>
-                      <td className="px-3 py-2 text-slate-700">{p.item_code || "—"}</td>
-                      <td className="px-3 py-2 text-slate-700">{p.sku || "—"}</td>
-                    </tr>
-                  ))}
-
-                  {filteredProducts.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="p-6 text-center text-sm text-muted-foreground">
-                        No products match your search.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+              <div className="inv-modal-list">
+                {filteredProducts.slice(0, 250).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="inv-modal-item"
+                    onClick={() => {
+                      const rowId = productSearchRowId;
+                      if (rowId) applyProductToRow(rowId, p);
+                      closeProductSearch();
+                    }}
+                  >
+                    <div className="inv-modal-item-title">
+                      <b>{p.item_code || p.sku}</b> — {p.name}
+                    </div>
+                    <div className="inv-modal-item-sub">UNIT: {intFmt(p.units_per_box ?? 1)} · Unit Ex: {money((p as any).selling_price ?? 0)}</div>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
+        </div>
+      ) : null}
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setProdOpen(false)} className="rounded-xl">
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* PRINT ONLY (same integration as InvoiceCreate, but CREDIT NOTE) */}
+      <div className="inv-printonly">
+        <DocAny
+          variant="CREDIT_NOTE"
+          docNoLabel="CREDIT NOTE NO:"
+          docNoValue={creditNoteNumber}
+          dateLabel="DATE:"
+          dateValue={creditNoteDate}
+          purchaseOrderLabel="PURCHASE ORDER NO:"
+          purchaseOrderValue={purchaseOrderNo || ""}
+          salesRepName={salesReps.join(", ")}
+          salesRepPhone={salesReps.map(repPhoneByName).filter(Boolean).join(", ")}
+          customer={{
+            name: printedName || customer?.name || "",
+            address: customer?.address || "",
+            phone: customer?.phone || "",
+            brn: customer?.brn || "",
+            vat_no: customer?.vat_no || "",
+            customer_code: customer?.customer_code || "",
+          }}
+          company={{ brn: "C17144377", vat_no: "123456789" }}
+          items={realLines.map((r: any, i: number) => ({
+            sn: i + 1,
+            item_code: r.item_code,
+            uom: r.uom,
+            box_qty: r.uom === "PCS" ? Math.trunc(n2(r.box_qty)) : n2(r.box_qty),
+            units_per_box: r.uom === "BOX" ? Math.trunc(n2(r.units_per_box)) : 1,
+            total_qty: n2(r.total_qty),
+            description: r.description,
+            unit_price_excl_vat: n2(r.unit_price_excl_vat),
+            unit_vat: n2(r.unit_vat),
+            unit_price_incl_vat: n2(r.unit_price_incl_vat),
+            line_total: n2(r.line_total),
+            vat_rate: n2(r.vat_rate),
+          }))}
+          totals={{
+            subtotal: subtotalEx,
+            vatPercentLabel: `VAT ${vatDefault}%`,
+            vat_amount: vatAmount,
+            total_amount: totalAmount,
+            previous_balance: previousBalance || null,
+            amount_paid: null,
+            balance_remaining: null,
+            discount_percent: discountPercent || null,
+            discount_amount: discountAmount || null,
+          }}
+          preparedBy=""
+          deliveredBy=""
+        />
+      </div>
     </div>
   );
 }
+
 

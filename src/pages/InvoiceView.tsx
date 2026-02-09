@@ -51,6 +51,14 @@ function fmtQty(uom: string, v: any) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(x));
 }
 
+function displayQtyForUom(it: any) {
+  const u = String(it?.uom || "BOX").toUpperCase();
+  if (u === "PCS") return it?.pcs_qty ?? it?.total_qty ?? 0;
+  // BOX + KG both stored in box_qty in your insert logic
+  return it?.box_qty ?? it?.total_qty ?? 0;
+}
+
+
 function digitsOnly(v: any) {
   return String(v ?? "").replace(/[^\d]/g, "");
 }
@@ -858,7 +866,7 @@ export default function InvoiceView() {
         <div className="divide-y">
           {items.map((it: any) => {
             const uom = String(it.uom || "BOX").toUpperCase();
-            const qty = fmtQty(uom, it.total_qty);
+            const qty = fmtQty(uom, displayQtyForUom(it));
             return (
               <div key={it.id} className="px-4 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div className="min-w-0">

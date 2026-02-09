@@ -33,17 +33,33 @@ import { cn } from "@/lib/utils";
    Helpers (Dashboard formatting)
    - 1,000 / 20,000 / 1,500,000 (no decimals)
 ========================= */
+/* =========================
+   Helpers (Dashboard formatting)
+   - Counts: 0 decimals
+   - Money: 2 decimals (NO rounding to int)
+========================= */
 const NF0 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const NF2 = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 function n0(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
 }
+
+// ✅ for counts only (invoices count, stock items, etc.)
 function fmt(v: any) {
   return NF0.format(n0(v));
 }
-function fmtRs(v: any) {
-  return `Rs ${fmt(v)}`;
+
+// ✅ for money (always 2 decimals)
+function fmtMoney(v: any) {
+  return NF2.format(n0(v));
 }
+
+function fmtRs(v: any) {
+  return `Rs ${fmtMoney(v)}`;
+}
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -84,7 +100,6 @@ function fmtDate(d?: string) {
   if (Number.isNaN(x.getTime())) return d;
   return x.toLocaleDateString("en-GB").replaceAll("/", "-"); // DD-MM-YYYY
 }
-
 /* =========================
    Small UI components
 ========================= */
@@ -113,7 +128,9 @@ function StatCard({ title, value, changePct, icon: Icon, trend, hint }: StatCard
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <p className="text-3xl font-bold mt-2 text-foreground truncate">{value}</p>
+            <p className="text-3xl font-bold mt-2 text-foreground whitespace-nowrap">
+           {value}
+           </p>
 
             <div className="flex items-center gap-1 mt-2">
               {trend === "up" ? (

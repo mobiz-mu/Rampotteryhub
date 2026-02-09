@@ -171,7 +171,7 @@ export default function Invoices() {
   /* Payment modal */
   const [payOpen, setPayOpen] = useState(false);
   const [payInvoice, setPayInvoice] = useState<any | null>(null);
-  const [payAmount, setPayAmount] = useState<number>(0); // total amount paid so far
+  const [payAmountStr, setPayAmountStr] = useState<string>("0");
   const payRef = useRef<HTMLInputElement | null>(null);
 
   /* Debounced search */
@@ -251,14 +251,19 @@ export default function Invoices() {
   ========================= */
   function openPayment(inv: any) {
     setPayInvoice(inv);
-    setPayAmount(n(inv.amount_paid));
+    setPayAmountStr(String(n(inv.amount_paid).toFixed(2)));
     setPayOpen(true);
     setTimeout(() => payRef.current?.focus(), 60);
   }
 
   function savePayment() {
     if (!payInvoice?.id) return;
-    setPaymentM.mutate({ invoiceId: payInvoice.id, amount: n(payAmount) });
+    const amt = Number(payAmountStr || "0");
+setPaymentM.mutate({
+  invoiceId: payInvoice.id,
+  amount: Number.isFinite(amt) ? amt : 0,
+});
+
   }
 
   function onVoid(inv: any) {
@@ -570,16 +575,37 @@ export default function Invoices() {
 
             <div className="space-y-2">
               <div className="text-sm font-semibold">Total paid so far</div>
-              <Input ref={payRef} inputMode="decimal" value={String(payAmount)} onChange={(e) => setPayAmount(n(e.target.value))} />
+              <Input
+                 ref={payRef}
+                 inputMode="decimal"
+                 placeholder="0.00"
+                 value={payAmountStr}
+                onChange={(e) => {
+                const v = e.target.value;
+                // allow: "", "10", "10.", "10.5", "10.50"
+                if (/^\d*([.]\d{0,2})?$/.test(v)) setPayAmountStr(v);
+              }}
+                 onBlur={() => {
+               // normalize on blur
+                const x = Number(payAmountStr || "0");
+                setPayAmountStr(Number.isFinite(x) ? x.toFixed(2) : "0.00");
+              }}
+            />
+
               <div className="flex gap-2">
-                <Button type="button" variant="outline" className="flex-1" onClick={() => setPayAmount(0)} disabled={setPaymentM.isPending}>
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setPayAmountStr("0.00")}
+ disabled={setPaymentM.isPending}>
                   Set 0
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   className="flex-1"
-                  onClick={() => setPayAmount(n(payInvoice?.gross_total ?? payInvoice?.total_amount))}
+                  onClick={() => {
+  const full = n(payInvoice?.gross_total ?? payInvoice?.total_amount);
+  setPayAmountStr(full.toFixed(2));
+}}
+
                   disabled={setPaymentM.isPending}
                 >
                   Full Paid

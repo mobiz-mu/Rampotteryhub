@@ -8,38 +8,6 @@ import "@/styles/InvoiceCreate.css"; // ✅ reuse same CSS/theme as InvoiceCreat
 
 import RamPotteryDoc from "@/components/print/RamPotteryDoc";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-
-import {
-  ArrowLeft,
-  BadgePercent,
-  FileText,
-  MoreHorizontal,
-  Plus,
-  Printer,
-  RefreshCw,
-  Save,
-  Search,
-  Trash2,
-  Users,
-} from "lucide-react";
 
 import { listCustomers } from "@/lib/customers";
 import { listProducts } from "@/lib/invoices";
@@ -53,9 +21,11 @@ type CustomerRow = {
   name: string;
   address?: string | null;
   phone?: string | null;
+  whatsapp?: string | null;
   brn?: string | null;
   vat_no?: string | null;
   customer_code?: string | null;
+  opening_balance?: number | null;
   discount_percent?: number | null;
 };
 
@@ -70,7 +40,9 @@ type ProductRow = {
 };
 
 type Uom = "BOX" | "PCS";
+type PrintNameMode = "CUSTOMER" | "CLIENT";
 
+/** Invoice-style row model (matches the print doc fields) */
 type QuoteLine = {
   id: string;
   product_id: number | null;
@@ -79,24 +51,23 @@ type QuoteLine = {
   description: string;
 
   uom: Uom;
-  box_qty: number; // qty input (BOX qty or PCS qty)
-  units_per_box: number; // UPB (1 for PCS)
+  box_qty: number; // input qty (BOX or PCS)
+  units_per_box: number; // BOX only (PCS = 1)
   total_qty: number; // computed
 
-  vat_rate: number;
+  vat_rate: number; // per-row (we also have default VAT that can set all)
 
-  base_unit_price_excl_vat: number; // original product price (EX)
-  unit_price_excl_vat: number; // discounted EX used in calc
-
+  base_unit_price_excl_vat: number; // product base price EX
+  unit_price_excl_vat: number; // editable EX
   unit_vat: number; // per unit
-  unit_price_incl_vat: number; // per unit
-  line_total: number; // total_qty * unit_inc
+  unit_price_incl_vat: number; // editable INC (derived from EX on recalc)
+  line_total: number;
+
+  price_overridden?: boolean;
 };
 
-type PrintNameMode = "CUSTOMER" | "CLIENT";
-
 /* =========================
-   Sales reps
+   Sales reps (same as invoice)
 ========================= */
 const SALES_REPS = [
   { name: "Mr Koushal", phone: "59193239" },
@@ -112,7 +83,7 @@ function repPhoneByName(name: string) {
 }
 
 /* =========================
-   Helpers
+   Helpers (same style as invoice)
 ========================= */
 const n2 = (v: any) => {
   const x = Number(v ?? 0);
@@ -143,6 +114,17 @@ function todayISO() {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+function parseNumInput(s: string) {
+  const cleaned = String(s ?? "").replace(/,/g, "").trim();
+  return cleaned === "" ? 0 : n2(cleaned);
+}
+
+function rawNum(v: any) {
+  const x = n2(v);
+  return x === 0 ? "" : String(x);
+}
+
+/** Recalc like invoice: keep numbers stable, update totals */
 function recalc(row: QuoteLine): QuoteLine {
   const qtyInput = Math.max(0, Math.trunc(n2(row.box_qty)));
 
@@ -151,6 +133,7 @@ function recalc(row: QuoteLine): QuoteLine {
   const totalQty = uom === "PCS" ? qtyInput : qtyInput * upb;
 
   const rate = clampPct(row.vat_rate);
+
   const unitEx = Math.max(0, n2(row.unit_price_excl_vat));
   const unitVat = unitEx * (rate / 100);
   const unitInc = unitEx + unitVat;
@@ -158,6 +141,7 @@ function recalc(row: QuoteLine): QuoteLine {
   return {
     ...row,
     uom,
+    box_qty: qtyInput,
     units_per_box: upb,
     total_qty: totalQty,
     vat_rate: rate,
@@ -183,6 +167,7 @@ function blankLine(defaultVat: number): QuoteLine {
     unit_vat: 0,
     unit_price_incl_vat: 0,
     line_total: 0,
+    price_overridden: false,
   });
 }
 
@@ -194,7 +179,7 @@ function pickProductLabel(p?: ProductRow | null) {
 }
 
 /* =========================
-   Page
+   Page (InvoiceCreate look + behavior)
 ========================= */
 export default function QuotationCreate() {
   const nav = useNavigate();
@@ -204,6 +189,7 @@ export default function QuotationCreate() {
   const [busy, setBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
 
+  // header fields (same pattern)
   const [printNameMode, setPrintNameMode] = useState<PrintNameMode>("CUSTOMER");
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [clientName, setClientName] = useState<string>("");
@@ -211,18 +197,24 @@ export default function QuotationCreate() {
   const [quotationDate, setQuotationDate] = useState<string>(todayISO());
   const [validUntil, setValidUntil] = useState<string>("");
 
-  const [vatPercent, setVatPercent] = useState<number>(15);
-
-  const [discountPercent, setDiscountPercent] = useState<number>(0);
+  // invoice-like global VAT/Discount inputs (editable)
+  const [vatPercentText, setVatPercentText] = useState<string>("15");
+  const [discountPercentText, setDiscountPercentText] = useState<string>("");
   const [discountTouched, setDiscountTouched] = useState(false);
+
+  const vatPercent = clampPct(vatPercentText);
+  const discountPercent = clampPct(discountPercentText);
 
   const [quotationNumber, setQuotationNumber] = useState<string>("(Auto when saved)");
   const [lines, setLines] = useState<QuoteLine[]>([blankLine(15)]);
 
-  const repBoxRef = useRef<HTMLDivElement | null>(null);
-
   // row focus (Enter => next)
   const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // decimal-safe buffers (same as invoice/credit note)
+  const [editingEx, setEditingEx] = useState<Record<string, string>>({});
+  const [editingVat, setEditingVat] = useState<Record<string, string>>({});
+  const [editingInc, setEditingInc] = useState<Record<string, string>>({});
 
   /* ===== Search modals (InvoiceCreate style) ===== */
   const [custOpen, setCustOpen] = useState(false);
@@ -232,25 +224,24 @@ export default function QuotationCreate() {
   const [prodSearch, setProdSearch] = useState("");
   const [prodPickRowId, setProdPickRowId] = useState<string | null>(null);
 
-  /* ===== Sales reps dropdown (same UX / premium) ===== */
+  /* ===== Sales reps dropdown (premium multi-select) ===== */
+  const repBoxRef = useRef<HTMLDivElement | null>(null);
   const [repOpen, setRepOpen] = useState(false);
   const [salesReps, setSalesReps] = useState<SalesRepName[]>([]);
 
   useEffect(() => {
-  if (!repOpen) return;
+    if (!repOpen) return;
 
-  const onDown = (e: PointerEvent) => {
-    const box = repBoxRef.current;
-    if (!box) return;
-    if (box.contains(e.target as Node)) return; // click inside -> keep open
-    setRepOpen(false); // click outside -> close
-  };
+    const onDown = (e: PointerEvent) => {
+      const box = repBoxRef.current;
+      if (!box) return;
+      if (box.contains(e.target as Node)) return;
+      setRepOpen(false);
+    };
 
-  // capture=true ensures we catch outside clicks reliably
-  document.addEventListener("pointerdown", onDown, true);
-  return () => document.removeEventListener("pointerdown", onDown, true);
-}, [repOpen]);
-
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [repOpen]);
 
   /* ===== Data ===== */
   const customersQ = useQuery({
@@ -280,29 +271,36 @@ export default function QuotationCreate() {
   // auto discount from customer
   useEffect(() => {
     if (!customerId || !customer) return;
-    if (!discountTouched) setDiscountPercent(clampPct(customer.discount_percent ?? 0));
+
+    if (!discountTouched) {
+      const dp = customer.discount_percent ?? null;
+      if (dp !== null && dp !== undefined && String(dp) !== "0") setDiscountPercentText(String(dp));
+      else setDiscountPercentText("");
+    }
+
     if (!clientName.trim()) setClientName(customer.name || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  // VAT applies to all
+  // VAT applies to all rows (like your current page) but keep per-row editable too
   useEffect(() => {
-    const v = clampPct(vatPercent);
+    const v = clampPct(vatPercentText);
     setLines((prev) => prev.map((r) => recalc({ ...r, vat_rate: v })));
-  }, [vatPercent]);
+  }, [vatPercentText]);
 
-  // Discount recalculates unit_ex from base
+  // Discount recalculates unit_ex from base (but do not override manually edited prices)
   useEffect(() => {
-    const dp = clampPct(discountPercent);
+    const dp = clampPct(discountPercentText);
     setLines((prev) =>
       prev.map((r) => {
         if (!r.product_id) return r;
+        if (r.price_overridden) return r;
         const base = n2(r.base_unit_price_excl_vat);
         const discounted = base * (1 - dp / 100);
         return recalc({ ...r, unit_price_excl_vat: discounted });
       })
     );
-  }, [discountPercent]);
+  }, [discountPercentText]);
 
   /* ===== Duplicate ===== */
   useEffect(() => {
@@ -318,8 +316,11 @@ export default function QuotationCreate() {
         setQuotationDate(String((qRow as any).quotation_date || todayISO()));
         setValidUntil(String((qRow as any).valid_until || ""));
 
-        setVatPercent(clampPct((qRow as any).vat_percent ?? 15));
-        setDiscountPercent(clampPct((qRow as any).discount_percent ?? 0));
+        const vat = clampPct((qRow as any).vat_percent ?? 15);
+        setVatPercentText(String(vat));
+
+        const disc = clampPct((qRow as any).discount_percent ?? 0);
+        setDiscountPercentText(disc ? String(disc) : "");
         setDiscountTouched(true);
 
         const repText = String((qRow as any).sales_rep || "").trim();
@@ -336,12 +337,13 @@ export default function QuotationCreate() {
             box_qty: n2(it.box_qty || 0),
             units_per_box: Math.max(1, Math.trunc(n2(it.units_per_box || 1))),
             total_qty: Math.trunc(n2(it.total_qty || 0)),
-            vat_rate: clampPct((it.vat_rate ?? (qRow as any).vat_percent ?? 15) as any),
+            vat_rate: clampPct((it.vat_rate ?? vat) as any),
             base_unit_price_excl_vat: n2(it.base_unit_price_excl_vat ?? it.unit_price_excl_vat ?? 0),
             unit_price_excl_vat: n2(it.unit_price_excl_vat ?? 0),
             unit_vat: n2(it.unit_vat || 0),
             unit_price_incl_vat: n2(it.unit_price_incl_vat || 0),
             line_total: n2(it.line_total || 0),
+            price_overridden: !!it.price_overridden,
           })
         );
 
@@ -360,14 +362,19 @@ export default function QuotationCreate() {
   );
 
   const vatAmount = useMemo(
-    () => realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_vat), 0),
+    () =>
+      realLines.reduce((sum, r) => {
+        const rate = clampPct(r.vat_rate);
+        const ex = n2(r.unit_price_excl_vat);
+        return sum + n2(r.total_qty) * (ex * (rate / 100));
+      }, 0),
     [realLines]
   );
 
   const totalAfterDiscount = useMemo(() => subtotalEx + vatAmount, [subtotalEx, vatAmount]);
 
   const discountAmount = useMemo(() => {
-    const dp = clampPct(discountPercent);
+    const dp = clampPct(discountPercentText);
     if (dp <= 0) return 0;
 
     const baseSub = realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.base_unit_price_excl_vat), 0);
@@ -379,14 +386,36 @@ export default function QuotationCreate() {
 
     const baseTotal = baseSub + baseVat;
     return Math.max(0, baseTotal - totalAfterDiscount);
-  }, [realLines, discountPercent, totalAfterDiscount]);
+  }, [realLines, discountPercentText, totalAfterDiscount]);
 
   /* ===== Row helpers ===== */
   function setLine(id: string, patch: Partial<QuoteLine>) {
     setLines((prev) => prev.map((r) => (r.id === id ? recalc({ ...r, ...patch } as QuoteLine) : r)));
   }
 
-  function addLine() {
+  function setLinePriceEx(id: string, unitEx: number) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        return recalc({ ...r, unit_price_excl_vat: Math.max(0, n2(unitEx)), price_overridden: true } as QuoteLine);
+      })
+    );
+  }
+
+  function setLinePriceInc(id: string, unitInc: number) {
+    setLines((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const rate = clampPct(r.vat_rate);
+        const inc = Math.max(0, n2(unitInc));
+        const denom = 1 + rate / 100;
+        const ex = denom > 0 ? inc / denom : inc;
+        return recalc({ ...r, unit_price_excl_vat: Math.max(0, ex), price_overridden: true } as QuoteLine);
+      })
+    );
+  }
+
+  function addRowAndFocus() {
     const row = blankLine(vatPercent);
     setLines((prev) => [...prev, row]);
     setTimeout(() => {
@@ -416,10 +445,11 @@ export default function QuotationCreate() {
             vat_rate: clampPct(vatPercent),
             uom: "BOX",
             box_qty: 0,
-          });
+            price_overridden: false,
+          } as QuoteLine);
         }
 
-        const dp = clampPct(discountPercent);
+        const dp = clampPct(discountPercentText);
         const baseEx = n2((product as any).selling_price || 0);
         const discountedEx = baseEx * (1 - dp / 100);
 
@@ -434,7 +464,8 @@ export default function QuotationCreate() {
           vat_rate: clampPct(vatPercent),
           uom: "BOX",
           box_qty: Math.max(1, Math.trunc(n2(r.box_qty || 1))),
-        });
+          price_overridden: false,
+        } as QuoteLine);
       })
     );
 
@@ -453,7 +484,7 @@ export default function QuotationCreate() {
       qtyRefs.current[next.id]?.select?.();
       return;
     }
-    addLine();
+    addRowAndFocus();
   }
 
   /* ===== Search dialogs ===== */
@@ -485,6 +516,28 @@ export default function QuotationCreate() {
     setProdOpen(true);
   }
 
+  /* ===== Keyboard shortcuts (same pro feel) ===== */
+  const saveBtnRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (prodOpen) setProdOpen(false);
+        if (custOpen) setCustOpen(false);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveBtnRef.current?.click();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        openCustomerSearch();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prodOpen, custOpen]);
+
   /* ===== Save / Print ===== */
   async function onSave() {
     if (!customerId) return toast.error("Please select a customer.");
@@ -512,8 +565,8 @@ export default function QuotationCreate() {
 
         notes: null,
 
-        vat_percent: clampPct(vatPercent),
-        discount_percent: clampPct(discountPercent),
+        vat_percent: vatPercent,
+        discount_percent: discountPercent,
         discount_amount: n2(discountAmount),
 
         items: realLines.map((l) => {
@@ -529,6 +582,7 @@ export default function QuotationCreate() {
 
           return {
             product_id: l.product_id,
+            item_code: l.item_code || null,
             description: l.description || null,
 
             uom,
@@ -540,6 +594,11 @@ export default function QuotationCreate() {
             unit_vat: unitVat,
             unit_price_incl_vat: unitInc,
             line_total: totalQty * unitInc,
+
+            // optional extras if your backend stores them:
+            base_unit_price_excl_vat: n2(l.base_unit_price_excl_vat),
+            vat_rate: rate,
+            price_overridden: !!l.price_overridden,
           };
         }),
       };
@@ -550,7 +609,6 @@ export default function QuotationCreate() {
       setQuotationNumber(no);
 
       toast.success(`Quotation saved: ${no}`);
-
       if (res?.id) nav(`/quotations/${res.id}`, { replace: true });
     } catch (e: any) {
       toast.error(e?.message || "Failed to save quotation");
@@ -570,28 +628,14 @@ export default function QuotationCreate() {
   const DocAny: any = RamPotteryDoc;
 
   return (
-    <div className="space-y-5">
-      {/* ========= Header (match InvoiceCreate) ========= */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <Button variant="outline" onClick={() => nav(-1)} className="mt-1">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
-          </Button>
+    <div className="inv-page">
+      {/* TOP ACTIONS (same as InvoiceCreate) */}
+      <div className="inv-actions inv-screen inv-actions--tight">
+        <Button variant="outline" onClick={() => nav(-1)}>
+          ← Back
+        </Button>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="text-2xl font-semibold">New Quotation</div>
-              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
-                <FileText className="h-3.5 w-3.5" />
-                Quote Create
-              </span>
-            </div>
-            <div className="text-sm text-muted-foreground">Customer • Items • Totals • Save</div>
-          </div>
-        </div>
-
-        <div className="flex gap-2">
+        <div className="inv-actions-right">
           <Button
             variant="outline"
             onClick={() => {
@@ -600,302 +644,284 @@ export default function QuotationCreate() {
             }}
             disabled={busy}
           >
-            <RefreshCw className={"mr-2 h-4 w-4 " + (busy ? "animate-spin" : "")} />
-            Refresh data
+            {busy ? "Refreshing…" : "Refresh"}
           </Button>
 
           <Button variant="outline" onClick={onPrint} disabled={printing}>
-            <Printer className="mr-2 h-4 w-4" />
-            {printing ? "Preparing..." : "Print"}
+            {printing ? "Preparing…" : "Print"}
           </Button>
 
-          <Button onClick={onSave} disabled={busy}>
-            <Save className="mr-2 h-4 w-4" />
-            {busy ? "Saving..." : "Save Quotation"}
+          <Button ref={saveBtnRef as any} onClick={onSave} disabled={busy}>
+            {busy ? "Saving…" : "Save Quotation"}
           </Button>
         </div>
       </div>
 
-      {/* ========= Main grid (same as InvoiceCreate) ========= */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Left: details */}
-        <Card className="p-5 space-y-4 lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <div className="font-semibold">Quotation Details</div>
-            <div className="text-xs text-muted-foreground">Auto number when saved</div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Quotation No</div>
-              <Input value={quotationNumber} readOnly />
+      {/* FORM (same shell) */}
+      <div className="inv-screen inv-form-shell inv-form-shell--tight">
+        <div className="inv-form-card">
+          <div className="inv-form-head inv-form-head--tight">
+            <div>
+              <div className="inv-form-title">New Quotation</div>
+              <div className="inv-form-sub">Customer • Items • Totals • Save (Ctrl/⌘+S)</div>
             </div>
 
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Quotation Date</div>
-              <Input type="date" value={quotationDate} onChange={(e) => setQuotationDate(e.target.value)} />
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Valid Until (optional)</div>
-              <Input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* Customer selector + search */}
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Customer (account)</div>
-
-              <div className="flex gap-2">
-                <select
-                  className="h-10 rounded-md border px-3 bg-background w-full"
-                  value={customerId ?? ""}
-                  onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">Select customer...</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.customer_code ? `${c.name} (${c.customer_code})` : c.name}
-                    </option>
-                  ))}
-                </select>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 w-10 px-0"
-                  onClick={openCustomerSearch}
-                  title="Search customer"
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
+            <div className="inv-form-meta">
+              <div className="inv-meta-row">
+                <span className="inv-meta-k">Quotation No</span>
+                <span className="inv-meta-v">{quotationNumber}</span>
               </div>
-
-              <div className="text-[11px] text-muted-foreground">
-                Selected: <b className="text-slate-900">{customer?.name || "—"}</b>
+              <div className="inv-meta-row">
+                <span className="inv-meta-k">Date</span>
+                <span className="inv-meta-v">{quotationDate}</span>
               </div>
-            </div>
-
-            {/* Print name & client name */}
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Name Printed on Quote</div>
-
-              <div className="flex gap-2">
-                <select
-                  className="h-10 rounded-md border px-3 bg-background w-[180px]"
-                  value={printNameMode}
-                  onChange={(e) => setPrintNameMode(e.target.value as PrintNameMode)}
-                >
-                  <option value="CUSTOMER">Customer</option>
-                  <option value="CLIENT">Client</option>
-                </select>
-
-                <Input
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Client name (optional)"
-                />
-              </div>
-
-              <div className="text-[11px] text-muted-foreground">
-                Printed: <b className="text-slate-900">{printedName || "—"}</b>
-              </div>
-            </div>
-          </div>
-
-          {/* Customer preview (same premium card) */}
-          <div className="rounded-xl border bg-white p-4">
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-muted-foreground">Customer Preview</div>
-              <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
-                <Users className="h-3.5 w-3.5" />
-                Preview
-              </span>
-            </div>
-
-            <div className="mt-2 flex items-start justify-between gap-3">
-              <div>
-                <div className="font-semibold text-slate-900">{customer?.name || "—"}</div>
-                {customer?.customer_code ? <div className="text-xs text-slate-500">{customer.customer_code}</div> : null}
-              </div>
-              <div className="text-right text-xs text-slate-500">
-                {customer?.phone ? <div>{customer.phone}</div> : null}
-                {customer?.address ? <div className="max-w-[320px] truncate">{customer.address}</div> : null}
-              </div>
-            </div>
-          </div>
-
-          {/* Sales reps (same premium multi-select) */}
-          <div className="rounded-xl border bg-white p-4">
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-muted-foreground">Sales Rep(s)</div>
-              <span className="text-[11px] text-slate-500">Required</span>
-            </div>
-
-            <div ref={repBoxRef} className="mt-2 relative">
-              <button
-                type="button"
-                className="w-full min-h-[40px] rounded-md border bg-background px-3 py-2 text-left"
-                onClick={() => setRepOpen((v) => !v)}
-                aria-expanded={repOpen}
-              >
-                <div className="flex flex-wrap gap-2">
-                  {salesReps.length ? (
-                    salesReps.map((n) => (
-                      <span
-                        key={n}
-                        className="inline-flex items-center gap-2 rounded-full border bg-white px-2 py-1 text-[12px]"
-                      >
-                        {n} <span className="text-slate-500">({repPhoneByName(n)})</span>
-                        <span
-                          className="cursor-pointer text-slate-500 hover:text-slate-900"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSalesReps((prev) => prev.filter((x) => x !== n));
-                          }}
-                          title="Remove"
-                        >
-                          ×
-                        </span>
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-slate-500 text-sm">Select sales reps…</span>
-                  )}
-                </div>
-              </button>
-
-              {repOpen ? (
-                <div className="absolute z-30 mt-2 w-full rounded-xl border bg-white shadow-lg overflow-hidden">
-                  <div className="max-h-[240px] overflow-auto">
-                    {SALES_REPS.map((r) => {
-                      const active = salesReps.includes(r.name);
-                      return (
-                        <button
-                          key={r.name}
-                          type="button"
-                          className={
-                            "w-full px-3 py-2 text-left hover:bg-slate-50 flex items-center justify-between " +
-                            (active ? "bg-slate-50" : "")
-                          }
-                          onClick={() => {
-                            setSalesReps((prev) =>
-                              active ? prev.filter((x) => x !== r.name) : [...prev, r.name]
-                            );
-                 
-                          }}
-                        >
-                          <span className="font-medium text-slate-900">{r.name}</span>
-                          <span className="text-sm text-slate-500">{r.phone}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="px-3 py-2 text-[11px] text-slate-500 border-t">Click to select/remove.</div>
+              {validUntil ? (
+                <div className="inv-meta-row">
+                  <span className="inv-meta-k">Valid Until</span>
+                  <span className="inv-meta-v">{validUntil}</span>
                 </div>
               ) : null}
             </div>
           </div>
-        </Card>
 
-        {/* Right: totals + VAT/Discount */}
-        <Card className="p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="font-semibold">Totals</div>
-            <span className="inline-flex items-center gap-1 rounded-full border bg-white px-2 py-1 text-[11px] text-slate-700">
-              <BadgePercent className="h-3.5 w-3.5" />
-              Live calc
-            </span>
+          {/* 2 STRAIGHT ROWS (same as InvoiceCreate) */}
+          <div className="inv-form-2rows">
+            {/* ROW 1 */}
+            <div className="inv-form-row inv-form-row--top inv-row-red">
+              <div className="inv-field inv-field--printblock">
+                <label>Print Name</label>
+
+                <div className="inv-printblock-inner">
+                  <div className="inv-radioRow">
+                    <label className="inv-radioOpt">
+                      <input type="radio" checked={printNameMode === "CUSTOMER"} onChange={() => setPrintNameMode("CUSTOMER")} />
+                      <span>Customer Name</span>
+                    </label>
+
+                    <label className="inv-radioOpt">
+                      <input type="radio" checked={printNameMode === "CLIENT"} onChange={() => setPrintNameMode("CLIENT")} />
+                      <span>Client Name</span>
+                    </label>
+                  </div>
+
+                  <input className="inv-input" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Type a client name (optional)" />
+
+                  <div className="inv-help">
+                    Only one name prints on the quotation header (based on selection).
+                    <br />
+                    If “Client Name” is selected, this input prints as the customer name.
+                  </div>
+                </div>
+              </div>
+
+              <div className="inv-field inv-field--customerBig">
+                <label>Customer (account)</label>
+
+                <div className="inv-customerRow">
+                  <select className="inv-input inv-input--customerSelect" value={customerId ?? ""} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">Select…</option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.customer_code ? `${c.name} (${c.customer_code})` : c.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button type="button" className="inv-iconBtn" onClick={openCustomerSearch} title="Search customer (Ctrl/⌘+K)">
+                    🔍
+                  </button>
+                </div>
+
+                <div className="inv-help">
+                  {customer ? (
+                    <>
+                      <span>{customer.address || ""}</span>
+                      {customer.phone ? (
+                        <>
+                          {" "}
+                          · <span>{customer.phone}</span>
+                        </>
+                      ) : null}
+                      {customer.customer_code ? (
+                        <>
+                          {" "}
+                          · <span className="inv-muted">{customer.customer_code}</span>
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span>Select a customer</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="inv-field">
+                <label>Quotation Date</label>
+                <input className="inv-input" type="date" value={quotationDate} onChange={(e) => setQuotationDate(e.target.value)} />
+              </div>
+
+              <div className="inv-field">
+                <label>Valid Until (optional)</label>
+                <input className="inv-input" type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              </div>
+            </div>
+
+            {/* ROW 2 */}
+            <div className="inv-form-row inv-form-row--bottom inv-row-red">
+              {/* Sales reps (same premium multi select) */}
+              <div className="inv-field inv-field--salesrep">
+                <label>Sales Rep(s)</label>
+
+                <div ref={repBoxRef} className="inv-rep">
+                  <button type="button" className="inv-rep-btn" onClick={() => setRepOpen((v) => !v)} aria-expanded={repOpen}>
+                    <div className="inv-rep-chips">
+                      {salesReps.length ? (
+                        salesReps.map((n) => (
+                          <span key={n} className="inv-chip">
+                            {n} ({repPhoneByName(n)})
+                            <span
+                              className="inv-chip-x"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSalesReps(salesReps.filter((x) => x !== n));
+                              }}
+                              title="Remove"
+                            >
+                              ×
+                            </span>
+                          </span>
+                        ))
+                      ) : (
+                        <span className="inv-rep-placeholder">Select sales reps…</span>
+                      )}
+                    </div>
+                    <span className="inv-rep-caret">▾</span>
+                  </button>
+
+                  {repOpen ? (
+                    <div className="inv-rep-pop" onMouseDown={(e) => e.stopPropagation()}>
+                      {SALES_REPS.map((r) => {
+                        const active = salesReps.includes(r.name);
+                        return (
+                          <button
+                            key={r.name}
+                            type="button"
+                            className={"inv-rep-item" + (active ? " is-active" : "")}
+                            onClick={() => {
+                              const next = active ? salesReps.filter((x) => x !== r.name) : [...salesReps, r.name];
+                              setSalesReps(next);
+                              setRepOpen(false);
+                            }}
+                          >
+                            <span className="inv-rep-name">{r.name}</span>
+                            <span className="inv-rep-phone">{r.phone}</span>
+                            <span className="inv-rep-check">{active ? "✓" : ""}</span>
+                          </button>
+                        );
+                      })}
+                      <div className="inv-rep-hint">Click to select. Click again to remove.</div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="inv-help">This prints on the quotation + is saved to the record.</div>
+              </div>
+
+              <div className="inv-field">
+                <label>Default VAT %</label>
+                <input className="inv-input inv-input--right inv-input--sm" inputMode="decimal" value={vatPercentText} onChange={(e) => setVatPercentText(e.target.value)} />
+                <div className="inv-help">Applies to all rows (you can still override a row VAT).</div>
+              </div>
+
+              <div className="inv-field">
+                <label>Discount %</label>
+                <input
+                  className="inv-input inv-input--right inv-input--sm"
+                  inputMode="decimal"
+                  value={discountPercentText}
+                  onChange={(e) => {
+                    setDiscountTouched(true);
+                    setDiscountPercentText(e.target.value);
+                  }}
+                  placeholder="e.g. 2.5"
+                />
+                <div className="inv-help">Auto from customer unless you edit.</div>
+              </div>
+
+              <div className="inv-field">
+                <label>Subtotal (EX)</label>
+                <input className="inv-input inv-input--right inv-input--sm" value={money(subtotalEx)} readOnly />
+              </div>
+
+              <div className="inv-field">
+                <label>VAT</label>
+                <input className="inv-input inv-input--right inv-input--sm" value={money(vatAmount)} readOnly />
+              </div>
+
+              <div className="inv-field">
+                <label>Total</label>
+                <input className="inv-input inv-input--right inv-input--sm" value={money(totalAfterDiscount)} readOnly />
+              </div>
+            </div>
           </div>
 
-          <div className="grid gap-3">
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">VAT % (applies to all items)</div>
-              <Input
-                inputMode="decimal"
-                value={String(vatPercent)}
-                onChange={(e) => setVatPercent(clampPct(e.target.value))}
-              />
+          {/* ITEMS (same invoice columns + same row behaviors) */}
+          <div className="inv-items">
+            <div className="inv-items-head">
+              <div>
+                <div className="inv-items-title">Items</div>
+                <div className="inv-items-sub">Enter qty then press Enter to jump to next row (adds one automatically).</div>
+              </div>
+
+              <div className="inv-items-actions">
+                <Button onClick={addRowAndFocus}>+ Add Row</Button>
+              </div>
             </div>
 
-            <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Discount %</div>
-              <Input
-                inputMode="decimal"
-                value={String(discountPercent)}
-                onChange={(e) => {
-                  setDiscountTouched(true);
-                  setDiscountPercent(clampPct(e.target.value));
-                }}
-              />
-              <div className="text-[11px] text-muted-foreground">Auto from customer unless you edit.</div>
-            </div>
-          </div>
+            <div className="inv-table-wrap">
+              <table className="inv-table inv-table--invoiceCols">
+                <colgroup>
+                  <col style={{ width: "4%" }} />
+                  <col style={{ width: "29%" }} />
+                  <col style={{ width: "5%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "4%" }} />
+                </colgroup>
 
-          <div className="rounded-xl border bg-white p-4 space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal (EX)</span>
-              <b className="text-slate-900">Rs {money(subtotalEx)}</b>
-            </div>
+                <thead>
+                  <tr>
+                    <th className="inv-th inv-th-center">#</th>
+                    <th className="inv-th">PRODUCT</th>
+                    <th className="inv-th inv-th-center" />
+                    <th className="inv-th inv-th-center">QTY</th>
+                    <th className="inv-th inv-th-center">UNIT</th>
+                    <th className="inv-th inv-th-center">TOTAL QTY</th>
+                    <th className="inv-th inv-th-right">UNIT EX</th>
+                    <th className="inv-th inv-th-right">VAT %</th>
+                    <th className="inv-th inv-th-right">UNIT INC</th>
+                    <th className="inv-th inv-th-right">TOTAL</th>
+                    <th className="inv-th inv-th-center" />
+                  </tr>
+                </thead>
 
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">VAT</span>
-              <b className="text-slate-900">Rs {money(vatAmount)}</b>
-            </div>
+                <tbody>
+                  {lines.map((r, idx) => {
+                    const isReal = !!r.product_id;
 
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Discount</span>
-              <b className="text-slate-900">Rs {money(discountAmount)}</b>
-            </div>
+                    return (
+                      <tr key={r.id} className="inv-tr-red">
+                        <td className="inv-td inv-center">{idx + 1}</td>
 
-            <div className="h-px bg-slate-200 my-1" />
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Total</span>
-              <b className="text-xl text-slate-900">Rs {money(totalAfterDiscount)}</b>
-            </div>
-          </div>
-
-          <Button variant="outline" onClick={addLine}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Item
-          </Button>
-
-          <div className="text-[11px] text-muted-foreground">Tip: Use the 🔎 search button per row to find products fast.</div>
-        </Card>
-      </div>
-
-      {/* ========= Items table (invoice-style locked columns) ========= */}
-      <Card className="overflow-hidden">
-        <div className="overflow-auto">
-          <table className="w-full min-w-[1180px]">
-            <thead className="bg-slate-50">
-              <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
-                <th className="px-4 py-3 text-left">Product</th>
-                <th className="px-4 py-3 text-left">Box / PCS</th>
-                <th className="px-4 py-3 text-left">Unit</th>
-                <th className="px-4 py-3 text-left">Total Qty</th>
-                <th className="px-4 py-3 text-left">Unit Excl</th>
-                <th className="px-4 py-3 text-left">VAT</th>
-                <th className="px-4 py-3 text-left">Unit Incl</th>
-                <th className="px-4 py-3 text-left">Line Total</th>
-                <th className="px-3 py-3 text-right" />
-              </tr>
-            </thead>
-
-            <tbody className="divide-y">
-              {lines.map((r) => {
-                const isReal = !!r.product_id;
-
-                return (
-                  <tr key={r.id} className="hover:bg-slate-50/60">
-                    {/* product */}
-                    <td className="px-4 py-3">
-                      <div className="flex gap-2 items-start">
-                        <div className="w-full">
+                        {/* PRODUCT */}
+                        <td className="inv-td">
                           <select
-                            className="h-10 rounded-md border px-3 bg-background w-full min-w-[360px]"
+                            className="inv-input inv-input--prod"
                             value={r.product_id ?? ""}
                             onChange={(e) => {
                               const pid = e.target.value ? Number(e.target.value) : null;
@@ -903,282 +929,339 @@ export default function QuotationCreate() {
                               applyProductToRow(r.id, p);
                             }}
                           >
-                            <option value="">Select product...</option>
+                            <option value="">Select…</option>
                             {products.map((p) => (
                               <option key={p.id} value={p.id}>
-                                {p.name || "—"}
-                                {p.item_code ? ` • ${p.item_code}` : ""}
-                                {p.sku ? ` • ${p.sku}` : ""}
+                                {(p.item_code || p.sku || "").toString()} — {(p.name || "").toString()}
                               </option>
                             ))}
                           </select>
+                        </td>
 
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {r.product_id ? pickProductLabel(products.find((p) => p.id === r.product_id) || null) : "—"}
-                          </div>
-                        </div>
-
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-10 w-10 px-0"
-                          onClick={() => openProductSearch(r.id)}
-                          title="Search product"
-                        >
-                          <Search className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-
-                    {/* box/pcs */}
-                    <td className="px-4 py-3">
-                      <div className="flex gap-2 items-center">
-                        <select
-                          className="h-10 rounded-md border px-3 bg-background w-[110px]"
-                          value={r.uom}
-                          onChange={(e) => setLine(r.id, { uom: e.target.value as any })}
-                          disabled={!isReal}
-                        >
-                          <option value="BOX">BOX</option>
-                          <option value="PCS">PCS</option>
-                        </select>
-
-                        <Input
-                          ref={(el) => (qtyRefs.current[r.id] = el)}
-                          inputMode="numeric"
-                          value={String(r.box_qty)}
-                          onChange={(e) => setLine(r.id, { box_qty: n2(e.target.value) })}
-                          onKeyDown={(e) => {
-                            if (e.key !== "Enter") return;
-                            if (!isReal) return;
-                            e.preventDefault();
-                            focusNextQty(r.id);
-                          }}
-                          className="w-[120px]"
-                          disabled={!isReal}
-                          placeholder="0"
-                        />
-                      </div>
-                    </td>
-
-                    {/* unit (UPB) */}
-                    <td className="px-4 py-3">
-                      <Input
-                        value={r.uom === "PCS" ? "—" : intFmt(r.units_per_box)}
-                        readOnly
-                        className="w-[110px]"
-                      />
-                    </td>
-
-                    {/* total qty */}
-                    <td className="px-4 py-3">
-                      <Input value={intFmt(r.total_qty)} readOnly className="w-[110px]" />
-                    </td>
-
-                    {/* unit excl */}
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900">{money(r.unit_price_excl_vat)}</div>
-                    </td>
-
-                    {/* unit vat */}
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900">{money(r.unit_vat)}</div>
-                    </td>
-
-                    {/* unit incl */}
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900">{money(r.unit_price_incl_vat)}</div>
-                    </td>
-
-                    {/* line total */}
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-500">Rs</div>
-                      <div className="text-slate-900 font-semibold">{money(r.line_total)}</div>
-                    </td>
-
-                    {/* actions */}
-                    <td className="px-3 py-3 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-full border bg-white hover:bg-slate-50"
-                            aria-label="Row actions"
-                          >
-                            <MoreHorizontal className="h-5 w-5 text-slate-700" />
+                        {/* SEARCH */}
+                        <td className="inv-td inv-center">
+                          <button type="button" className="inv-iconBtn inv-iconBtn--table inv-prodSearchBtn" onClick={() => openProductSearch(r.id)} title="Search product">
+                            🔍
                           </button>
-                        </DropdownMenuTrigger>
+                        </td>
 
-                        <DropdownMenuContent align="end" className="w-44">
-                          <DropdownMenuItem onClick={() => removeLine(r.id)}>
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Remove
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => addLine()}>
-                            <Plus className="mr-2 h-4 w-4" />
-                            Add row
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                        {/* QTY + UOM */}
+                        <td className="inv-td inv-center">
+                          <div className="inv-boxcell inv-boxcell--oneRow">
+                            <select className="inv-input inv-input--uom" value={r.uom} onChange={(e) => setLine(r.id, { uom: e.target.value as any })} disabled={!isReal}>
+                              <option value="BOX">BOX</option>
+                              <option value="PCS">PCS</option>
+                            </select>
+
+                            <input
+                              ref={(el) => (qtyRefs.current[r.id] = el)}
+                              className="inv-input inv-input--qty inv-center"
+                              value={rawNum(r.box_qty)}
+                              onChange={(e) => setLine(r.id, { box_qty: parseNumInput(e.target.value) })}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
+                              onKeyDown={(e) => {
+                                if (e.key !== "Enter") return;
+                                if (!isReal) return;
+                                e.preventDefault();
+                                focusNextQty(r.id);
+                              }}
+                              disabled={!isReal}
+                              inputMode="decimal"
+                              step="any"
+                              placeholder="0"
+                            />
+                          </div>
+                        </td>
+
+                        {/* UNIT (UPB) */}
+                        <td className="inv-td inv-center">
+                          {r.uom === "BOX" ? (
+                            <input
+                              className="inv-input inv-center"
+                              value={rawNum(r.units_per_box)}
+                              onChange={(e) => setLine(r.id, { units_per_box: parseNumInput(e.target.value) })}
+                              onFocus={(e) => e.currentTarget.select()}
+                              onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
+                              disabled={!isReal}
+                              inputMode="decimal"
+                              step="any"
+                            />
+                          ) : (
+                            <input className="inv-input inv-center" value="—" readOnly />
+                          )}
+                        </td>
+
+                        {/* TOTAL QTY */}
+                        <td className="inv-td inv-center">
+                          <input className="inv-input inv-center" value={rawNum(r.total_qty)} readOnly />
+                        </td>
+
+                        {/* UNIT EX (editable, decimal-safe) */}
+                        <td className="inv-td inv-right">
+                          <input
+                            className="inv-input inv-input--right"
+                            inputMode="decimal"
+                            placeholder="0.0000"
+                            value={editingEx[r.id] !== undefined ? editingEx[r.id] : rawNum(r.unit_price_excl_vat) || ""}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/,/g, "");
+                              if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
+                              setEditingEx((prev) => ({ ...prev, [r.id]: v }));
+                            }}
+                            onBlur={() => {
+                              const v = editingEx[r.id];
+                              const commit = v === undefined ? rawNum(r.unit_price_excl_vat) : v;
+                              setLinePriceEx(r.id, parseNumInput(commit === "." || commit === "" ? "0" : commit));
+                              setEditingEx((prev) => {
+                                const { [r.id]: _, ...rest } = prev;
+                                return rest;
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                setEditingEx((prev) => {
+                                  const { [r.id]: _, ...rest } = prev;
+                                  return rest;
+                                });
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            disabled={!isReal}
+                          />
+                        </td>
+
+                        {/* VAT % (editable) */}
+                        <td className="inv-td inv-right">
+                          <input
+                            className="inv-input inv-input--right"
+                            inputMode="decimal"
+                            placeholder="15"
+                            value={editingVat?.[r.id] !== undefined ? editingVat[r.id] : rawNum(r.vat_rate) || ""}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/,/g, "");
+                              if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
+                              setEditingVat((prev) => ({ ...prev, [r.id]: v }));
+                            }}
+                            onBlur={() => {
+                              const v = editingVat?.[r.id];
+                              const commit = v === undefined ? rawNum(r.vat_rate) : v;
+                              setLine(r.id, { vat_rate: parseNumInput(commit === "." || commit === "" ? "0" : commit) });
+                              setEditingVat((prev) => {
+                                const copy = { ...prev };
+                                delete copy[r.id];
+                                return copy;
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                setEditingVat((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[r.id];
+                                  return copy;
+                                });
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            disabled={!isReal}
+                          />
+                        </td>
+
+                        {/* UNIT INC (editable, decimal-safe) */}
+                        <td className="inv-td inv-right">
+                          <input
+                            className="inv-input inv-input--right"
+                            inputMode="decimal"
+                            placeholder="0.0000"
+                            value={editingInc?.[r.id] !== undefined ? editingInc[r.id] : rawNum(r.unit_price_incl_vat) || ""}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/,/g, "");
+                              if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
+                              setEditingInc((prev) => ({ ...prev, [r.id]: v }));
+                            }}
+                            onBlur={() => {
+                              const v = editingInc?.[r.id];
+                              const commit = v === undefined ? rawNum(r.unit_price_incl_vat) : v;
+                              setLinePriceInc(r.id, parseNumInput(commit === "." || commit === "" ? "0" : commit));
+                              setEditingInc((prev) => {
+                                const copy = { ...prev };
+                                delete copy[r.id];
+                                return copy;
+                              });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                setEditingInc((prev) => {
+                                  const copy = { ...prev };
+                                  delete copy[r.id];
+                                  return copy;
+                                });
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            disabled={!isReal}
+                          />
+                        </td>
+
+                        {/* TOTAL */}
+                        <td className="inv-td inv-right inv-td-total">
+                          <input className="inv-input inv-input--right inv-input--total" value={money(r.line_total)} readOnly />
+                        </td>
+
+                        {/* DELETE */}
+                        <td className="inv-td inv-center inv-td-del">
+                          <button type="button" className="inv-xmini inv-xmini--red" onClick={() => removeLine(r.id)} title="Remove row" aria-label="Remove row">
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Bottom action row — OUTSIDE table (same look) */}
+            <div className="inv-bottomRow">
+              <div className="inv-bottomLeft">
+                <button type="button" className="inv-addrows" onClick={addRowAndFocus}>
+                  + Add Row
+                </button>
+                <div className="inv-addrows-help">
+                  Adds 1 row. Press <b>Enter</b> in Qty to create the next row.
+                </div>
+              </div>
+
+              <div className="inv-totalsbar inv-totalsbar--red">
+                <div className="inv-totalsbar__cell">
+                  <span className="k">Discount</span>
+                  <span className="v">Rs {money(discountAmount)}</span>
+                </div>
+
+                <div className="inv-totalsbar__cell">
+                  <span className="k">VAT</span>
+                  <span className="v">Rs {money(vatAmount)}</span>
+                </div>
+
+                <div className="inv-totalsbar__cell">
+                  <span className="k">Total</span>
+                  <span className="v">Rs {money(totalAfterDiscount)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* bottom buttons */}
+            <div className="inv-form-footer inv-form-footer--tight">
+              <Button variant="outline" onClick={() => nav("/quotations")}>
+                Cancel
+              </Button>
+              <Button onClick={onSave} disabled={busy}>
+                {busy ? "Saving…" : "Save Quotation"}
+              </Button>
+            </div>
+          </div>
         </div>
-      </Card>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => nav("/quotations")}>
-          Cancel
-        </Button>
-        <Button onClick={onSave} disabled={busy}>
-          <Save className="mr-2 h-4 w-4" />
-          {busy ? "Saving..." : "Save Quotation"}
-        </Button>
       </div>
 
       {/* =========================
-          Customer Search Dialog
+          Customer Search (same invoice modal)
       ========================= */}
-      <Dialog open={custOpen} onOpenChange={setCustOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Search Customer</DialogTitle>
-            <DialogDescription>Type name / code / phone / address, then click a row.</DialogDescription>
-          </DialogHeader>
+      {custOpen ? (
+        <div className="inv-modal-backdrop" onMouseDown={() => setCustOpen(false)}>
+          <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="inv-modal-head">
+              <div className="inv-modal-title">Search Customer</div>
+              <button className="inv-modal-x" onClick={() => setCustOpen(false)} type="button" aria-label="Close">
+                ✕
+              </button>
+            </div>
 
-          <div className="flex gap-2">
-            <Input value={custSearch} onChange={(e) => setCustSearch(e.target.value)} placeholder="Search customers..." autoFocus />
-            <Button variant="outline" onClick={() => setCustSearch("")}>
-              Clear
-            </Button>
-          </div>
+            <div className="inv-modal-body">
+              <input className="inv-input" value={custSearch} onChange={(e) => setCustSearch(e.target.value)} placeholder="Search customers…" autoFocus />
 
-          <div className="mt-3 rounded-xl border overflow-hidden">
-            <div className="max-h-[420px] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
-                    <th className="px-3 py-2 text-left">Name</th>
-                    <th className="px-3 py-2 text-left">Code</th>
-                    <th className="px-3 py-2 text-left">Phone</th>
-                    <th className="px-3 py-2 text-left">Address</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filteredCustomers.map((c) => (
-                    <tr
-                      key={c.id}
-                      className="hover:bg-slate-50 cursor-pointer"
-                      onClick={() => {
-                        setCustomerId(c.id);
-                        setCustOpen(false);
-                      }}
-                      title="Select customer"
-                    >
-                      <td className="px-3 py-2 font-semibold text-slate-900">{c.name}</td>
-                      <td className="px-3 py-2 text-slate-700">{c.customer_code || "—"}</td>
-                      <td className="px-3 py-2 text-slate-700">{c.phone || "—"}</td>
-                      <td className="px-3 py-2 text-slate-700">
-                        <div className="max-w-[360px] truncate">{c.address || "—"}</div>
-                      </td>
-                    </tr>
-                  ))}
+              <div className="inv-modal-list">
+                {filteredCustomers.slice(0, 250).map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="inv-modal-item"
+                    onClick={() => {
+                      setCustomerId(c.id);
+                      setCustOpen(false);
+                    }}
+                  >
+                    <div className="inv-modal-item-title">
+                      <b>{c.name}</b> {c.customer_code ? <span className="inv-muted">({c.customer_code})</span> : null}
+                    </div>
+                    <div className="inv-modal-item-sub">{[c.phone, c.address].filter(Boolean).join(" · ")}</div>
+                  </button>
+                ))}
 
-                  {filteredCustomers.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">
-                        No customers match your search.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+                {filteredCustomers.length === 0 ? <div className="inv-modal-empty">No customers match your search.</div> : null}
+              </div>
+
+              <div className="inv-modal-actions">
+                <Button variant="outline" onClick={() => setCustOpen(false)}>
+                  Close
+                </Button>
+              </div>
             </div>
           </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCustOpen(false)}>
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      ) : null}
 
       {/* =========================
-          Product Search Dialog
+          Product Search (same invoice modal)
       ========================= */}
-      <Dialog open={prodOpen} onOpenChange={setProdOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Search Product</DialogTitle>
-            <DialogDescription>Type name / item code / SKU / description, then click a row.</DialogDescription>
-          </DialogHeader>
+      {prodOpen ? (
+        <div className="inv-modal-backdrop" onMouseDown={() => setProdOpen(false)}>
+          <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="inv-modal-head">
+              <div className="inv-modal-title">Search Product</div>
+              <button className="inv-modal-x" onClick={() => setProdOpen(false)} type="button" aria-label="Close">
+                ✕
+              </button>
+            </div>
 
-          <div className="flex gap-2">
-            <Input value={prodSearch} onChange={(e) => setProdSearch(e.target.value)} placeholder="Search products..." autoFocus />
-            <Button variant="outline" onClick={() => setProdSearch("")}>
-              Clear
-            </Button>
-          </div>
+            <div className="inv-modal-body">
+              <input className="inv-input" value={prodSearch} onChange={(e) => setProdSearch(e.target.value)} placeholder="Search products…" autoFocus />
 
-          <div className="mt-3 rounded-xl border overflow-hidden">
-            <div className="max-h-[420px] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
-                    <th className="px-3 py-2 text-left">Name</th>
-                    <th className="px-3 py-2 text-left">Item Code</th>
-                    <th className="px-3 py-2 text-left">SKU</th>
-                    <th className="px-3 py-2 text-right">UPB</th>
-                    <th className="px-3 py-2 text-right">Unit Ex</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filteredProducts.map((p) => (
-                    <tr
-                      key={p.id}
-                      className="hover:bg-slate-50 cursor-pointer"
-                      onClick={() => {
-                        const rowId = prodPickRowId;
-                        if (rowId) applyProductToRow(rowId, p);
-                        setProdOpen(false);
-                      }}
-                      title="Select product"
-                    >
-                      <td className="px-3 py-2 font-semibold text-slate-900">{p.name || "—"}</td>
-                      <td className="px-3 py-2 text-slate-700">{p.item_code || "—"}</td>
-                      <td className="px-3 py-2 text-slate-700">{p.sku || "—"}</td>
-                      <td className="px-3 py-2 text-right text-slate-700">{intFmt(p.units_per_box ?? 1)}</td>
-                      <td className="px-3 py-2 text-right text-slate-700">{money(p.selling_price ?? 0)}</td>
-                    </tr>
-                  ))}
+              <div className="inv-modal-list">
+                {filteredProducts.slice(0, 250).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="inv-modal-item"
+                    onClick={() => {
+                      const rowId = prodPickRowId;
+                      if (rowId) applyProductToRow(rowId, p);
+                      setProdOpen(false);
+                    }}
+                  >
+                    <div className="inv-modal-item-title">
+                      <b>{p.item_code || p.sku || "—"}</b> — {p.name || "—"}
+                    </div>
+                    <div className="inv-modal-item-sub">
+                      UPB {intFmt(p.units_per_box ?? 1)} · Unit Ex {money(p.selling_price ?? 0)}
+                    </div>
+                  </button>
+                ))}
 
-                  {filteredProducts.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">
-                        No products match your search.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+                {filteredProducts.length === 0 ? <div className="inv-modal-empty">No products match your search.</div> : null}
+              </div>
+
+              <div className="inv-modal-actions">
+                <Button variant="outline" onClick={() => setProdOpen(false)}>
+                  Close
+                </Button>
+              </div>
             </div>
           </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setProdOpen(false)}>
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      ) : null}
 
       {/* PRINT ONLY */}
       <div className="inv-printonly">
@@ -1213,10 +1296,11 @@ export default function QuotationCreate() {
             unit_vat: n2(r.unit_vat),
             unit_price_incl_vat: n2(r.unit_price_incl_vat),
             line_total: n2(r.line_total),
+            vat_rate: n2(r.vat_rate),
           }))}
           totals={{
             subtotal: subtotalEx,
-            vatPercentLabel: `VAT ${clampPct(vatPercent)}%`,
+            vatPercentLabel: `VAT ${vatPercent}%`,
             vat_amount: vatAmount,
             total_amount: totalAfterDiscount,
             previous_balance: 0,
@@ -1232,5 +1316,6 @@ export default function QuotationCreate() {
     </div>
   );
 }
+
 
 

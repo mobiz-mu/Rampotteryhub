@@ -28,9 +28,15 @@ export type RamPotteryDocItem = {
 
   item_code?: string;
 
-  // ✅ support both old + new fields
-  box?: string; // old: BOX / PCS
-  uom?: string; // new: BOX / PCS
+  // ✅ unit
+  box?: string; // old: BOX/PCS
+  uom?: string; // new: BOX/PCS/KG
+
+  // ✅ qty input (NEW)
+  box_qty?: number | string | null; // for BOX and KG
+  pcs_qty?: number | string | null; // for PCS
+
+  // ✅ unit per box
   unit_per_box?: string | number; // old
   units_per_box?: string | number; // new
 
@@ -46,38 +52,34 @@ export type RamPotteryDocItem = {
 type Totals = {
   subtotal?: number | null;
   vatLabel?: string; // "VAT 15%"
-  vatPercentLabel?: string; // some pages use this name
+  vatPercentLabel?: string;
   vat_amount?: number | null;
   total_amount?: number | null;
   previous_balance?: number | null;
   amount_paid?: number | null;
   balance_remaining?: number | null;
 
-  // optional discount fields (some pages pass these)
   discount_percent?: number | null;
   discount_amount?: number | null;
 };
 
 export type RamPotteryDocProps = {
-  // ✅ NEW: variant controls title
   variant?: DocVariant;
+  docTitle?: string;
 
-  // optional override
-  docTitle?: string; // VAT INVOICE / CREDIT NOTE / QUOTATION
-
-  companyName?: string; // RAM POTTERY LTD
+  companyName?: string;
   logoSrc?: string;
 
   customer: Party;
   company: DocCompany;
 
-  docNoLabel?: string; // INVOICE NO:
+  docNoLabel?: string;
   docNoValue?: string;
 
-  dateLabel?: string; // DATE:
+  dateLabel?: string;
   dateValue?: string;
 
-  purchaseOrderLabel?: string; // PURCHASE ORDER NO:
+  purchaseOrderLabel?: string;
   purchaseOrderValue?: string;
 
   salesRepName?: string;
@@ -89,7 +91,6 @@ export type RamPotteryDocProps = {
   preparedBy?: string | null;
   deliveredBy?: string | null;
 
-  // some pages pass this — keep accepted even if not used
   showFooterBar?: boolean;
 };
 
@@ -106,6 +107,60 @@ function txt(v: any) {
   return String(v ?? "").trim();
 }
 
+/** normalize uom to BOX/PCS/KG */
+function normUom(it: RamPotteryDocItem): "BOX" | "PCS" | "KG" {
+  const u = String(it.uom || it.box || "BOX").trim().toUpperCase();
+  if (u === "PCS") return "PCS";
+  if (u === "KG" || u === "KGS") return "KG";
+  return "BOX";
+}
+
+/** qty input: for BOX/KG use box_qty; for PCS use pcs_qty; fallback to total_qty if legacy */
+function qtyInput(it: RamPotteryDocItem): number | null {
+  const u = normUom(it);
+
+  // helper: fallback to total_qty if qty fields missing
+  const fallbackTotal = () => {
+    const legacy = it.total_qty;
+    if (legacy === null || legacy === undefined || legacy === "") return null;
+    return n2(legacy);
+  };
+
+  if (u === "PCS") {
+    const v = it.pcs_qty;
+    if (v === null || v === undefined || v === "") return fallbackTotal(); // ✅ fallback added
+    return n2(v);
+  }
+
+  // BOX or KG
+  const v = it.box_qty;
+  if (v === null || v === undefined || v === "") return fallbackTotal(); // ✅ keep fallback
+  return n2(v);
+}
+
+
+/** units per box: only for BOX */
+function upb(it: RamPotteryDocItem): number | null {
+  const u = normUom(it);
+  if (u !== "BOX") return null;
+  const v = it.units_per_box ?? it.unit_per_box;
+  if (v === null || v === undefined || v === "") return null;
+  const x = Math.max(1, Math.trunc(n2(v)));
+  return x;
+}
+
+/** display qty nicely */
+function fmtQty(uom: "BOX" | "PCS" | "KG", v: number | null) {
+  if (v === null) return "";
+  if (uom === "KG") {
+    // show up to 3dp, no trailing zeros
+    const s = String(Number(v.toFixed(3)));
+    return s;
+  }
+  // integer for BOX/PCS
+  return String(Math.trunc(v));
+}
+
 function TableHeader() {
   return (
     <thead>
@@ -116,6 +171,7 @@ function TableHeader() {
           <br />
           CODE
         </th>
+        {/* IMPORTANT: this column in your PNG is actually "Qty (BOX/PCS/KG)" */}
         <th>BOX</th>
         <th>
           UNIT
@@ -164,7 +220,6 @@ function TableHeader() {
 function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
   return (
     <table className="rpdoc-table">
-      {/* ✅ IMPORTANT: no whitespace/comments inside colgroup (hydration-safe) */}
       <colgroup>
         <col style={{ width: "5.2%" }} />
         <col style={{ width: "8.5%" }} />
@@ -182,24 +237,33 @@ function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
 
       <tbody>
         {(items || []).map((it, idx) => {
-          const box = txt(it.box || it.uom);
-          const upb = txt(it.unit_per_box ?? it.units_per_box);
+  const u = normUom(it);
+  const q = qtyInput(it);
+  const qtyText = fmtQty(u, q);
 
-          return (
-            <tr key={idx}>
-              <td>{it.sn}</td>
-              <td>{txt(it.item_code)}</td>
-              <td>{box}</td>
-              <td>{upb}</td>
-              <td>{txt(it.total_qty)}</td>
-              <td className="rpdoc-desc">{txt(it.description)}</td>
-              <td>{money(it.unit_price_excl_vat)}</td>
-              <td>{money(it.unit_vat)}</td>
-              <td>{money(it.unit_price_incl_vat)}</td>
-              <td>{money(it.line_total)}</td>
-            </tr>
-          );
-        })}
+  const unitPerBox = upb(it);
+  const unitPerBoxText = unitPerBox ? String(unitPerBox) : "";
+
+  return (
+    <tr key={idx}>
+      <td>{it.sn}</td>
+      <td>{txt(it.item_code)}</td>
+
+      {/* BOX column now shows "2 BOX" / "12 PCS" / "0.450 KG" */}
+      <td>{qtyText ? `${qtyText} ${u}` : ""}</td>
+
+      {/* UPB only for BOX */}
+      <td>{u === "BOX" ? unitPerBoxText : ""}</td>
+
+      <td>{txt(it.total_qty)}</td>
+      <td className="rpdoc-desc">{txt(it.description)}</td>
+      <td>{money(it.unit_price_excl_vat)}</td>
+      <td>{money(it.unit_vat)}</td>
+      <td>{money(it.unit_price_incl_vat)}</td>
+      <td>{money(it.line_total)}</td>
+    </tr>
+  );
+})}
       </tbody>
     </table>
   );
@@ -285,8 +349,6 @@ function Signatures({ preparedBy, deliveredBy }: { preparedBy: string; delivered
 export default function RamPotteryDoc(props: RamPotteryDocProps) {
   const {
     variant = "INVOICE",
-
-    // if provided, overrides variant title
     docTitle,
 
     companyName = "RAM POTTERY LTD",
@@ -294,7 +356,8 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
     customer,
     company,
 
-    docNoLabel = variant === "QUOTATION" ? "QUOTATION NO:" : variant === "CREDIT_NOTE" ? "CREDIT NOTE NO:" : "INVOICE NO:",
+    docNoLabel =
+      variant === "QUOTATION" ? "QUOTATION NO:" : variant === "CREDIT_NOTE" ? "CREDIT NOTE NO:" : "INVOICE NO:",
     docNoValue = "",
 
     dateLabel = "DATE:",
@@ -314,8 +377,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   } = props;
 
   const computedTitle =
-    docTitle ||
-    (variant === "CREDIT_NOTE" ? "CREDIT NOTE" : variant === "QUOTATION" ? "QUOTATION" : "VAT INVOICE");
+    docTitle || (variant === "CREDIT_NOTE" ? "CREDIT NOTE" : variant === "QUOTATION" ? "QUOTATION" : "VAT INVOICE");
 
   const addressLines = company?.addressLines?.length
     ? company.addressLines

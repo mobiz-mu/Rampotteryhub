@@ -122,7 +122,9 @@ export default function InvoicePrint() {
     enabled: isValidId(invoiceId) && (isPublicMode ? true : authChecked),
     queryFn: async () => {
       if (isPublicMode) {
-        const res = await fetch(`/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`);
+        const res = await fetch(
+          `/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`
+        );
         const json = await safeJson(res);
         if (!json?.ok) throw new Error(json?.error || "Failed to load");
         return json as { ok: true; invoice: any; items: any[]; customer?: any };
@@ -140,24 +142,39 @@ export default function InvoicePrint() {
   const items = payload?.items || [];
   const customer = payload?.customer || inv?.customers || inv?.customer || null;
 
+  /* =========================
+     ✅ BUILD DOC ITEMS (FIXED)
+     - this is where it/idx/p MUST live (inside map)
+  ========================= */
   const docItems: RamPotteryDocItem[] = useMemo(() => {
-    return (items || []).map((it: any, idx: number) => {
-      const p = it.product || it.products || null;
+  return (items || []).map((it: any, idx: number) => {
+    const p = it.product || it.products || null;
 
-      return {
-        sn: idx + 1,
-        item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
-        box: String(it.uom || "BOX").toUpperCase() === "PCS" ? "PCS" : "BOX",
-        unit_per_box: Number(it.units_per_box ?? p?.units_per_box ?? 0),
-        total_qty: Number(it.total_qty ?? 0),
-        description: it.description || p?.name || "",
-        unit_price_excl_vat: Number(it.unit_price_excl_vat ?? 0),
-        unit_vat: Number(it.unit_vat ?? 0),
-        unit_price_incl_vat: Number(it.unit_price_incl_vat ?? 0),
-        line_total: Number(it.line_total ?? 0),
-      };
-    });
-  }, [items]);
+    const rawUom = String(it.uom || it.unit || "BOX").trim().toUpperCase();
+    const uom: "BOX" | "PCS" | "KG" =
+      rawUom === "PCS" ? "PCS" : rawUom === "KG" || rawUom === "KGS" ? "KG" : "BOX";
+
+    return {
+      sn: idx + 1,
+      item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
+
+      uom,
+      units_per_box: Number(it.units_per_box ?? it.unit_per_box ?? p?.units_per_box ?? 1),
+
+      // ✅ try multiple possible names (some APIs alias fields)
+      box_qty: Number(it.box_qty ?? it.boxQty ?? it.qty_box ?? it.qty ?? 0),
+      pcs_qty: Number(it.pcs_qty ?? it.pcsQty ?? it.qty_pcs ?? 0),
+      total_qty: Number(it.total_qty ?? it.totalQty ?? 0),
+
+      description: it.description || p?.name || "",
+      unit_price_excl_vat: Number(it.unit_price_excl_vat ?? 0),
+      unit_vat: Number(it.unit_vat ?? 0),
+      unit_price_incl_vat: Number(it.unit_price_incl_vat ?? 0),
+      line_total: Number(it.line_total ?? 0),
+    } as any;
+  });
+}, [items]);
+
 
   /* =========================
      WhatsApp link (ONLY public)
@@ -172,7 +189,9 @@ export default function InvoicePrint() {
 
     const gross = n(inv.gross_total ?? inv.total_amount ?? inv.total_incl_vat);
     const paid = n(inv.amount_paid);
-    const due = Number.isFinite(Number(inv.balance_remaining)) ? n(inv.balance_remaining) : Math.max(0, gross - paid);
+    const due = Number.isFinite(Number(inv.balance_remaining))
+      ? n(inv.balance_remaining)
+      : Math.max(0, gross - paid);
 
     const msg = [
       "Ram Pottery Ltd",
@@ -194,9 +213,6 @@ export default function InvoicePrint() {
 
   /* =========================
      PRINT (reliable)
-     - adds a body class so print CSS can isolate the A4 doc
-     - waits fonts + images
-     - resets after print (so Ctrl+P works again)
   ========================= */
   useEffect(() => {
     const after = () => {
@@ -221,7 +237,6 @@ export default function InvoicePrint() {
 
     await waitForImages(docRootRef.current);
 
-    // give the browser 1 tick to apply rp-printing CSS before opening dialog
     window.setTimeout(() => {
       window.print();
     }, 200);
@@ -229,8 +244,6 @@ export default function InvoicePrint() {
 
   /* =========================
      PDF download (html2pdf tuned)
-     - closer to screen by fixing windowWidth/Height
-     - scale moderate (too high can distort)
   ========================= */
   async function downloadPdfClient() {
     if (!docRootRef.current || !inv) return;
@@ -250,7 +263,7 @@ export default function InvoicePrint() {
         margin: 0,
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: {
-          scale: 2.2, // higher can shift borders/weights
+          scale: 2.2,
           useCORS: true,
           backgroundColor: "#ffffff",
           scrollY: 0,
@@ -375,6 +388,4 @@ export default function InvoicePrint() {
     </div>
   );
 }
-
-
 
