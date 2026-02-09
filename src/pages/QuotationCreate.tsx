@@ -219,6 +219,8 @@ export default function QuotationCreate() {
   const [quotationNumber, setQuotationNumber] = useState<string>("(Auto when saved)");
   const [lines, setLines] = useState<QuoteLine[]>([blankLine(15)]);
 
+  const repBoxRef = useRef<HTMLDivElement | null>(null);
+
   // row focus (Enter => next)
   const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -235,13 +237,20 @@ export default function QuotationCreate() {
   const [salesReps, setSalesReps] = useState<SalesRepName[]>([]);
 
   useEffect(() => {
-    function close() {
-      setRepOpen(false);
-    }
-    if (!repOpen) return;
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [repOpen]);
+  if (!repOpen) return;
+
+  const onDown = (e: PointerEvent) => {
+    const box = repBoxRef.current;
+    if (!box) return;
+    if (box.contains(e.target as Node)) return; // click inside -> keep open
+    setRepOpen(false); // click outside -> close
+  };
+
+  // capture=true ensures we catch outside clicks reliably
+  document.addEventListener("pointerdown", onDown, true);
+  return () => document.removeEventListener("pointerdown", onDown, true);
+}, [repOpen]);
+
 
   /* ===== Data ===== */
   const customersQ = useQuery({
@@ -724,7 +733,7 @@ export default function QuotationCreate() {
               <span className="text-[11px] text-slate-500">Required</span>
             </div>
 
-            <div className="mt-2 relative">
+            <div ref={repBoxRef} className="mt-2 relative">
               <button
                 type="button"
                 className="w-full min-h-[40px] rounded-md border bg-background px-3 py-2 text-left"
@@ -774,7 +783,7 @@ export default function QuotationCreate() {
                             setSalesReps((prev) =>
                               active ? prev.filter((x) => x !== r.name) : [...prev, r.name]
                             );
-                            setRepOpen(false);
+                 
                           }}
                         >
                           <span className="font-medium text-slate-900">{r.name}</span>

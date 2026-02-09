@@ -30,13 +30,20 @@ html, body{
 }
 
 @media print{
-  /* hide any app UI */
+  /* hide UI helpers */
   .no-print, .inv-screen { display:none !important; }
+
+  /* default: show printable blocks */
   .rp-print{ display:block !important; }
 
-  html, body{
-    background:#fff !important;
-  }
+  /* if we set rp-printing, hide everything else and only show the print root */
+  body.rp-printing * { visibility: hidden !important; }
+  body.rp-printing #rpdoc-print-root,
+  body.rp-printing #rpdoc-print-root * { visibility: visible !important; }
+
+  /* allow credit note sheet too */
+  body.rp-printing .sheet,
+  body.rp-printing .sheet * { visibility: visible !important; }
 }
 
 /* A4 page box */

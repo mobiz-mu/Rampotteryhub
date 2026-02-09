@@ -1,8 +1,10 @@
 // src/pages/Reports.tsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import html2pdf from "html2pdf.js";
+import { toast } from "sonner";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -62,7 +64,6 @@ function chunk<T>(arr: T[], size: number) {
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
-
 function downloadCSV(filename: string, rows: Array<Record<string, any>>) {
   const safe = (v: any) => {
     const s = String(v ?? "");
@@ -98,7 +99,7 @@ type InvoiceRow = {
   id: number;
   invoice_number: string;
   customer_id: number;
-  invoice_date: string; // date
+  invoice_date: string;
   subtotal: number;
   vat_amount: number;
   total_amount: number;
@@ -113,7 +114,7 @@ type InvoiceRow = {
 type InvoicePaymentRow = {
   id: number;
   invoice_id: number;
-  payment_date: string; // date
+  payment_date: string;
   amount: number;
   method: string;
 };
@@ -175,7 +176,7 @@ function PillTabs<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  items: { key: T; label: string; icon?: React.ReactNode; desc?: string }[];
+  items: { key: T; label: string; icon?: React.ReactNode }[];
 }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -207,10 +208,10 @@ export default function Reports() {
   const [preset, setPreset] = useState<DatePreset>("MTD");
   const [from, setFrom] = useState<string>(startOfMonthISO());
   const [to, setTo] = useState<string>(todayISO());
-
   const [granularity, setGranularity] = useState<Granularity>("DAILY");
 
-  // ✅ Added new report keys at end (existing unchanged)
+  const reportPdfRef = useRef<HTMLDivElement | null>(null);
+
   const REPORTS = [
     { key: "DAILY_INVOICES", label: "Daily Invoices", icon: <FileText className="h-4 w-4" /> },
     { key: "DAILY_PRODUCTS", label: "Daily Products Sold", icon: <Package className="h-4 w-4" /> },
@@ -221,7 +222,6 @@ export default function Reports() {
     { key: "VAT", label: "VAT Report", icon: <Percent className="h-4 w-4" /> },
     { key: "DISCOUNT", label: "Discount Report", icon: <Receipt className="h-4 w-4" /> },
 
-    // ✅ NEW
     { key: "SALESMAN_PERIOD", label: "Report by Salesman (Period)", icon: <UserRound className="h-4 w-4" /> },
     { key: "PRODUCTS_PERIOD", label: "Report by Products Sold (Period)", icon: <Package className="h-4 w-4" /> },
     { key: "STATEMENT_CUSTOMER", label: "Statement of Account (Customer PDF)", icon: <FileText className="h-4 w-4" /> },
@@ -230,7 +230,6 @@ export default function Reports() {
   type ActiveReport = (typeof REPORTS)[number]["key"];
   const [activeReport, setActiveReport] = useState<ActiveReport>("DAILY_INVOICES");
 
-  // New: selected customer for statement report
   const [statementCustomerId, setStatementCustomerId] = useState<number>(0);
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -257,9 +256,6 @@ export default function Reports() {
 
   const salesStatuses = useMemo(() => ["ISSUED", "PARTIALLY_PAID", "PAID"], []);
 
-  /* =========================
-    Force refresh (Refresh + Generate)
-  ========================= */
   async function forceRefetchAll() {
     setIsGenerating(true);
     try {
@@ -267,13 +263,14 @@ export default function Reports() {
         predicate: (q) => String(q.queryKey?.[0] ?? "").startsWith("rpt_"),
       });
       setGeneratedAt(new Date().toLocaleString());
+      toast.success("Reports refreshed");
     } finally {
       setIsGenerating(false);
     }
   }
 
   /* =========================
-    Queries (REAL)
+    Queries
   ========================= */
   const customersQ = useQuery({
     queryKey: ["rpt_customers_all"],
@@ -348,15 +345,10 @@ export default function Reports() {
     },
   });
 
-  const anyError =
-    invoicesQ.error || invoicePaymentsQ.error || customersQ.error || productsQ.error || invoiceItemsQ.error;
+  const anyError = invoicesQ.error || invoicePaymentsQ.error || customersQ.error || productsQ.error || invoiceItemsQ.error;
 
   const anyLoading =
-    invoicesQ.isLoading ||
-    invoicePaymentsQ.isLoading ||
-    customersQ.isLoading ||
-    productsQ.isLoading ||
-    invoiceItemsQ.isLoading;
+    invoicesQ.isLoading || invoicePaymentsQ.isLoading || customersQ.isLoading || productsQ.isLoading || invoiceItemsQ.isLoading;
 
   /* =========================
     Maps
@@ -416,7 +408,7 @@ export default function Reports() {
   }, [invoicesQ.data, invoicePaymentsQ.data, invoiceItemsQ.data]);
 
   /* =========================
-    Report 1: Daily Invoice Summary
+    Reports
   ========================= */
   const dailyInvoices = useMemo(() => {
     const inv = invoicesQ.data ?? [];
@@ -460,9 +452,6 @@ export default function Reports() {
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [invoicesQ.data]);
 
-  /* =========================
-    Report 2: Daily Products Sold
-  ========================= */
   const dailyProducts = useMemo(() => {
     const items = invoiceItemsQ.data ?? [];
     const invById = invoiceById;
@@ -512,9 +501,6 @@ export default function Reports() {
     return { byDate, dates };
   }, [invoiceItemsQ.data, invoiceById, productById]);
 
-  /* =========================
-    Report 3: Customers Purchased (Daily)
-  ========================= */
   const customersDaily = useMemo(() => {
     const inv = invoicesQ.data ?? [];
     const map = new Map<string, any>();
@@ -560,9 +546,6 @@ export default function Reports() {
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [invoicesQ.data, customerById]);
 
-  /* =========================
-    Report 4/5: Sales by Rep (Daily/Monthly)
-  ========================= */
   const repDaily = useMemo(() => {
     const inv = invoicesQ.data ?? [];
     const map = new Map<string, any>(); // date|rep
@@ -621,9 +604,6 @@ export default function Reports() {
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month) || b.total - a.total);
   }, [invoicesQ.data]);
 
-  /* =========================
-    Report 6: Monthly Sales by Customer
-  ========================= */
   const customerMonthly = useMemo(() => {
     const inv = invoicesQ.data ?? [];
     const map = new Map<string, any>(); // ym|customer
@@ -655,9 +635,6 @@ export default function Reports() {
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month) || b.total - a.total);
   }, [invoicesQ.data, customerById]);
 
-  /* =========================
-    Report 7/8: VAT + Discount (Daily/Monthly)
-  ========================= */
   const vatDailyMonthly = useMemo(() => {
     const inv = invoicesQ.data ?? [];
     const daily = new Map<string, number>();
@@ -704,9 +681,6 @@ export default function Reports() {
     return { dailyRows, monthlyRows };
   }, [invoicesQ.data]);
 
-  /* =========================
-    ✅ NEW: Salesman report (Period summary)
-  ========================= */
   const salesmanPeriod = useMemo(() => {
     const inv = invoicesQ.data ?? [];
     const map = new Map<string, any>(); // rep
@@ -727,7 +701,6 @@ export default function Reports() {
       cur.vat += n(i.vat_amount);
       cur.discount += n(i.discount_amount);
 
-      // prefer non-empty phone
       if (!cur.rep_phone && i.sales_rep_phone) cur.rep_phone = i.sales_rep_phone;
 
       map.set(rep, cur);
@@ -736,15 +709,11 @@ export default function Reports() {
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [invoicesQ.data]);
 
-  /* =========================
-    ✅ NEW: Products sold (Period total)
-  ========================= */
   const productsPeriod = useMemo(() => {
     const items = invoiceItemsQ.data ?? [];
     const invById = invoiceById;
 
-    // Only count items whose invoice is in range (it is, because we fetch items by invoice ids)
-    const map = new Map<number, any>(); // product_id
+    const map = new Map<number, any>();
 
     items.forEach((it) => {
       const inv = invById.get(it.invoice_id);
@@ -757,13 +726,7 @@ export default function Reports() {
       const name = p?.name || p2?.name || it.description || `Product #${pid}`;
       const sku = p?.sku || p2?.sku || p2?.item_code || String(pid);
 
-      const cur = map.get(pid) || {
-        product_id: pid,
-        sku,
-        product: name,
-        qty: 0,
-        sales: 0,
-      };
+      const cur = map.get(pid) || { product_id: pid, sku, product: name, qty: 0, sales: 0 };
 
       cur.qty += n(it.total_qty);
       cur.sales += n(it.line_total);
@@ -774,19 +737,18 @@ export default function Reports() {
     return Array.from(map.values()).sort((a, b) => b.sales - a.sales);
   }, [invoiceItemsQ.data, invoiceById, productById]);
 
-  /* =========================
-    ✅ NEW: Statement helpers
-  ========================= */
   const customersForSelect = useMemo(() => {
     const list = (customersQ.data ?? []).map((c) => ({
       id: c.id,
       label: (String(c.client_name || "").trim() || String(c.name || "").trim() || `Customer #${c.id}`).trim(),
-      secondary: (String(c.client_name || "").trim() && String(c.name || "").trim() && String(c.client_name || "").trim() !== String(c.name || "").trim())
-        ? String(c.name || "").trim()
-        : "",
+      secondary:
+        String(c.client_name || "").trim() &&
+        String(c.name || "").trim() &&
+        String(c.client_name || "").trim() !== String(c.name || "").trim()
+          ? String(c.name || "").trim()
+          : "",
     }));
 
-    // sort alpha
     list.sort((a, b) => a.label.localeCompare(b.label));
     return list;
   }, [customersQ.data]);
@@ -798,7 +760,6 @@ export default function Reports() {
     sp.set("from", from);
     sp.set("to", to);
     if (autoPrint) sp.set("autoprint", "1");
-    // You routed statement print as protected: /statement/print
     nav(`/statement/print?${sp.toString()}`);
   }
 
@@ -821,7 +782,7 @@ export default function Reports() {
   }
 
   /* =========================
-    Export
+    Export CSV
   ========================= */
   function exportActiveCSV() {
     const base = { from, to, granularity };
@@ -856,46 +817,29 @@ export default function Reports() {
     }
 
     if (activeReport === "CUSTOMER_MONTHLY") {
-      return downloadCSV(
-        `sales_by_customer_monthly_${from}_to_${to}.csv`,
-        customerMonthly.map((r) => ({ ...base, ...r }))
-      );
+      return downloadCSV(`sales_by_customer_monthly_${from}_to_${to}.csv`, customerMonthly.map((r) => ({ ...base, ...r })));
     }
 
     if (activeReport === "VAT") {
-      const rows = (granularity === "DAILY" ? vatDailyMonthly.dailyRows : vatDailyMonthly.monthlyRows).map((r: any) => ({
-        ...base,
-        ...r,
-        vat: r.vat,
-      }));
+      const rows = (granularity === "DAILY" ? vatDailyMonthly.dailyRows : vatDailyMonthly.monthlyRows).map((r: any) => ({ ...base, ...r }));
       return downloadCSV(`vat_${granularity.toLowerCase()}_${from}_to_${to}.csv`, rows);
     }
 
     if (activeReport === "DISCOUNT") {
-      const rows = (granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).map((r: any) => ({
-        ...base,
-        ...r,
-        discount: r.discount,
-      }));
+      const rows = (granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).map((r: any) => ({ ...base, ...r }));
       return downloadCSV(`discount_${granularity.toLowerCase()}_${from}_to_${to}.csv`, rows);
     }
 
-    // ✅ NEW exports
     if (activeReport === "SALESMAN_PERIOD") {
-      return downloadCSV(
-        `salesman_period_${from}_to_${to}.csv`,
-        salesmanPeriod.map((r) => ({ ...base, ...r }))
-      );
+      return downloadCSV(`salesman_period_${from}_to_${to}.csv`, salesmanPeriod.map((r) => ({ ...base, ...r })));
     }
 
     if (activeReport === "PRODUCTS_PERIOD") {
-      return downloadCSV(
-        `products_sold_period_${from}_to_${to}.csv`,
-        productsPeriod.map((r) => ({ ...base, ...r }))
-      );
+      return downloadCSV(`products_sold_period_${from}_to_${to}.csv`, productsPeriod.map((r) => ({ ...base, ...r })));
     }
 
     if (activeReport === "STATEMENT_CUSTOMER") {
+      if (!statementCustomerId) return toast.error("Select a customer first");
       const cust = customersForSelect.find((c) => c.id === statementCustomerId);
       const cname = cust?.label || "";
       const rows = (invoicesQ.data ?? [])
@@ -908,6 +852,62 @@ export default function Reports() {
           amount: i.total_amount,
         }));
       return downloadCSV(`statement_${statementCustomerId}_${from}_to_${to}.csv`, rows);
+    }
+
+    toast.message("No export available for this report.");
+  }
+
+  /* =========================
+    Export PDF (html2pdf)
+  ========================= */
+  function pdfOrientationForReport(key: ActiveReport) {
+    const landscape = new Set<ActiveReport>([
+      "DAILY_PRODUCTS",
+      "CUSTOMERS_DAILY",
+      "REP_DAILY",
+      "REP_MONTHLY",
+      "CUSTOMER_MONTHLY",
+      "SALESMAN_PERIOD",
+      "PRODUCTS_PERIOD",
+    ]);
+    return landscape.has(key) ? "landscape" : "portrait";
+  }
+
+  async function exportActivePDF() {
+    const node = reportPdfRef.current;
+    if (!node) return toast.error("Nothing to export yet.");
+    if (anyLoading || isGenerating) return toast.message("Please wait until the report finishes loading.");
+
+    const label = REPORTS.find((r) => r.key === activeReport)?.label || activeReport;
+    const filename = `${label.replace(/[^\w]+/g, "_")}_${from}_to_${to}.pdf`;
+
+    // Force white background for PDF snapshot
+    const prevBg = node.style.backgroundColor;
+    node.style.backgroundColor = "#ffffff";
+
+    const opt: any = {
+      margin: [8, 8, 10, 8],
+      filename,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        windowWidth: node.scrollWidth, // helps with wide tables
+      },
+      pagebreak: { mode: ["css", "legacy"] },
+      jsPDF: { unit: "mm", format: "a4", orientation: pdfOrientationForReport(activeReport) },
+    };
+
+    try {
+      toast.message("Generating PDF…");
+      await (html2pdf() as any).set(opt).from(node).save();
+      toast.success("PDF downloaded");
+    } catch (e: any) {
+      toast.error(e?.message || "PDF export failed");
+    } finally {
+      node.style.backgroundColor = prevBg;
     }
   }
 
@@ -932,6 +932,12 @@ export default function Reports() {
                 Last generated: <span className="ml-1 font-semibold">{generatedAt}</span>
               </Badge>
             ) : null}
+
+            {anyLoading ? (
+              <Badge variant="secondary" className="border">
+                Loading…
+              </Badge>
+            ) : null}
           </div>
         </div>
 
@@ -941,12 +947,21 @@ export default function Reports() {
             {isGenerating ? "Refreshing..." : "Refresh"}
           </Button>
 
-          <Button variant="outline" onClick={exportActiveCSV as any} disabled={anyLoading || isGenerating}>
+          <Button variant="outline" onClick={exportActiveCSV} disabled={anyLoading || isGenerating}>
             <Download className="h-4 w-4 mr-2" />
             Export CSV
           </Button>
 
-          <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={forceRefetchAll} disabled={isGenerating || anyLoading}>
+          <Button variant="outline" onClick={exportActivePDF} disabled={anyLoading || isGenerating}>
+            <Printer className="h-4 w-4 mr-2" />
+            Download PDF
+          </Button>
+
+          <Button
+            className="gradient-primary shadow-glow text-primary-foreground"
+            onClick={forceRefetchAll}
+            disabled={isGenerating || anyLoading}
+          >
             <ArrowUpRight className="h-4 w-4 mr-2" />
             {isGenerating ? "Generating..." : "Generate"}
           </Button>
@@ -958,7 +973,7 @@ export default function Reports() {
         <StatCard title="Revenue" value={`Rs ${money(kpi.revenue)}`} hint={`${from} → ${to}`} icon={<TrendingUp className="h-4 w-4" />} />
         <StatCard title="Invoices" value={`${kpi.invoicesCount}`} hint={`Unique customers: ${kpi.uniqueCustomers}`} icon={<FileText className="h-4 w-4" />} />
         <StatCard title="Collected" value={`Rs ${money(kpi.collected)}`} hint="From invoice_payments" icon={<Receipt className="h-4 w-4" />} />
-        <StatCard title="VAT" value={`Rs ${money(kpi.vat)}`} hint={`${granularity === "DAILY" ? "Daily" : "Monthly"} view below`} icon={<Percent className="h-4 w-4" />} />
+        <StatCard title="VAT" value={`Rs ${money(kpi.vat)}`} hint={`${granularity === "DAILY" ? "Daily" : "Monthly"} view`} icon={<Percent className="h-4 w-4" />} />
         <StatCard title="Discount" value={`Rs ${money(kpi.discount)}`} hint="From invoices.discount_amount" icon={<Receipt className="h-4 w-4" />} />
         <StatCard title="Qty Sold" value={`${money(kpi.qtySold)}`} hint="Sum invoice_items.total_qty" icon={<Package className="h-4 w-4" />} />
       </div>
@@ -1043,7 +1058,11 @@ export default function Reports() {
 
             <div className="space-y-2">
               <Label>Report Type</Label>
-              <select className="h-10 w-full rounded-md border px-3 bg-background" value={activeReport} onChange={(e) => setActiveReport(e.target.value as any)}>
+              <select
+                className="h-10 w-full rounded-md border px-3 bg-background"
+                value={activeReport}
+                onChange={(e) => setActiveReport(e.target.value as any)}
+              >
                 {REPORTS.map((r) => (
                   <option key={r.key} value={r.key}>
                     {r.label}
@@ -1062,524 +1081,536 @@ export default function Reports() {
         </CardContent>
       </Card>
 
-      {/* ===== Report Center ===== */}
-      <Card className="shadow-premium">
-        <CardHeader>
-          <CardTitle>Report Center</CardTitle>
-          <CardDescription>
-            Showing: <b>{REPORTS.find((r) => r.key === activeReport)?.label || activeReport}</b> • Period: <b>{from}</b> → <b>{to}</b>
-          </CardDescription>
-        </CardHeader>
-
-        <CardContent className="space-y-6">
-          {anyError ? (
-            <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4">
-              <div className="text-sm font-semibold text-destructive">Failed to load data</div>
-              <div className="mt-2 text-sm text-destructive/90 whitespace-pre-wrap">{(anyError as any)?.message || "Unknown error"}</div>
-              <div className="mt-3 text-xs text-muted-foreground">If other pages work but Reports is blank, it’s usually RLS for one of these tables.</div>
+      {/* ===== Report Center (PDF container) ===== */}
+      <div ref={reportPdfRef} className="bg-white rounded-2xl">
+        {/* PDF header always included (good for export) */}
+        <div className="px-1 pb-2">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-xl font-bold leading-tight">Reports</div>
+              <div className="text-sm text-muted-foreground">
+                {REPORTS.find((r) => r.key === activeReport)?.label || activeReport}
+              </div>
             </div>
-          ) : null}
 
-          {/* =========================
-              ✅ NEW: Statement of Account (Customer PDF)
-          ========================== */}
-          {activeReport === "STATEMENT_CUSTOMER" && !anyError && (
-            <Card className="shadow-premium">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Statement of Account (PDF)</CardTitle>
-                <CardDescription>Generate a statement with the required format and save as PDF.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-                  <div className="space-y-2">
-                    <Label>Select Customer</Label>
-                    <select
-                      className="h-10 w-full rounded-md border px-3 bg-background"
-                      value={statementCustomerId || ""}
-                      onChange={(e) => setStatementCustomerId(Number(e.target.value) || 0)}
-                    >
-                      <option value="">— Choose customer —</option>
-                      {customersForSelect.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}{c.secondary ? ` (${c.secondary})` : ""}
-                        </option>
-                      ))}
-                    </select>
+            <div className="text-right">
+              <div className="text-sm font-semibold">
+                Period: {from} → {to}
+              </div>
+              <div className="text-xs text-muted-foreground">Generated: {new Date().toLocaleString()}</div>
+            </div>
+          </div>
+          <div className="mt-2 h-px bg-border" />
+        </div>
+
+        <Card className="shadow-premium">
+          <CardHeader>
+            <CardTitle>Report Center</CardTitle>
+            <CardDescription>
+              Showing: <b>{REPORTS.find((r) => r.key === activeReport)?.label || activeReport}</b> • Period: <b>{from}</b> → <b>{to}</b>
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-6">
+            {anyError ? (
+              <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4">
+                <div className="text-sm font-semibold text-destructive">Failed to load data</div>
+                <div className="mt-2 text-sm text-destructive/90 whitespace-pre-wrap">{(anyError as any)?.message || "Unknown error"}</div>
+                <div className="mt-3 text-xs text-muted-foreground">If other pages work but Reports is blank, it’s usually RLS for one of these tables.</div>
+              </div>
+            ) : null}
+
+            {/* ========= STATEMENT ========= */}
+            {activeReport === "STATEMENT_CUSTOMER" && !anyError && (
+              <Card className="shadow-premium">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Statement of Account (PDF)</CardTitle>
+                  <CardDescription>Select a customer → open print view or share</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                    <div className="space-y-2">
+                      <Label>Select Customer</Label>
+                      <select
+                        className="h-10 w-full rounded-md border px-3 bg-background"
+                        value={statementCustomerId || ""}
+                        onChange={(e) => setStatementCustomerId(Number(e.target.value) || 0)}
+                      >
+                        <option value="">— Choose customer —</option>
+                        {customersForSelect.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.label}
+                            {c.secondary ? ` (${c.secondary})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" disabled={!statementCustomerId} onClick={() => openStatementPrint(false)}>
+                        <FileText className="h-4 w-4 mr-2" />
+                        Open
+                      </Button>
+
+                      <Button
+                        disabled={!statementCustomerId}
+                        onClick={() => openStatementPrint(true)}
+                        className="gradient-primary shadow-glow text-primary-foreground"
+                      >
+                        <Printer className="h-4 w-4 mr-2" />
+                        Save PDF / Print
+                      </Button>
+
+                      <Button variant="outline" disabled={!statementCustomerId} onClick={openStatementWhatsApp}>
+                        <MessageCircle className="h-4 w-4 mr-2" />
+                        WhatsApp
+                      </Button>
+
+                      <Button variant="outline" disabled={!statementCustomerId} onClick={openStatementEmail}>
+                        <Mail className="h-4 w-4 mr-2" />
+                        Email
+                      </Button>
+                    </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      disabled={!statementCustomerId}
-                      onClick={() => openStatementPrint(false)}
-                      title="Open statement view"
-                    >
-                      <FileText className="h-4 w-4 mr-2" />
-                      Open
-                    </Button>
-
-                    <Button
-                      disabled={!statementCustomerId}
-                      onClick={() => openStatementPrint(true)}
-                      className="gradient-primary shadow-glow text-primary-foreground"
-                      title="Open and auto print"
-                    >
-                      <Printer className="h-4 w-4 mr-2" />
-                      Save PDF / Print
-                    </Button>
-
-                    <Button variant="outline" disabled={!statementCustomerId} onClick={openStatementWhatsApp}>
-                      <MessageCircle className="h-4 w-4 mr-2" />
-                      WhatsApp
-                    </Button>
-
-                    <Button variant="outline" disabled={!statementCustomerId} onClick={openStatementEmail}>
-                      <Mail className="h-4 w-4 mr-2" />
-                      Email
-                    </Button>
+                  <div className="text-xs text-muted-foreground">
+                    Tip: Click <b>Save PDF / Print</b> → choose <b>Save as PDF</b> → attach PDF in WhatsApp/email.
                   </div>
-                </div>
+                </CardContent>
+              </Card>
+            )}
 
-                <div className="text-xs text-muted-foreground">
-                  Tip: Click <b>Save PDF / Print</b> → choose <b>Save as PDF</b> → then attach the PDF in WhatsApp/email.
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* =========================
-              EXISTING REPORTS (UNCHANGED)
-          ========================== */}
-          {/* DAILY INVOICES */}
-          {activeReport === "DAILY_INVOICES" && !anyError && (
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
-                  <tr>
-                    <th className="text-left p-3">Date</th>
-                    <th className="text-right p-3">Invoices</th>
-                    <th className="text-right p-3">Customers</th>
-                    <th className="text-right p-3">Gross</th>
-                    <th className="text-right p-3">Subtotal</th>
-                    <th className="text-right p-3">VAT</th>
-                    <th className="text-right p-3">Discount</th>
-                    <th className="text-right p-3">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {dailyInvoices.map((r) => (
-                    <tr key={r.date} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">{r.date}</td>
-                      <td className="p-3 text-right">{r.invoices}</td>
-                      <td className="p-3 text-right">{r.unique_customers}</td>
-                      <td className="p-3 text-right">Rs {money(r.gross_total)}</td>
-                      <td className="p-3 text-right">Rs {money(r.subtotal)}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.vat)}</td>
-                      <td className="p-3 text-right">Rs {money(r.discount)}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
-                    </tr>
-                  ))}
-                  {dailyInvoices.length === 0 ? (
+            {/* ========= DAILY INVOICES ========= */}
+            {activeReport === "DAILY_INVOICES" && !anyError && (
+              <div className="overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/20">
                     <tr>
-                      <td colSpan={8} className="p-6 text-center text-muted-foreground">
-                        No invoices in this range.
-                      </td>
+                      <th className="text-left p-3">Date</th>
+                      <th className="text-right p-3">Invoices</th>
+                      <th className="text-right p-3">Customers</th>
+                      <th className="text-right p-3">Gross</th>
+                      <th className="text-right p-3">Subtotal</th>
+                      <th className="text-right p-3">VAT</th>
+                      <th className="text-right p-3">Discount</th>
+                      <th className="text-right p-3">Total</th>
                     </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody className="divide-y">
+                    {dailyInvoices.map((r) => (
+                      <tr key={r.date} className="hover:bg-muted/30">
+                        <td className="p-3 font-medium">{r.date}</td>
+                        <td className="p-3 text-right">{r.invoices}</td>
+                        <td className="p-3 text-right">{r.unique_customers}</td>
+                        <td className="p-3 text-right">Rs {money(r.gross_total)}</td>
+                        <td className="p-3 text-right">Rs {money(r.subtotal)}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.vat)}</td>
+                        <td className="p-3 text-right">Rs {money(r.discount)}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
+                      </tr>
+                    ))}
+                    {dailyInvoices.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                          No invoices in this range.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-          {/* DAILY PRODUCTS SOLD */}
-          {activeReport === "DAILY_PRODUCTS" && !anyError && (
-            <div className="space-y-4">
-              {dailyProducts.dates.length === 0 ? (
-                <div className="text-center text-muted-foreground py-8">No sold products found in this range.</div>
-              ) : (
-                dailyProducts.dates.map((d) => {
-                  const all = dailyProducts.byDate.get(d) ?? [];
-                  const rows = all.slice(0, 12);
-                  const dayTotal = all.reduce((s: number, r: any) => s + n(r.sales), 0);
-                  const dayQty = all.reduce((s: number, r: any) => s + n(r.qty), 0);
+            {/* ========= DAILY PRODUCTS ========= */}
+            {activeReport === "DAILY_PRODUCTS" && !anyError && (
+              <div className="space-y-4">
+                {dailyProducts.dates.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-8">No sold products found in this range.</div>
+                ) : (
+                  dailyProducts.dates.map((d) => {
+                    const all = dailyProducts.byDate.get(d) ?? [];
+                    const rows = all.slice(0, 12);
+                    const dayTotal = all.reduce((s: number, r: any) => s + n(r.sales), 0);
+                    const dayQty = all.reduce((s: number, r: any) => s + n(r.qty), 0);
 
-                  return (
-                    <Card key={d} className="shadow-premium">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <CardTitle className="text-base">{d}</CardTitle>
-                            <CardDescription>
-                              Total Sales: <b>Rs {money(dayTotal)}</b> • Qty: <b>{money(dayQty)}</b>
-                            </CardDescription>
+                    return (
+                      <Card key={d} className="shadow-premium">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <CardTitle className="text-base">{d}</CardTitle>
+                              <CardDescription>
+                                Total Sales: <b>Rs {money(dayTotal)}</b> • Qty: <b>{money(dayQty)}</b>
+                              </CardDescription>
+                            </div>
+                            <Badge variant="secondary" className="border bg-primary/10 text-primary">
+                              Top {rows.length}
+                            </Badge>
                           </div>
-                          <Badge variant="secondary" className="border bg-primary/10 text-primary">
-                            Top {rows.length}
-                          </Badge>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="overflow-auto">
-                          <table className="w-full text-sm">
-                            <thead className="border-b bg-muted/20">
-                              <tr>
-                                <th className="text-left p-3">SKU</th>
-                                <th className="text-left p-3">Product</th>
-                                <th className="text-right p-3">Qty</th>
-                                <th className="text-right p-3">Sales</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y">
-                              {rows.map((r: any) => (
-                                <tr key={`${r.date}|${r.product_id}`} className="hover:bg-muted/30">
-                                  <td className="p-3 font-medium">{r.sku}</td>
-                                  <td className="p-3">{r.product}</td>
-                                  <td className="p-3 text-right">{money(r.qty)}</td>
-                                  <td className="p-3 text-right font-semibold">Rs {money(r.sales)}</td>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="overflow-auto">
+                            <table className="w-full text-sm">
+                              <thead className="border-b bg-muted/20">
+                                <tr>
+                                  <th className="text-left p-3">SKU</th>
+                                  <th className="text-left p-3">Product</th>
+                                  <th className="text-right p-3">Qty</th>
+                                  <th className="text-right p-3">Sales</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        <div className="mt-3 text-xs text-muted-foreground">Based on invoice_items.line_total and total_qty.</div>
-                      </CardContent>
-                    </Card>
-                  );
-                })
-              )}
-            </div>
-          )}
+                              </thead>
+                              <tbody className="divide-y">
+                                {rows.map((r: any) => (
+                                  <tr key={`${r.date}|${r.product_id}`} className="hover:bg-muted/30">
+                                    <td className="p-3 font-medium">{r.sku}</td>
+                                    <td className="p-3">{r.product}</td>
+                                    <td className="p-3 text-right">{money(r.qty)}</td>
+                                    <td className="p-3 text-right font-semibold">Rs {money(r.sales)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div className="mt-3 text-xs text-muted-foreground">Based on invoice_items.line_total and total_qty.</div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
+            )}
 
-          {/* CUSTOMERS PURCHASED (DAILY) */}
-          {activeReport === "CUSTOMERS_DAILY" && !anyError && (
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
-                  <tr>
-                    <th className="text-left p-3">Date</th>
-                    <th className="text-right p-3">Unique Customers</th>
-                    <th className="text-right p-3">Invoices</th>
-                    <th className="text-right p-3">Total</th>
-                    <th className="text-left p-3">Top Customers</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {customersDaily.map((r) => (
-                    <tr key={r.date} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">{r.date}</td>
-                      <td className="p-3 text-right">{r.unique_customers}</td>
-                      <td className="p-3 text-right">{r.invoices}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
-                      <td className="p-3 text-sm text-muted-foreground">
-                        {r.topCustomers?.length
-                          ? r.topCustomers
-                              .map((c: any) => `${c.customer}${c.secondary ? ` (${c.secondary})` : ""} (Rs ${money(c.amount)})`)
-                              .join(" • ")
-                          : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                  {customersDaily.length === 0 ? (
+            {/* ========= CUSTOMERS DAILY ========= */}
+            {activeReport === "CUSTOMERS_DAILY" && !anyError && (
+              <div className="overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/20">
                     <tr>
-                      <td colSpan={5} className="p-6 text-center text-muted-foreground">
-                        No purchases in this range.
-                      </td>
+                      <th className="text-left p-3">Date</th>
+                      <th className="text-right p-3">Unique Customers</th>
+                      <th className="text-right p-3">Invoices</th>
+                      <th className="text-right p-3">Total</th>
+                      <th className="text-left p-3">Top Customers</th>
                     </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* SALES BY REP (DAILY) */}
-          {activeReport === "REP_DAILY" && !anyError && (
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
-                  <tr>
-                    <th className="text-left p-3">Date</th>
-                    <th className="text-left p-3">Sales Rep</th>
-                    <th className="text-right p-3">Invoices</th>
-                    <th className="text-right p-3">Discount</th>
-                    <th className="text-right p-3">VAT</th>
-                    <th className="text-right p-3">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {repDaily.map((r) => (
-                    <tr key={`${r.date}|${r.rep}`} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">{r.date}</td>
-                      <td className="p-3">
-                        <div className="font-medium">{r.rep}</div>
-                        {r.rep_phone ? <div className="text-xs text-muted-foreground">{r.rep_phone}</div> : null}
-                      </td>
-                      <td className="p-3 text-right">{r.invoices}</td>
-                      <td className="p-3 text-right">Rs {money(r.discount)}</td>
-                      <td className="p-3 text-right">Rs {money(r.vat)}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
-                    </tr>
-                  ))}
-                  {repDaily.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                        No rep sales in this range.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* SALES BY REP (MONTHLY) */}
-          {activeReport === "REP_MONTHLY" && !anyError && (
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
-                  <tr>
-                    <th className="text-left p-3">Month</th>
-                    <th className="text-left p-3">Sales Rep</th>
-                    <th className="text-right p-3">Invoices</th>
-                    <th className="text-right p-3">Discount</th>
-                    <th className="text-right p-3">VAT</th>
-                    <th className="text-right p-3">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {repMonthly.map((r) => (
-                    <tr key={`${r.month}|${r.rep}`} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">{r.month}</td>
-                      <td className="p-3 font-medium">{r.rep}</td>
-                      <td className="p-3 text-right">{r.invoices}</td>
-                      <td className="p-3 text-right">Rs {money(r.discount)}</td>
-                      <td className="p-3 text-right">Rs {money(r.vat)}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
-                    </tr>
-                  ))}
-                  {repMonthly.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                        No monthly rep sales in this range.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* MONTHLY SALES BY CUSTOMER */}
-          {activeReport === "CUSTOMER_MONTHLY" && !anyError && (
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
-                  <tr>
-                    <th className="text-left p-3">Month</th>
-                    <th className="text-left p-3">Customer</th>
-                    <th className="text-right p-3">Invoices</th>
-                    <th className="text-right p-3">Discount</th>
-                    <th className="text-right p-3">VAT</th>
-                    <th className="text-right p-3">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {customerMonthly.map((r) => (
-                    <tr key={`${r.month}|${r.customer_id}`} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">{r.month}</td>
-                      <td className="p-3">
-                        <div className="font-medium">{r.customer}</div>
-                        {r.secondary ? <div className="text-xs text-muted-foreground">{r.secondary}</div> : null}
-                        <div className="text-xs text-muted-foreground">ID: {r.customer_id}</div>
-                      </td>
-                      <td className="p-3 text-right">{r.invoices}</td>
-                      <td className="p-3 text-right">Rs {money(r.discount)}</td>
-                      <td className="p-3 text-right">Rs {money(r.vat)}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
-                    </tr>
-                  ))}
-                  {customerMonthly.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                        No monthly customer sales in this range.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* ✅ NEW: SALESMAN PERIOD */}
-          {activeReport === "SALESMAN_PERIOD" && !anyError && (
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
-                  <tr>
-                    <th className="text-left p-3">Salesman</th>
-                    <th className="text-left p-3">Phone</th>
-                    <th className="text-right p-3">Invoices</th>
-                    <th className="text-right p-3">Discount</th>
-                    <th className="text-right p-3">VAT</th>
-                    <th className="text-right p-3">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {salesmanPeriod.map((r) => (
-                    <tr key={r.rep} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">{r.rep}</td>
-                      <td className="p-3 text-muted-foreground">{r.rep_phone || "—"}</td>
-                      <td className="p-3 text-right">{r.invoices}</td>
-                      <td className="p-3 text-right">Rs {money(r.discount)}</td>
-                      <td className="p-3 text-right">Rs {money(r.vat)}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
-                    </tr>
-                  ))}
-                  {salesmanPeriod.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                        No salesman sales in this range.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* ✅ NEW: PRODUCTS PERIOD */}
-          {activeReport === "PRODUCTS_PERIOD" && !anyError && (
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
-                  <tr>
-                    <th className="text-left p-3">SKU</th>
-                    <th className="text-left p-3">Product</th>
-                    <th className="text-right p-3">Qty Sold</th>
-                    <th className="text-right p-3">Sales</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {productsPeriod.map((r) => (
-                    <tr key={r.product_id} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">{r.sku}</td>
-                      <td className="p-3">{r.product}</td>
-                      <td className="p-3 text-right">{money(r.qty)}</td>
-                      <td className="p-3 text-right font-semibold">Rs {money(r.sales)}</td>
-                    </tr>
-                  ))}
-                  {productsPeriod.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="p-6 text-center text-muted-foreground">
-                        No sold products in this range.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* VAT REPORT */}
-          {activeReport === "VAT" && !anyError && (
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="shadow-premium">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">{granularity === "DAILY" ? "Daily VAT" : "Monthly VAT"}</CardTitle>
-                  <CardDescription>From invoices.vat_amount</CardDescription>
-                </CardHeader>
-                <CardContent className="overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="border-b bg-muted/20">
-                      <tr>
-                        <th className="text-left p-3">{granularity === "DAILY" ? "Date" : "Month"}</th>
-                        <th className="text-right p-3">VAT</th>
+                  </thead>
+                  <tbody className="divide-y">
+                    {customersDaily.map((r) => (
+                      <tr key={r.date} className="hover:bg-muted/30">
+                        <td className="p-3 font-medium">{r.date}</td>
+                        <td className="p-3 text-right">{r.unique_customers}</td>
+                        <td className="p-3 text-right">{r.invoices}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
+                        <td className="p-3 text-sm text-muted-foreground">
+                          {r.topCustomers?.length
+                            ? r.topCustomers
+                                .map((c: any) => `${c.customer}${c.secondary ? ` (${c.secondary})` : ""} (Rs ${money(c.amount)})`)
+                                .join(" • ")
+                            : "—"}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {(granularity === "DAILY" ? vatDailyMonthly.dailyRows : vatDailyMonthly.monthlyRows).map((r: any) => (
-                        <tr key={r.date || r.month} className="hover:bg-muted/30">
-                          <td className="p-3 font-medium">{r.date || r.month}</td>
-                          <td className="p-3 text-right font-semibold">Rs {money(r.vat)}</td>
-                        </tr>
-                      ))}
-                      {(granularity === "DAILY" ? vatDailyMonthly.dailyRows : vatDailyMonthly.monthlyRows).length === 0 ? (
-                        <tr>
-                          <td colSpan={2} className="p-6 text-center text-muted-foreground">
-                            No VAT entries in this range.
-                          </td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
-
-              <Card className="shadow-premium">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Total VAT (Period)</CardTitle>
-                  <CardDescription>Sum of selected range</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-semibold">Rs {money(kpi.vat)}</div>
-                  <div className="mt-2 text-sm text-muted-foreground">
-                    Period: <b>{from}</b> → <b>{to}</b>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
-          {/* DISCOUNT REPORT */}
-          {activeReport === "DISCOUNT" && !anyError && (
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="shadow-premium">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">{granularity === "DAILY" ? "Daily Discount" : "Monthly Discount"}</CardTitle>
-                  <CardDescription>From invoices.discount_amount</CardDescription>
-                </CardHeader>
-                <CardContent className="overflow-auto">
-                  <table className="w-full text-sm">
-                    <thead className="border-b bg-muted/20">
+                    ))}
+                    {customersDaily.length === 0 ? (
                       <tr>
-                        <th className="text-left p-3">{granularity === "DAILY" ? "Date" : "Month"}</th>
-                        <th className="text-right p-3">Discount</th>
+                        <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                          No purchases in this range.
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {(granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).map((r: any) => (
-                        <tr key={r.date || r.month} className="hover:bg-muted/30">
-                          <td className="p-3 font-medium">{r.date || r.month}</td>
-                          <td className="p-3 text-right font-semibold">Rs {money(r.discount)}</td>
-                        </tr>
-                      ))}
-                      {(granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).length === 0 ? (
-                        <tr>
-                          <td colSpan={2} className="p-6 text-center text-muted-foreground">
-                            No discounts in this range.
-                          </td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-              <Card className="shadow-premium">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Total Discount (Period)</CardTitle>
-                  <CardDescription>Sum of selected range</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-semibold">Rs {money(kpi.discount)}</div>
-                  <div className="mt-2 text-sm text-muted-foreground">
-                    Period: <b>{from}</b> → <b>{to}</b>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            {/* ========= REP DAILY ========= */}
+            {activeReport === "REP_DAILY" && !anyError && (
+              <div className="overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/20">
+                    <tr>
+                      <th className="text-left p-3">Date</th>
+                      <th className="text-left p-3">Sales Rep</th>
+                      <th className="text-right p-3">Invoices</th>
+                      <th className="text-right p-3">Discount</th>
+                      <th className="text-right p-3">VAT</th>
+                      <th className="text-right p-3">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {repDaily.map((r) => (
+                      <tr key={`${r.date}|${r.rep}`} className="hover:bg-muted/30">
+                        <td className="p-3 font-medium">{r.date}</td>
+                        <td className="p-3">
+                          <div className="font-medium">{r.rep}</div>
+                          {r.rep_phone ? <div className="text-xs text-muted-foreground">{r.rep_phone}</div> : null}
+                        </td>
+                        <td className="p-3 text-right">{r.invoices}</td>
+                        <td className="p-3 text-right">Rs {money(r.discount)}</td>
+                        <td className="p-3 text-right">Rs {money(r.vat)}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
+                      </tr>
+                    ))}
+                    {repDaily.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                          No rep sales in this range.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ========= REP MONTHLY ========= */}
+            {activeReport === "REP_MONTHLY" && !anyError && (
+              <div className="overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/20">
+                    <tr>
+                      <th className="text-left p-3">Month</th>
+                      <th className="text-left p-3">Sales Rep</th>
+                      <th className="text-right p-3">Invoices</th>
+                      <th className="text-right p-3">Discount</th>
+                      <th className="text-right p-3">VAT</th>
+                      <th className="text-right p-3">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {repMonthly.map((r) => (
+                      <tr key={`${r.month}|${r.rep}`} className="hover:bg-muted/30">
+                        <td className="p-3 font-medium">{r.month}</td>
+                        <td className="p-3 font-medium">{r.rep}</td>
+                        <td className="p-3 text-right">{r.invoices}</td>
+                        <td className="p-3 text-right">Rs {money(r.discount)}</td>
+                        <td className="p-3 text-right">Rs {money(r.vat)}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
+                      </tr>
+                    ))}
+                    {repMonthly.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                          No monthly rep sales in this range.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ========= CUSTOMER MONTHLY ========= */}
+            {activeReport === "CUSTOMER_MONTHLY" && !anyError && (
+              <div className="overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/20">
+                    <tr>
+                      <th className="text-left p-3">Month</th>
+                      <th className="text-left p-3">Customer</th>
+                      <th className="text-right p-3">Invoices</th>
+                      <th className="text-right p-3">Discount</th>
+                      <th className="text-right p-3">VAT</th>
+                      <th className="text-right p-3">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {customerMonthly.map((r) => (
+                      <tr key={`${r.month}|${r.customer_id}`} className="hover:bg-muted/30">
+                        <td className="p-3 font-medium">{r.month}</td>
+                        <td className="p-3">
+                          <div className="font-medium">{r.customer}</div>
+                          {r.secondary ? <div className="text-xs text-muted-foreground">{r.secondary}</div> : null}
+                          <div className="text-xs text-muted-foreground">ID: {r.customer_id}</div>
+                        </td>
+                        <td className="p-3 text-right">{r.invoices}</td>
+                        <td className="p-3 text-right">Rs {money(r.discount)}</td>
+                        <td className="p-3 text-right">Rs {money(r.vat)}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
+                      </tr>
+                    ))}
+                    {customerMonthly.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                          No monthly customer sales in this range.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ========= SALESMAN PERIOD ========= */}
+            {activeReport === "SALESMAN_PERIOD" && !anyError && (
+              <div className="overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/20">
+                    <tr>
+                      <th className="text-left p-3">Salesman</th>
+                      <th className="text-left p-3">Phone</th>
+                      <th className="text-right p-3">Invoices</th>
+                      <th className="text-right p-3">Discount</th>
+                      <th className="text-right p-3">VAT</th>
+                      <th className="text-right p-3">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {salesmanPeriod.map((r) => (
+                      <tr key={r.rep} className="hover:bg-muted/30">
+                        <td className="p-3 font-medium">{r.rep}</td>
+                        <td className="p-3 text-muted-foreground">{r.rep_phone || "—"}</td>
+                        <td className="p-3 text-right">{r.invoices}</td>
+                        <td className="p-3 text-right">Rs {money(r.discount)}</td>
+                        <td className="p-3 text-right">Rs {money(r.vat)}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.total)}</td>
+                      </tr>
+                    ))}
+                    {salesmanPeriod.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                          No salesman sales in this range.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ========= PRODUCTS PERIOD ========= */}
+            {activeReport === "PRODUCTS_PERIOD" && !anyError && (
+              <div className="overflow-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/20">
+                    <tr>
+                      <th className="text-left p-3">SKU</th>
+                      <th className="text-left p-3">Product</th>
+                      <th className="text-right p-3">Qty Sold</th>
+                      <th className="text-right p-3">Sales</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {productsPeriod.map((r) => (
+                      <tr key={r.product_id} className="hover:bg-muted/30">
+                        <td className="p-3 font-medium">{r.sku}</td>
+                        <td className="p-3">{r.product}</td>
+                        <td className="p-3 text-right">{money(r.qty)}</td>
+                        <td className="p-3 text-right font-semibold">Rs {money(r.sales)}</td>
+                      </tr>
+                    ))}
+                    {productsPeriod.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                          No sold products in this range.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ========= VAT ========= */}
+            {activeReport === "VAT" && !anyError && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <Card className="shadow-premium">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">{granularity === "DAILY" ? "Daily VAT" : "Monthly VAT"}</CardTitle>
+                    <CardDescription>From invoices.vat_amount</CardDescription>
+                  </CardHeader>
+                  <CardContent className="overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="border-b bg-muted/20">
+                        <tr>
+                          <th className="text-left p-3">{granularity === "DAILY" ? "Date" : "Month"}</th>
+                          <th className="text-right p-3">VAT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {(granularity === "DAILY" ? vatDailyMonthly.dailyRows : vatDailyMonthly.monthlyRows).map((r: any) => (
+                          <tr key={r.date || r.month} className="hover:bg-muted/30">
+                            <td className="p-3 font-medium">{r.date || r.month}</td>
+                            <td className="p-3 text-right font-semibold">Rs {money(r.vat)}</td>
+                          </tr>
+                        ))}
+                        {(granularity === "DAILY" ? vatDailyMonthly.dailyRows : vatDailyMonthly.monthlyRows).length === 0 ? (
+                          <tr>
+                            <td colSpan={2} className="p-6 text-center text-muted-foreground">
+                              No VAT entries in this range.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+
+                <Card className="shadow-premium">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Total VAT (Period)</CardTitle>
+                    <CardDescription>Sum of selected range</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-semibold">Rs {money(kpi.vat)}</div>
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      Period: <b>{from}</b> → <b>{to}</b>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* ========= DISCOUNT ========= */}
+            {activeReport === "DISCOUNT" && !anyError && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <Card className="shadow-premium">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">{granularity === "DAILY" ? "Daily Discount" : "Monthly Discount"}</CardTitle>
+                    <CardDescription>From invoices.discount_amount</CardDescription>
+                  </CardHeader>
+                  <CardContent className="overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="border-b bg-muted/20">
+                        <tr>
+                          <th className="text-left p-3">{granularity === "DAILY" ? "Date" : "Month"}</th>
+                          <th className="text-right p-3">Discount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {(granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).map((r: any) => (
+                          <tr key={r.date || r.month} className="hover:bg-muted/30">
+                            <td className="p-3 font-medium">{r.date || r.month}</td>
+                            <td className="p-3 text-right font-semibold">Rs {money(r.discount)}</td>
+                          </tr>
+                        ))}
+                        {(granularity === "DAILY" ? discountDailyMonthly.dailyRows : discountDailyMonthly.monthlyRows).length === 0 ? (
+                          <tr>
+                            <td colSpan={2} className="p-6 text-center text-muted-foreground">
+                              No discounts in this range.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+
+                <Card className="shadow-premium">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Total Discount (Period)</CardTitle>
+                    <CardDescription>Sum of selected range</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-semibold">Rs {money(kpi.discount)}</div>
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      Period: <b>{from}</b> → <b>{to}</b>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="text-xs text-muted-foreground">
         Tables used: <b>invoices</b>, <b>invoice_items</b>, <b>invoice_payments</b>, <b>customers</b>, <b>products</b>. (Sales excludes DRAFT/VOID)

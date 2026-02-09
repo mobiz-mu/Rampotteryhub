@@ -24,7 +24,6 @@ import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import {
   MoreHorizontal,
-  FileText,
   Plus,
   MessageCircle,
   BookOpen,
@@ -34,6 +33,10 @@ import {
   RefreshCw,
   FileClock,
   ReceiptText,
+  Users,
+  ShieldCheck,
+  ShieldX,
+  Phone,
 } from "lucide-react";
 
 /* =========================
@@ -66,10 +69,6 @@ function pick(row: Record<string, any>, keys: string[]) {
 }
 
 function normalizeExcelRow(row: Record<string, any>): CustomerUpsert {
-  // Required format:
-  // customer_code	name	address	phone	brn	vat_no	whatsapp	discount%
-  // Optional:
-  // opening_balance, email
   const customer_code = s(pick(row, ["customer_code", "Customer Code", "CUSTOMER_CODE", "Code", "code"]) ?? "");
   const name = s(pick(row, ["name", "Name", "NAME", "Customer Name", "customer_name"]) ?? "");
   const address = s(pick(row, ["address", "Address", "ADDRESS"]) ?? "");
@@ -152,13 +151,16 @@ function Badge({ tone, children }: { tone: "ok" | "bad" | "muted"; children: Rea
       : tone === "bad"
       ? "bg-red-500/10 text-red-700 border-red-500/20"
       : "bg-muted/30 text-muted-foreground border-border";
-  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{children}</span>;
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
+      {children}
+    </span>
+  );
 }
 
 /**
  * ✅ IMPORTANT:
- * Prevent "column does not exist" / "violates columns" by sending ONLY DB columns.
- * If you haven't added whatsapp_template_* etc yet, this will still work.
+ * Send ONLY DB columns (prevents "column does not exist").
  */
 function sanitizeCustomerPayload(input: CustomerUpsert) {
   const payload: any = {
@@ -175,18 +177,14 @@ function sanitizeCustomerPayload(input: CustomerUpsert) {
     discount_percent: clampPct((input as any).discount_percent),
     is_active: !!(input as any).is_active,
 
-    // Optional columns (safe even if you add later — but if your DB doesn't have them,
-    // you must run the SQL below OR comment these 3 lines)
     whatsapp_template_invoice: s((input as any).whatsapp_template_invoice),
     whatsapp_template_statement: s((input as any).whatsapp_template_statement),
     whatsapp_template_overdue: s((input as any).whatsapp_template_overdue),
 
-    // Optional import tracking
     import_batch_id: (input as any).import_batch_id ?? null,
     import_source: (input as any).import_source ?? null,
   };
 
-  // Remove empty strings for nullable fields (clean inserts)
   const nullable = ["customer_code", "address", "phone", "whatsapp", "email", "brn", "vat_no", "client_name"];
   for (const k of nullable) {
     if (payload[k] === "") payload[k] = null;
@@ -216,6 +214,62 @@ const emptyForm: CustomerUpsert = {
 } as any;
 
 /* =========================
+   Small UI Helpers
+========================= */
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-end justify-between gap-2">
+        <label className="text-sm font-medium">{label}</label>
+        {hint ? <span className="text-[11px] text-muted-foreground">{hint}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+  tone = "muted",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  tone?: "muted" | "ok" | "bad";
+}) {
+  const ring =
+    tone === "ok"
+      ? "ring-emerald-500/20 bg-emerald-500/5"
+      : tone === "bad"
+      ? "ring-red-500/20 bg-red-500/5"
+      : "ring-border bg-muted/10";
+
+  return (
+    <Card className={`p-3 shadow-premium ring-1 ${ring}`}>
+      <div className="flex items-center gap-3">
+        <div className="h-9 w-9 rounded-xl bg-background ring-1 ring-border flex items-center justify-center">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <div className="text-[11px] text-muted-foreground">{label}</div>
+          <div className="text-sm font-semibold truncate">{value}</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* =========================
    Page
 ========================= */
 export default function Customers() {
@@ -231,7 +285,6 @@ export default function Customers() {
 
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // last import batch (for rollback convenience)
   const [lastBatchId, setLastBatchId] = useState<string>("");
 
   const qTrim = q.trim();
@@ -268,7 +321,6 @@ export default function Customers() {
     return { total, active, inactive, withWA };
   }, [rows]);
 
-  // Find last batch id (best-effort)
   useEffect(() => {
     (async () => {
       try {
@@ -281,9 +333,7 @@ export default function Customers() {
 
         const id = data?.[0]?.import_batch_id;
         if (id) setLastBatchId(String(id));
-      } catch {
-        // ignore
-      }
+      } catch {}
     })();
   }, []);
 
@@ -324,7 +374,8 @@ export default function Customers() {
 
   function openNew() {
     setEditing(null);
-    setForm({ ...emptyForm, is_active: true });
+    // cleaner defaults (no weird numbers)
+    setForm({ ...emptyForm, is_active: true, opening_balance: 0, discount_percent: 0 });
     setOpen(true);
   }
 
@@ -353,8 +404,14 @@ export default function Customers() {
 
   function save() {
     if (!form.name?.trim()) return toast.error("Customer name is required");
-    if (editing) updateM.mutate({ id: editing.id, payload: form });
-    else createM.mutate(form);
+    const cleaned: any = {
+      ...form,
+      phone: normalizePhone((form as any).phone),
+      whatsapp: normalizePhone((form as any).whatsapp),
+      discount_percent: clampPct((form as any).discount_percent),
+    };
+    if (editing) updateM.mutate({ id: editing.id, payload: cleaned });
+    else createM.mutate(cleaned);
   }
 
   const exportExcel = () => {
@@ -411,7 +468,6 @@ export default function Customers() {
       for (const c of rows) {
         const code = s(c.customer_code).toLowerCase();
         if (code) byCode.set(code, c);
-
         const key = `${s(c.name).toLowerCase()}|${normalizePhone(c.phone)}`;
         if (s(c.name)) byNamePhone.set(key, c);
       }
@@ -437,12 +493,17 @@ export default function Customers() {
 
         const stamped: any = {
           ...payload,
+          phone,
+          whatsapp: normalizePhone((payload as any).whatsapp),
           import_batch_id: batchId,
           import_source: "excel",
         };
 
         if (existing) {
-          await updateCustomer(existing.id, sanitizeCustomerPayload({ ...(stamped as any), is_active: existing.is_active }) as any);
+          await updateCustomer(
+            existing.id,
+            sanitizeCustomerPayload({ ...(stamped as any), is_active: existing.is_active }) as any
+          );
           updated++;
         } else {
           await createCustomer(sanitizeCustomerPayload(stamped) as any);
@@ -492,14 +553,6 @@ export default function Customers() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
           <div className="text-2xl font-semibold tracking-tight">Customers</div>
-
-          <div className="flex flex-wrap gap-2">
-            <Badge tone="muted">Total: {stats.total}</Badge>
-            <Badge tone="ok">Active: {stats.active}</Badge>
-            <Badge tone="bad">Inactive: {stats.inactive}</Badge>
-            <Badge tone="muted">With WhatsApp/Phone: {stats.withWA}</Badge>
-          </div>
-
           {lastBatchId ? (
             <div className="text-xs text-muted-foreground flex items-center gap-2">
               <span className="inline-flex rounded-full border bg-muted/30 px-2 py-0.5">
@@ -550,6 +603,28 @@ export default function Customers() {
             New Customer
           </Button>
         </div>
+      </div>
+
+      {/* Premium Stats row */}
+      <div className="grid gap-3 md:grid-cols-4">
+        <StatCard icon={<Users className="h-4 w-4 text-muted-foreground" />} label="Total" value={stats.total} />
+        <StatCard
+          icon={<ShieldCheck className="h-4 w-4 text-emerald-700" />}
+          label="Active"
+          value={stats.active}
+          tone="ok"
+        />
+        <StatCard
+          icon={<ShieldX className="h-4 w-4 text-red-700" />}
+          label="Inactive"
+          value={stats.inactive}
+          tone="bad"
+        />
+        <StatCard
+          icon={<Phone className="h-4 w-4 text-muted-foreground" />}
+          label="With WhatsApp/Phone"
+          value={stats.withWA}
+        />
       </div>
 
       {/* Filter Bar */}
@@ -743,76 +818,147 @@ export default function Customers() {
         </div>
       </Card>
 
-      {/* Dialog (smaller premium modal) */}
+      {/* ✅ Smaller, premium dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{editing ? "Edit Customer" : "New Customer"}</DialogTitle>
-            <DialogDescription className="text-xs">
-              Keep it clean: Name is required. Other fields are optional.
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="max-w-lg p-0 overflow-hidden">
+          <div className="p-5 border-b bg-gradient-to-r from-background to-muted/20">
+            <DialogHeader>
+              <DialogTitle className="text-base">{editing ? "Edit Customer" : "New Customer"}</DialogTitle>
+              <DialogDescription className="text-xs">
+                Fast entry: only <b>Name</b> is required. Phones are stored digits-only.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium">Name *</label>
-              <Input value={form.name} onChange={(e) => setForm((st) => ({ ...st, name: e.target.value }))} />
+          {/* Scrollable body so dialog stays small */}
+          <div className="max-h-[70vh] overflow-auto p-5 space-y-4">
+            {/* Essentials */}
+            <div className="rounded-xl border bg-muted/10 p-4 space-y-4">
+              <div className="text-xs font-semibold text-muted-foreground tracking-wide">ESSENTIALS</div>
+
+              <Field label="Name *">
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm((st) => ({ ...st, name: e.target.value }))}
+                  placeholder="Customer name"
+                />
+              </Field>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="Customer Code" hint="Optional">
+                  <Input
+                    value={(form as any).customer_code ?? ""}
+                    onChange={(e) => setForm((st) => ({ ...st, customer_code: e.target.value } as any))}
+                    placeholder="CUST-001"
+                  />
+                </Field>
+
+                <Field label="Email" hint="Optional">
+                  <Input
+                    value={(form as any).email ?? ""}
+                    onChange={(e) => setForm((st) => ({ ...st, email: e.target.value } as any))}
+                    placeholder="name@email.com"
+                  />
+                </Field>
+
+                <Field label="Phone" hint="Digits only">
+                  <Input
+                    inputMode="numeric"
+                    value={(form as any).phone ?? ""}
+                    onChange={(e) => setForm((st) => ({ ...st, phone: e.target.value } as any))}
+                    onBlur={() => setForm((st) => ({ ...st, phone: normalizePhone((st as any).phone) } as any))}
+                    placeholder="57551234"
+                  />
+                </Field>
+
+                <Field label="WhatsApp" hint="Digits only">
+                  <Input
+                    inputMode="numeric"
+                    value={(form as any).whatsapp ?? ""}
+                    onChange={(e) => setForm((st) => ({ ...st, whatsapp: e.target.value } as any))}
+                    onBlur={() =>
+                      setForm((st) => ({ ...st, whatsapp: normalizePhone((st as any).whatsapp) } as any))
+                    }
+                    placeholder="57551234"
+                  />
+                </Field>
+
+                <div className="md:col-span-2">
+                  <Field label="Address" hint="Optional">
+                    <Input
+                      value={(form as any).address ?? ""}
+                      onChange={(e) => setForm((st) => ({ ...st, address: e.target.value } as any))}
+                      placeholder="City, Street, etc."
+                    />
+                  </Field>
+                </div>
+
+                <div className="flex items-center gap-2 md:col-span-2 pt-1">
+                  <Switch
+                    checked={!!(form as any).is_active}
+                    onCheckedChange={(v) => setForm((st) => ({ ...st, is_active: !!v } as any))}
+                  />
+                  <div className="text-sm text-muted-foreground">Active</div>
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Customer Code</label>
-              <Input value={(form as any).customer_code ?? ""} onChange={(e) => setForm((st) => ({ ...st, customer_code: e.target.value } as any))} />
-            </div>
+            {/* Business */}
+            <div className="rounded-xl border bg-muted/10 p-4 space-y-4">
+              <div className="text-xs font-semibold text-muted-foreground tracking-wide">BUSINESS</div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Email</label>
-              <Input value={(form as any).email ?? ""} onChange={(e) => setForm((st) => ({ ...st, email: e.target.value } as any))} />
-            </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="BRN" hint="Optional">
+                  <Input
+                    value={(form as any).brn ?? ""}
+                    onChange={(e) => setForm((st) => ({ ...st, brn: e.target.value } as any))}
+                    placeholder="C12345678"
+                  />
+                </Field>
 
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium">Address</label>
-              <Input value={(form as any).address ?? ""} onChange={(e) => setForm((st) => ({ ...st, address: e.target.value } as any))} />
-            </div>
+                <Field label="VAT No" hint="Optional">
+                  <Input
+                    value={(form as any).vat_no ?? ""}
+                    onChange={(e) => setForm((st) => ({ ...st, vat_no: e.target.value } as any))}
+                    placeholder="VAT123456"
+                  />
+                </Field>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Phone</label>
-              <Input value={(form as any).phone ?? ""} onChange={(e) => setForm((st) => ({ ...st, phone: e.target.value } as any))} />
-            </div>
+                <Field label="Opening Balance" hint="Rs">
+                  <Input
+                    inputMode="decimal"
+                    value={String((form as any).opening_balance ?? 0)}
+                    onChange={(e) => setForm((st) => ({ ...st, opening_balance: e.target.value as any } as any))}
+                    placeholder="0"
+                  />
+                </Field>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">WhatsApp</label>
-              <Input value={(form as any).whatsapp ?? ""} onChange={(e) => setForm((st) => ({ ...st, whatsapp: e.target.value } as any))} />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Opening Balance</label>
-              <Input inputMode="decimal" value={String((form as any).opening_balance ?? 0)} onChange={(e) => setForm((st) => ({ ...st, opening_balance: e.target.value as any } as any))} />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Discount %</label>
-              <Input inputMode="decimal" value={String((form as any).discount_percent ?? 0)} onChange={(e) => setForm((st) => ({ ...st, discount_percent: e.target.value as any } as any))} />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">BRN</label>
-              <Input value={(form as any).brn ?? ""} onChange={(e) => setForm((st) => ({ ...st, brn: e.target.value } as any))} />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">VAT No</label>
-              <Input value={(form as any).vat_no ?? ""} onChange={(e) => setForm((st) => ({ ...st, vat_no: e.target.value } as any))} />
-            </div>
-
-            <div className="flex items-center gap-2 md:col-span-2">
-              <Switch checked={!!(form as any).is_active} onCheckedChange={(v) => setForm((st) => ({ ...st, is_active: !!v } as any))} />
-              <div className="text-sm text-muted-foreground">Active</div>
+                <Field label="Discount %" hint="0–100">
+                  <Input
+                    inputMode="decimal"
+                    value={String((form as any).discount_percent ?? 0)}
+                    onChange={(e) => setForm((st) => ({ ...st, discount_percent: e.target.value as any } as any))}
+                    onBlur={() =>
+                      setForm((st) => ({ ...st, discount_percent: clampPct((st as any).discount_percent) } as any))
+                    }
+                    placeholder="0"
+                  />
+                </Field>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 pt-4">
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={save} disabled={createM.isPending || updateM.isPending}>
+          {/* Footer */}
+          <div className="p-4 border-t bg-background flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+
+            <Button
+              className="gradient-primary shadow-glow text-primary-foreground"
+              onClick={save}
+              disabled={createM.isPending || updateM.isPending}
+            >
               {editing ? (updateM.isPending ? "Saving…" : "Save Changes") : createM.isPending ? "Creating…" : "Create"}
             </Button>
           </div>
@@ -821,5 +967,6 @@ export default function Customers() {
     </div>
   );
 }
+
 
 

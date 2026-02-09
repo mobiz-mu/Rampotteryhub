@@ -21,13 +21,22 @@ type DocCompany = {
   taglineBottom?: string | null;
 };
 
+export type DocVariant = "INVOICE" | "CREDIT_NOTE" | "QUOTATION";
+
 export type RamPotteryDocItem = {
   sn: number;
+
   item_code?: string;
-  box?: string; // BOX / PCS
-  unit_per_box?: string | number;
+
+  // ✅ support both old + new fields
+  box?: string; // old: BOX / PCS
+  uom?: string; // new: BOX / PCS
+  unit_per_box?: string | number; // old
+  units_per_box?: string | number; // new
+
   total_qty?: string | number;
   description?: string;
+
   unit_price_excl_vat?: number;
   unit_vat?: number;
   unit_price_incl_vat?: number;
@@ -37,15 +46,25 @@ export type RamPotteryDocItem = {
 type Totals = {
   subtotal?: number | null;
   vatLabel?: string; // "VAT 15%"
+  vatPercentLabel?: string; // some pages use this name
   vat_amount?: number | null;
   total_amount?: number | null;
   previous_balance?: number | null;
   amount_paid?: number | null;
   balance_remaining?: number | null;
+
+  // optional discount fields (some pages pass these)
+  discount_percent?: number | null;
+  discount_amount?: number | null;
 };
 
 export type RamPotteryDocProps = {
-  docTitle?: string; // VAT INVOICE
+  // ✅ NEW: variant controls title
+  variant?: DocVariant;
+
+  // optional override
+  docTitle?: string; // VAT INVOICE / CREDIT NOTE / QUOTATION
+
   companyName?: string; // RAM POTTERY LTD
   logoSrc?: string;
 
@@ -69,6 +88,9 @@ export type RamPotteryDocProps = {
 
   preparedBy?: string | null;
   deliveredBy?: string | null;
+
+  // some pages pass this — keep accepted even if not used
+  showFooterBar?: boolean;
 };
 
 function n2(v: any) {
@@ -142,6 +164,7 @@ function TableHeader() {
 function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
   return (
     <table className="rpdoc-table">
+      {/* ✅ IMPORTANT: no whitespace/comments inside colgroup (hydration-safe) */}
       <colgroup>
         <col style={{ width: "5.2%" }} />
         <col style={{ width: "8.5%" }} />
@@ -158,20 +181,25 @@ function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
       <TableHeader />
 
       <tbody>
-        {(items || []).map((it, idx) => (
-          <tr key={idx}>
-            <td>{it.sn}</td>
-            <td>{txt(it.item_code)}</td>
-            <td>{txt(it.box)}</td>
-            <td>{txt(it.unit_per_box)}</td>
-            <td>{txt(it.total_qty)}</td>
-            <td className="rpdoc-desc">{txt(it.description)}</td>
-            <td>{money(it.unit_price_excl_vat)}</td>
-            <td>{money(it.unit_vat)}</td>
-            <td>{money(it.unit_price_incl_vat)}</td>
-            <td>{money(it.line_total)}</td>
-          </tr>
-        ))}
+        {(items || []).map((it, idx) => {
+          const box = txt(it.box || it.uom);
+          const upb = txt(it.unit_per_box ?? it.units_per_box);
+
+          return (
+            <tr key={idx}>
+              <td>{it.sn}</td>
+              <td>{txt(it.item_code)}</td>
+              <td>{box}</td>
+              <td>{upb}</td>
+              <td>{txt(it.total_qty)}</td>
+              <td className="rpdoc-desc">{txt(it.description)}</td>
+              <td>{money(it.unit_price_excl_vat)}</td>
+              <td>{money(it.unit_vat)}</td>
+              <td>{money(it.unit_price_incl_vat)}</td>
+              <td>{money(it.line_total)}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -202,7 +230,7 @@ function NotesTotals({ totals, balanceRemaining }: { totals: Totals; balanceRema
           <span>{money(totals?.subtotal)}</span>
         </div>
         <div className="rpdoc-totalRow">
-          <span>{txt(totals?.vatLabel) || "VAT 15%"}</span>
+          <span>{txt(totals?.vatLabel || totals?.vatPercentLabel) || "VAT 15%"}</span>
           <span>{money(totals?.vat_amount)}</span>
         </div>
         <div className="rpdoc-totalRow rpdoc-totalRowBig">
@@ -256,24 +284,38 @@ function Signatures({ preparedBy, deliveredBy }: { preparedBy: string; delivered
 
 export default function RamPotteryDoc(props: RamPotteryDocProps) {
   const {
-    docTitle = "VAT INVOICE",
+    variant = "INVOICE",
+
+    // if provided, overrides variant title
+    docTitle,
+
     companyName = "RAM POTTERY LTD",
     logoSrc = "/logo.png",
     customer,
     company,
-    docNoLabel = "INVOICE NO:",
+
+    docNoLabel = variant === "QUOTATION" ? "QUOTATION NO:" : variant === "CREDIT_NOTE" ? "CREDIT NOTE NO:" : "INVOICE NO:",
     docNoValue = "",
+
     dateLabel = "DATE:",
     dateValue = "",
-    purchaseOrderLabel = "PO NO.:",
+
+    purchaseOrderLabel = variant === "QUOTATION" ? "VALID UNTIL:" : "PO NO.:",
     purchaseOrderValue = "",
+
     salesRepName = "",
     salesRepPhone = "",
+
     items,
     totals,
+
     preparedBy = "",
     deliveredBy = "",
   } = props;
+
+  const computedTitle =
+    docTitle ||
+    (variant === "CREDIT_NOTE" ? "CREDIT NOTE" : variant === "QUOTATION" ? "QUOTATION" : "VAT INVOICE");
 
   const addressLines = company?.addressLines?.length
     ? company.addressLines
@@ -330,7 +372,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
             </div>
           </div>
 
-          <div className="rpdoc-title">{docTitle}</div>
+          <div className="rpdoc-title">{computedTitle}</div>
         </div>
 
         <div className="rpdoc-headerSpacer" />
@@ -356,7 +398,6 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
             <div className="v">{txt(customer?.phone)}</div>
           </div>
 
-          {/* BRN + VAT on one row */}
           <div className="rpdoc-kvLine">
             <div className="kvPair">
               <div className="k">BRN:</div>
@@ -406,43 +447,44 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   );
 
   const FooterBlock = (
-  <div className="rpdoc-footerRegion">
-    <NotesTotals totals={totals} balanceRemaining={balanceRemaining} />
-    <div className="rpdoc-signaturesWrap">
-      <Signatures preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
-    </div>
-  </div>
-);
-
-const Page1 = (
-  <section className="rpdoc-page">
-    <div className="rpdoc-pageNumber">Page 1 / {totalPages}</div>
-
-    <div className="rpdoc-frame">
-      {HeaderBlock}
-      {BoxesBlock}
-
-      <div className="rpdoc-tableWrap">
-        <ItemsTable items={docItems} />
+    <div className="rpdoc-footerRegion">
+      <NotesTotals totals={totals} balanceRemaining={balanceRemaining} />
+      <div className="rpdoc-signaturesWrap">
+        <Signatures preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
       </div>
-
-      {!splitFooterToSecondPage ? FooterBlock : null}
     </div>
-  </section>
-);
+  );
 
-const Page2 = splitFooterToSecondPage ? (
-  <section className="rpdoc-page">
-    <div className="rpdoc-pageNumber">Page 2 / {totalPages}</div>
-    <div className="rpdoc-frame">{FooterBlock}</div>
-  </section>
-) : null;
+  const Page1 = (
+    <section className="rpdoc-page">
+      <div className="rpdoc-pageNumber">Page 1 / {totalPages}</div>
 
-return (
-  <div className="rpdoc-pages" id="rpdoc-root">
-    {Page1}
-    {Page2}
-  </div>
-);
+      <div className="rpdoc-frame">
+        {HeaderBlock}
+        {BoxesBlock}
+
+        <div className="rpdoc-tableWrap">
+          <ItemsTable items={docItems} />
+        </div>
+
+        {!splitFooterToSecondPage ? FooterBlock : null}
+      </div>
+    </section>
+  );
+
+  const Page2 = splitFooterToSecondPage ? (
+    <section className="rpdoc-page">
+      <div className="rpdoc-pageNumber">Page 2 / {totalPages}</div>
+      <div className="rpdoc-frame">{FooterBlock}</div>
+    </section>
+  ) : null;
+
+  return (
+    <div className="rpdoc-pages" id="rpdoc-root">
+      {Page1}
+      {Page2}
+    </div>
+  );
 }
+
 

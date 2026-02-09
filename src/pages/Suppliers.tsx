@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +30,11 @@ import {
   Receipt,
   FileText,
   BookOpen,
+  Users,
+  ShieldCheck,
+  ShieldX,
+  Landmark,
+  AlertTriangle,
 } from "lucide-react";
 
 /* =========================
@@ -96,6 +101,9 @@ function money(v: any) {
   if (!Number.isFinite(n)) return "0.00";
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+function normalizePhone(v: any) {
+  return String(v ?? "").replace(/[^\d]/g, "");
+}
 function uid() {
   try {
     return crypto.randomUUID();
@@ -109,6 +117,89 @@ function qsGet(search: string, key: string) {
   } catch {
     return null;
   }
+}
+function parseBool(v: any, def = true) {
+  if (typeof v === "boolean") return v;
+  const t = String(v ?? "").trim().toLowerCase();
+  if (!t) return def;
+  if (["1", "true", "yes", "y", "active"].includes(t)) return true;
+  if (["0", "false", "no", "n", "inactive"].includes(t)) return false;
+  return def;
+}
+
+/* =========================
+   Small UI helpers (premium)
+========================= */
+function StatCard({
+  icon,
+  label,
+  value,
+  sub,
+  tone = "muted",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  tone?: "muted" | "ok" | "bad" | "warn";
+}) {
+  const ring =
+    tone === "ok"
+      ? "ring-emerald-500/20 bg-emerald-500/5"
+      : tone === "bad"
+      ? "ring-red-500/20 bg-red-500/5"
+      : tone === "warn"
+      ? "ring-amber-500/20 bg-amber-500/5"
+      : "ring-border bg-muted/10";
+
+  return (
+    <Card className={`p-3 shadow-premium ring-1 ${ring}`}>
+      <div className="flex items-center gap-3">
+        <div className="h-9 w-9 rounded-xl bg-background ring-1 ring-border flex items-center justify-center">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <div className="text-[11px] text-muted-foreground">{label}</div>
+          <div className="text-sm font-semibold truncate">{value}</div>
+          {sub ? <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{sub}</div> : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function Badge({ tone, children }: { tone: "ok" | "bad" | "muted"; children: React.ReactNode }) {
+  const cls =
+    tone === "ok"
+      ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/20"
+      : tone === "bad"
+      ? "bg-red-500/10 text-red-700 border-red-500/20"
+      : "bg-muted/30 text-muted-foreground border-border";
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
+      {children}
+    </span>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-end justify-between gap-2">
+        <label className="text-sm font-medium">{label}</label>
+        {hint ? <span className="text-[11px] text-muted-foreground">{hint}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
 }
 
 /* =========================
@@ -150,10 +241,10 @@ async function listSupplierBalances() {
   return map;
 }
 
-async function createSupplier(payload: SupplierUpsert) {
+function sanitizeSupplierPayload(payload: SupplierUpsert) {
   const row: any = {
     name: s(payload.name),
-    phone: s(payload.phone) || null,
+    phone: normalizePhone(payload.phone) || null,
     email: s(payload.email) || null,
     address: s(payload.address) || null,
 
@@ -171,6 +262,15 @@ async function createSupplier(payload: SupplierUpsert) {
     updated_at: new Date().toISOString(),
   };
 
+  const nullable = ["phone", "email", "address", "city", "country", "vat_no", "notes"];
+  for (const k of nullable) if (row[k] === "") row[k] = null;
+
+  return row;
+}
+
+async function createSupplier(payload: SupplierUpsert) {
+  const row = sanitizeSupplierPayload(payload);
+
   const { data, error } = await supabase
     .from("suppliers")
     .insert(row)
@@ -184,22 +284,7 @@ async function createSupplier(payload: SupplierUpsert) {
 }
 
 async function updateSupplier(id: number, payload: SupplierUpsert) {
-  const row: any = {
-    name: s(payload.name),
-    phone: s(payload.phone) || null,
-    email: s(payload.email) || null,
-    address: s(payload.address) || null,
-
-    city: s(payload.city) || null,
-    country: s(payload.country) || null,
-    vat_no: s(payload.vat_no) || null,
-
-    opening_balance: n0(payload.opening_balance),
-    is_active: payload.is_active ?? true,
-
-    notes: s(payload.notes) || null,
-    updated_at: new Date().toISOString(),
-  };
+  const row = sanitizeSupplierPayload(payload);
 
   const { data, error } = await supabase
     .from("suppliers")
@@ -264,14 +349,6 @@ function downloadTemplateXlsx() {
   XLSX.writeFile(wb, "suppliers-import-template.xlsx");
 }
 
-function parseBool(v: any, def = true) {
-  if (typeof v === "boolean") return v;
-  const t = String(v ?? "").trim().toLowerCase();
-  if (!t) return def;
-  if (["1", "true", "yes", "y", "active"].includes(t)) return true;
-  if (["0", "false", "no", "n", "inactive"].includes(t)) return false;
-  return def;
-}
 type ExcelRowAny = Record<string, any>;
 function pick(r: ExcelRowAny, keys: string[]) {
   for (const k of keys) if (r[k] !== undefined) return r[k];
@@ -354,18 +431,19 @@ export default function Suppliers() {
   const kpis = useMemo(() => {
     const total = rows.length;
     const active = rows.filter((r) => !!r.is_active).length;
+    const inactive = total - active;
     const sumOpening = rows.reduce((s0, r) => s0 + n0(r.opening_balance), 0);
     const sumBalance = rows.reduce((s0, r) => s0 + n0((r as any)._balance), 0);
     const missingVat = rows.filter((r) => !s(r.vat_no)).length;
-    return { total, active, sumOpening, sumBalance, missingVat };
+    return { total, active, inactive, sumOpening, sumBalance, missingVat };
   }, [rows]);
 
   const createM = useMutation({
     mutationFn: (payload: SupplierUpsert) => createSupplier(payload),
     onSuccess: async () => {
       toast.success("Supplier created");
-      await qc.invalidateQueries({ queryKey: ["suppliers"] });
-      await qc.invalidateQueries({ queryKey: ["supplier-balances"] });
+      await qc.invalidateQueries({ queryKey: ["suppliers"], exact: false });
+      await qc.invalidateQueries({ queryKey: ["supplier-balances"], exact: false });
       setOpen(false);
     },
     onError: (e: any) => toast.error(e?.message || "Failed to create supplier"),
@@ -375,8 +453,8 @@ export default function Suppliers() {
     mutationFn: ({ id, payload }: { id: number; payload: SupplierUpsert }) => updateSupplier(id, payload),
     onSuccess: async () => {
       toast.success("Supplier updated");
-      await qc.invalidateQueries({ queryKey: ["suppliers"] });
-      await qc.invalidateQueries({ queryKey: ["supplier-balances"] });
+      await qc.invalidateQueries({ queryKey: ["suppliers"], exact: false });
+      await qc.invalidateQueries({ queryKey: ["supplier-balances"], exact: false });
       setOpen(false);
     },
     onError: (e: any) => toast.error(e?.message || "Failed to update supplier"),
@@ -386,7 +464,7 @@ export default function Suppliers() {
     mutationFn: ({ id, active }: { id: number; active: boolean }) => setSupplierActive(id, active),
     onSuccess: async ({ is_active }) => {
       toast.success(is_active ? "Supplier activated" : "Supplier deactivated");
-      await qc.invalidateQueries({ queryKey: ["suppliers"] });
+      await qc.invalidateQueries({ queryKey: ["suppliers"], exact: false });
     },
     onError: (e: any) => toast.error(e?.message || "Failed"),
   });
@@ -419,10 +497,17 @@ export default function Suppliers() {
     setOpen(true);
   }
 
-  async function save() {
+  function save() {
     if (!s(form.name)) return toast.error("Supplier name is required");
-    if (editing) return updateM.mutate({ id: editing.id, payload: form });
-    return createM.mutate(form);
+    const payload: SupplierUpsert = {
+      ...form,
+      phone: normalizePhone(form.phone),
+      opening_balance: n0(form.opening_balance),
+      is_active: !!form.is_active,
+    };
+
+    if (editing) return updateM.mutate({ id: editing.id, payload });
+    return createM.mutate(payload);
   }
 
   function exportExcel() {
@@ -516,11 +601,11 @@ export default function Suppliers() {
         }
       }
 
-      await qc.invalidateQueries({ queryKey: ["suppliers"] });
-      await qc.invalidateQueries({ queryKey: ["supplier-balances"] });
+      await qc.invalidateQueries({ queryKey: ["suppliers"], exact: false });
+      await qc.invalidateQueries({ queryKey: ["supplier-balances"], exact: false });
 
       toast.success(`Import done: ${created} created, ${updated} updated, ${skipped} skipped`);
-      toast.message(`import_batch_id: ${batchId}`, { description: "Use it to audit/rollback this Excel batch." });
+      toast.message(`import_batch_id: ${batchId}`, { description: "Use it to audit this Excel batch." });
     } catch (e: any) {
       toast.error(e?.message || "Import failed");
     } finally {
@@ -532,11 +617,9 @@ export default function Suppliers() {
     <div className="space-y-5">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
+        <div className="space-y-1">
           <div className="text-2xl font-semibold tracking-tight">Suppliers</div>
-          <div className="text-sm text-muted-foreground">
-            Vendor register • AP ledger • Real balance (Opening + Bills − Payments)
-          </div>
+          <div className="text-sm text-muted-foreground">Vendor register • AP ledger • Balance is calculated from v_supplier_balances</div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -583,39 +666,34 @@ export default function Suppliers() {
         </div>
       </div>
 
-      {/* KPI Strip */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="p-4 shadow-premium">
-          <div className="text-xs text-muted-foreground">Suppliers</div>
-          <div className="mt-1 text-xl font-semibold">{kpis.total}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Active in view: <b>{kpis.active}</b>
-          </div>
-        </Card>
-
-        <Card className="p-4 shadow-premium">
-          <div className="text-xs text-muted-foreground">Opening Payables</div>
-          <div className="mt-1 text-xl font-semibold">Rs {money(kpis.sumOpening)}</div>
-          <div className="mt-1 text-xs text-muted-foreground">Supplier master opening balances</div>
-        </Card>
-
-        <Card className="p-4 shadow-premium">
-          <div className="text-xs text-muted-foreground">Real AP Balance</div>
-          <div className="mt-1 text-xl font-semibold">Rs {money(kpis.sumBalance)}</div>
-          <div className="mt-1 text-xs text-muted-foreground">Opening + Bills − Payments</div>
-        </Card>
-
-        <Card className="p-4 shadow-premium">
-          <div className="text-xs text-muted-foreground">Data Quality</div>
-          <div className="mt-1 text-xl font-semibold">{kpis.missingVat}</div>
-          <div className="mt-1 text-xs text-muted-foreground">Missing VAT No</div>
-        </Card>
+      {/* KPI Cards */}
+      <div className="grid gap-3 md:grid-cols-5">
+        <StatCard icon={<Users className="h-4 w-4 text-muted-foreground" />} label="Total" value={kpis.total} sub={`In view (${status.toLowerCase()})`} />
+        <StatCard icon={<ShieldCheck className="h-4 w-4 text-emerald-700" />} label="Active" value={kpis.active} tone="ok" />
+        <StatCard icon={<ShieldX className="h-4 w-4 text-red-700" />} label="Inactive" value={kpis.inactive} tone="bad" />
+        <StatCard
+          icon={<Landmark className="h-4 w-4 text-muted-foreground" />}
+          label="Opening Payables"
+          value={`Rs ${money(kpis.sumOpening)}`}
+          sub="Supplier master opening"
+        />
+        <StatCard
+          icon={<AlertTriangle className="h-4 w-4 text-amber-700" />}
+          label="Missing VAT No"
+          value={kpis.missingVat}
+          sub="Data quality"
+          tone="warn"
+        />
       </div>
 
       {/* Filters */}
       <Card className="p-4 shadow-premium">
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-center">
-          <Input placeholder="Search code / name / email / phone / VAT…" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+          <Input
+            placeholder="Search: code, name, email, phone, VAT…"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+          />
 
           <select
             className="h-10 rounded-md border px-3 bg-background"
@@ -637,7 +715,7 @@ export default function Suppliers() {
             disabled={suppliersQ.isFetching || balancesQ.isFetching}
           >
             <RefreshCw className="h-4 w-4 mr-2" />
-            {suppliersQ.isFetching || balancesQ.isFetching ? "Refreshing..." : "Refresh"}
+            {suppliersQ.isFetching || balancesQ.isFetching ? "Refreshing…" : "Refresh"}
           </Button>
         </div>
       </Card>
@@ -647,24 +725,24 @@ export default function Suppliers() {
         <div className="border-b bg-gradient-to-r from-background to-muted/30 px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium">
-              Supplier Register
+              Supplier Register{" "}
               <span className="ml-2 text-xs text-muted-foreground">
                 {suppliersQ.isLoading ? "Loading…" : `${rows.length} supplier(s)`}
               </span>
             </div>
-            <div className="text-xs text-muted-foreground">Double-click row to edit • Balance is auto from ledger</div>
+            <div className="text-xs text-muted-foreground">Double click row to edit • Use ⋯ for actions</div>
           </div>
         </div>
 
         <div className="overflow-auto">
           <table className="w-full min-w-[1250px] text-sm">
             <colgroup>
-              <col style={{ width: "13%" }} />
-              <col style={{ width: "23%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "22%" }} />
               <col style={{ width: "20%" }} />
-              <col style={{ width: "18%" }} />
+              <col style={{ width: "20%" }} />
               <col style={{ width: "12%" }} />
-              <col style={{ width: "9%" }} />
+              <col style={{ width: "12%" }} />
               <col style={{ width: "5%" }} />
             </colgroup>
 
@@ -681,8 +759,20 @@ export default function Suppliers() {
             </thead>
 
             <tbody className="divide-y">
-              {!suppliersQ.isLoading &&
-                rows.map((r: any) => {
+              {suppliersQ.isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-10 text-muted-foreground">
+                    Loading…
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-10 text-muted-foreground">
+                    No suppliers found.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r: any, idx) => {
                   const loc = [s(r.city), s(r.country)].filter(Boolean).join(", ");
                   const addr = [s(r.address), loc].filter(Boolean).join(" • ");
                   const balance = n0(r._balance);
@@ -690,29 +780,26 @@ export default function Suppliers() {
                   return (
                     <tr
                       key={r.id}
-                      className="hover:bg-muted/30"
+                      className={idx % 2 === 0 ? "bg-background hover:bg-muted/40" : "bg-muted/10 hover:bg-muted/40"}
                       onDoubleClick={() => openEdit(r)}
-                      title="Double-click to edit"
+                      title="Double click to edit"
                     >
                       <td className="px-4 py-4 align-top">
-                        <div className="font-semibold">{r.supplier_code || `SUP-${String(r.id).padStart(4, "0")}`}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">#{r.id}</div>
+                        <div className="font-semibold">
+                          {r.supplier_code || `SUP-${String(r.id).padStart(4, "0")}`}
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <Badge tone={r.is_active ? "ok" : "bad"}>{r.is_active ? "ACTIVE" : "INACTIVE"}</Badge>
+                          <Switch
+                            checked={!!r.is_active}
+                            onCheckedChange={(v) => activeM.mutate({ id: r.id, active: !!v })}
+                            disabled={activeM.isPending}
+                          />
+                        </div>
                       </td>
 
                       <td className="px-4 py-4 align-top">
-                        <div className="flex items-center gap-2">
-                          <div className="font-semibold">{r.name}</div>
-                          {!r.is_active ? (
-                            <span className="text-[11px] rounded-full px-2 py-0.5 border bg-muted text-muted-foreground">
-                              Inactive
-                            </span>
-                          ) : (
-                            <span className="text-[11px] rounded-full px-2 py-0.5 border bg-emerald-500/10 text-emerald-700">
-                              Active
-                            </span>
-                          )}
-                        </div>
-
+                        <div className="font-semibold">{r.name}</div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {r.import_source ? (
                             <>
@@ -722,6 +809,7 @@ export default function Suppliers() {
                             "Manual entry"
                           )}
                         </div>
+                        {r.notes ? <div className="mt-2 text-xs text-muted-foreground line-clamp-2">{r.notes}</div> : null}
                       </td>
 
                       <td className="px-4 py-4 align-top">
@@ -749,7 +837,6 @@ export default function Suppliers() {
                       <td className="px-4 py-4 align-top">
                         <div className="font-medium">{r.vat_no || "-"}</div>
                         <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{addr || "-"}</div>
-                        {r.notes ? <div className="mt-2 text-xs text-muted-foreground line-clamp-2">{r.notes}</div> : null}
                       </td>
 
                       <td className="px-4 py-4 align-top text-right">
@@ -766,17 +853,16 @@ export default function Suppliers() {
                       <td className="px-3 py-3 align-top text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              className="h-9 w-9 inline-flex items-center justify-center rounded-full border bg-background hover:bg-muted/40"
-                              aria-label="Actions"
-                            >
-                              <MoreHorizontal className="h-5 w-5 text-muted-foreground" />
-                            </button>
+                            <Button variant="outline" className="h-8 px-3">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
                           </DropdownMenuTrigger>
 
                           <DropdownMenuContent align="end" className="w-60">
-                            <DropdownMenuItem onClick={() => openEdit(r)}>Edit</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEdit(r)}>
+                              <BookOpen className="h-4 w-4 mr-2" />
+                              Edit Supplier
+                            </DropdownMenuItem>
 
                             <DropdownMenuSeparator />
 
@@ -788,11 +874,6 @@ export default function Suppliers() {
                             <DropdownMenuItem onClick={() => nav(`/ap/payments?supplier=${r.id}`)}>
                               <Receipt className="h-4 w-4 mr-2" />
                               Record Payment
-                            </DropdownMenuItem>
-
-                            <DropdownMenuItem onClick={() => nav(`/ap/ledger?supplier=${r.id}`)}>
-                              <BookOpen className="h-4 w-4 mr-2" />
-                              View Ledger (next)
                             </DropdownMenuItem>
 
                             <DropdownMenuSeparator />
@@ -818,14 +899,7 @@ export default function Suppliers() {
                       </td>
                     </tr>
                   );
-                })}
-
-              {!suppliersQ.isLoading && rows.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-muted-foreground">
-                    No suppliers found.
-                  </td>
-                </tr>
+                })
               )}
             </tbody>
           </table>
@@ -836,96 +910,112 @@ export default function Suppliers() {
         </div>
       </Card>
 
-      {/* Create/Edit Dialog (smaller desktop size) */}
+      {/* ✅ Smaller premium modal */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-[680px]">
-          <DialogHeader>
-            <DialogTitle>{editing ? "Edit Supplier" : "New Supplier"}</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="max-w-lg p-0 overflow-hidden">
+          <div className="p-5 border-b bg-gradient-to-r from-background to-muted/20">
+            <DialogHeader>
+              <DialogTitle className="text-base">{editing ? "Edit Supplier" : "New Supplier"}</DialogTitle>
+              <DialogDescription className="text-xs">
+                Only <b>Name</b> is required. Phone is saved digits-only.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
 
-          <div className="grid gap-4">
-            <Card className="p-4 shadow-premium">
-              <div className="text-sm font-semibold">Identity</div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">Supplier Name *</div>
-                  <Input value={form.name || ""} onChange={(e) => setForm((x) => ({ ...x, name: e.target.value }))} />
-                </div>
+          <div className="max-h-[70vh] overflow-auto p-5 space-y-4">
+            <div className="rounded-xl border bg-muted/10 p-4 space-y-4">
+              <div className="text-xs font-semibold text-muted-foreground tracking-wide">ESSENTIALS</div>
 
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">VAT No</div>
-                  <Input value={form.vat_no || ""} onChange={(e) => setForm((x) => ({ ...x, vat_no: e.target.value }))} />
-                </div>
-              </div>
-            </Card>
+              <Field label="Supplier Name *">
+                <Input
+                  value={form.name || ""}
+                  onChange={(e) => setForm((x) => ({ ...x, name: e.target.value }))}
+                  placeholder="ABC Supplies Ltd"
+                />
+              </Field>
 
-            <Card className="p-4 shadow-premium">
-              <div className="text-sm font-semibold">Contact</div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">Email</div>
-                  <Input value={form.email || ""} onChange={(e) => setForm((x) => ({ ...x, email: e.target.value }))} />
-                </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="VAT No" hint="Optional">
+                  <Input
+                    value={form.vat_no || ""}
+                    onChange={(e) => setForm((x) => ({ ...x, vat_no: e.target.value }))}
+                    placeholder="VAT123456"
+                  />
+                </Field>
 
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">Phone</div>
-                  <Input value={form.phone || ""} onChange={(e) => setForm((x) => ({ ...x, phone: e.target.value }))} />
-                </div>
-              </div>
-            </Card>
-
-            <Card className="p-4 shadow-premium">
-              <div className="text-sm font-semibold">Address</div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div className="space-y-2 md:col-span-2">
-                  <div className="text-xs text-muted-foreground">Address</div>
-                  <Input value={form.address || ""} onChange={(e) => setForm((x) => ({ ...x, address: e.target.value }))} />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">City</div>
-                  <Input value={form.city || ""} onChange={(e) => setForm((x) => ({ ...x, city: e.target.value }))} />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">Country</div>
-                  <Input value={form.country || ""} onChange={(e) => setForm((x) => ({ ...x, country: e.target.value }))} />
-                </div>
-              </div>
-            </Card>
-
-            <Card className="p-4 shadow-premium">
-              <div className="text-sm font-semibold">Finance</div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground">Opening Balance (Payable)</div>
+                <Field label="Opening Balance" hint="Payable (Rs)">
                   <Input
                     inputMode="decimal"
                     value={String(form.opening_balance ?? 0)}
                     onChange={(e) => setForm((x) => ({ ...x, opening_balance: e.target.value as any }))}
+                    placeholder="0"
                   />
-                </div>
+                </Field>
 
-                <div className="flex items-center gap-3 md:pt-6">
+                <div className="flex items-center gap-2 md:col-span-2 pt-1">
                   <Switch checked={!!form.is_active} onCheckedChange={(v) => setForm((x) => ({ ...x, is_active: !!v }))} />
                   <div className="text-sm text-muted-foreground">Active</div>
                 </div>
               </div>
-            </Card>
+            </div>
 
-            <Card className="p-4 shadow-premium">
-              <div className="text-sm font-semibold">Notes</div>
-              <div className="mt-3">
-                <Input
-                  placeholder="Optional notes (delivery rules, payment terms, etc.)"
-                  value={form.notes || ""}
-                  onChange={(e) => setForm((x) => ({ ...x, notes: e.target.value }))}
-                />
+            <div className="rounded-xl border bg-muted/10 p-4 space-y-4">
+              <div className="text-xs font-semibold text-muted-foreground tracking-wide">CONTACT</div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="Email" hint="Optional">
+                  <Input
+                    value={form.email || ""}
+                    onChange={(e) => setForm((x) => ({ ...x, email: e.target.value }))}
+                    placeholder="accounts@abc.mu"
+                  />
+                </Field>
+
+                <Field label="Phone" hint="Digits only">
+                  <Input
+                    inputMode="numeric"
+                    value={form.phone || ""}
+                    onChange={(e) => setForm((x) => ({ ...x, phone: e.target.value }))}
+                    onBlur={() => setForm((x) => ({ ...x, phone: normalizePhone(x.phone) }))}
+                    placeholder="52501234"
+                  />
+                </Field>
+
+                <div className="md:col-span-2">
+                  <Field label="Address" hint="Optional">
+                    <Input
+                      value={form.address || ""}
+                      onChange={(e) => setForm((x) => ({ ...x, address: e.target.value }))}
+                      placeholder="Zone Industrielle, Pailles"
+                    />
+                  </Field>
+                </div>
+
+                <Field label="City" hint="Optional">
+                  <Input value={form.city || ""} onChange={(e) => setForm((x) => ({ ...x, city: e.target.value }))} placeholder="Pailles" />
+                </Field>
+
+                <Field label="Country" hint="Optional">
+                  <Input
+                    value={form.country || ""}
+                    onChange={(e) => setForm((x) => ({ ...x, country: e.target.value }))}
+                    placeholder="Mauritius"
+                  />
+                </Field>
               </div>
-            </Card>
+            </div>
+
+            <div className="rounded-xl border bg-muted/10 p-4 space-y-3">
+              <div className="text-xs font-semibold text-muted-foreground tracking-wide">NOTES</div>
+              <Input
+                placeholder="Optional notes (payment terms, delivery rules, etc.)"
+                value={form.notes || ""}
+                onChange={(e) => setForm((x) => ({ ...x, notes: e.target.value }))}
+              />
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4">
+          <div className="p-4 border-t bg-background flex items-center justify-end gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
@@ -935,7 +1025,7 @@ export default function Suppliers() {
               onClick={save}
               disabled={createM.isPending || updateM.isPending}
             >
-              {editing ? (updateM.isPending ? "Saving..." : "Save Changes") : createM.isPending ? "Creating..." : "Create Supplier"}
+              {editing ? (updateM.isPending ? "Saving…" : "Save Changes") : createM.isPending ? "Creating…" : "Create Supplier"}
             </Button>
           </div>
         </DialogContent>
@@ -943,3 +1033,4 @@ export default function Suppliers() {
     </div>
   );
 }
+
