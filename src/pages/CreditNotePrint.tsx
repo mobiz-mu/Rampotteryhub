@@ -1,7 +1,9 @@
 // src/pages/CreditNotePrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
 
 /* =========================
    Helpers
@@ -14,7 +16,7 @@ function money(v: any) {
 
 function fmtDate(v: any) {
   const s = String(v || "").trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   try {
     const d = new Date(v);
@@ -38,6 +40,11 @@ function statusTone(st: string) {
   return { bg: "#FFF1F2", ink: "#9F1239", br: "#FECDD3", dot: "#FB7185" }; // ISSUED
 }
 
+function isValidId(v: any) {
+  const x = Number(v);
+  return Number.isFinite(x) && x > 0;
+}
+
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
@@ -46,6 +53,22 @@ async function safeJson(res: Response) {
   } catch {
     return null;
   }
+}
+
+/** Wait until images inside an element finish loading */
+async function waitForImages(root: HTMLElement) {
+  const imgs = Array.from(root.querySelectorAll("img"));
+  await Promise.all(
+    imgs.map(
+      (img) =>
+        new Promise<void>((resolve) => {
+          const el = img as HTMLImageElement;
+          if (el.complete) return resolve();
+          el.addEventListener("load", () => resolve(), { once: true });
+          el.addEventListener("error", () => resolve(), { once: true });
+        })
+    )
+  );
 }
 
 // Use your existing logo path (can be absolute/public)
@@ -57,10 +80,13 @@ const LOGO_SRC = "/logo.png";
 export default function CreditNotePrint() {
   const nav = useNavigate();
   const { id } = useParams();
+  const creditNoteId = Number(id);
+
   const [sp] = useSearchParams();
   const publicToken = (sp.get("t") || "").trim();
+  const isPublicMode = !!publicToken;
 
-  // ✅ If token missing, show a helpful panel (and allow logged-in printing if you want)
+  // Auth check (only needed for internal mode)
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
@@ -68,13 +94,14 @@ export default function CreditNotePrint() {
     let alive = true;
 
     (async () => {
-      if (publicToken) {
+      if (isPublicMode) {
         if (alive) {
           setIsLoggedIn(false);
           setAuthChecked(true);
         }
         return;
       }
+
       const { data } = await supabase.auth.getSession();
       if (!alive) return;
       setIsLoggedIn(!!data?.session);
@@ -84,164 +111,173 @@ export default function CreditNotePrint() {
     return () => {
       alive = false;
     };
-  }, [publicToken]);
+  }, [isPublicMode]);
 
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  // Print root + one-time print
+  const printRootRef = useRef<HTMLDivElement | null>(null);
+  const printOnceRef = useRef(false);
+  const [printPreparing, setPrintPreparing] = useState(false);
 
-  const [cn, setCn] = useState<any | null>(null);
-  const [items, setItems] = useState<any[]>([]);
-  const [customer, setCustomer] = useState<any | null>(null);
+  async function safePrintOnce() {
+    if (printOnceRef.current) return;
+    if (!printRootRef.current) return;
 
-  // Logo + auto print
-  const [logoReady, setLogoReady] = useState(false);
-  const printedRef = useRef(false);
-  const [showManualPrint, setShowManualPrint] = useState(false);
+    printOnceRef.current = true;
+    setPrintPreparing(true);
+
+    try {
+      // @ts-ignore
+      if (document?.fonts?.ready) {
+        // @ts-ignore
+        await document.fonts.ready;
+      }
+    } catch {}
+
+    await waitForImages(printRootRef.current);
+
+    window.setTimeout(() => {
+      window.print();
+      setPrintPreparing(false);
+    }, 150);
+  }
+
+  /* =========================
+     Load credit note
+     - PUBLIC: /api/public/credit-note-print?id=..&t=..
+     - INTERNAL: Supabase authenticated selects
+  ========================= */
+  const cnQ = useQuery({
+    queryKey: ["credit_note_print", creditNoteId, publicToken],
+    enabled: isValidId(creditNoteId) && (isPublicMode ? true : authChecked),
+    queryFn: async () => {
+      // PUBLIC
+      if (isPublicMode) {
+        const res = await fetch(
+          `/api/public/credit-note-print?id=${creditNoteId}&t=${encodeURIComponent(publicToken)}`
+        );
+        const json = await safeJson(res);
+        if (!json?.ok) throw new Error(json?.error || "Failed to load");
+        return {
+          ok: true,
+          credit_note: json.credit_note,
+          customer: json.customer || null,
+          items: json.items || [],
+        };
+      }
+
+      // INTERNAL
+      if (!isLoggedIn) throw new Error("Unauthorized");
+
+      // 1) Credit note
+      const { data: cn, error: cnErr } = await supabase
+        .from("credit_notes")
+        .select(
+          `
+          id,
+          credit_note_number,
+          credit_note_date,
+          invoice_id,
+          customer_id,
+          reason,
+          subtotal,
+          vat_amount,
+          total_amount,
+          status,
+          created_at
+        `
+        )
+        .eq("id", creditNoteId)
+        .maybeSingle();
+
+      if (cnErr) throw cnErr;
+      if (!cn) throw new Error("Credit note not found");
+
+      // 2) Items (+ product)
+      const { data: itemsRaw, error: itErr } = await supabase
+        .from("credit_note_items")
+        .select(
+          `
+          id,
+          credit_note_id,
+          product_id,
+          description,
+          total_qty,
+          unit_price_excl_vat,
+          unit_vat,
+          unit_price_incl_vat,
+          line_total,
+          products:product_id ( id, name, item_code, sku )
+        `
+        )
+        .eq("credit_note_id", creditNoteId)
+        .order("id", { ascending: true });
+
+      if (itErr) throw itErr;
+
+      const items = (itemsRaw || []).map((it: any) => ({
+        ...it,
+        product: it.products || null,
+      }));
+
+      // 3) Customer
+      let customer: any = null;
+      if ((cn as any).customer_id) {
+        const { data: c, error: cErr } = await supabase
+          .from("customers")
+          .select("id, name, address, phone, whatsapp, brn, vat_no, customer_code")
+          .eq("id", (cn as any).customer_id)
+          .maybeSingle();
+        if (cErr) throw cErr;
+        customer = c || null;
+      }
+
+      return { ok: true, credit_note: cn, customer, items };
+    },
+    staleTime: 15_000,
+  });
+
+  // Internal: require auth
+  if (!isPublicMode) {
+    if (!authChecked) return <div style={{ padding: 24, fontFamily: "Inter, Arial, sans-serif" }}>Loading…</div>;
+    if (!isLoggedIn) return <Navigate to="/auth" replace />;
+  }
+
+  const loading = cnQ.isLoading;
+  const payload = cnQ.data as any;
+  const cn = payload?.credit_note;
+  const items = payload?.items || [];
+  const customer = payload?.customer || null;
 
   const st = useMemo(() => cnStatus(cn?.status), [cn?.status]);
   const tone = useMemo(() => statusTone(st), [st]);
 
-  // =====================
-  // Token guard (FIXED UX)
-  // =====================
-  if (!publicToken) {
-    if (!authChecked) return <div style={{ padding: 24, fontFamily: "Inter, Arial, sans-serif" }}>Loading…</div>;
-
-    // If not logged in, send to auth (same as your other pages)
-    if (!isLoggedIn) return <Navigate to="/auth" replace />;
-
-    // Logged in but no token: give the correct shared link pattern
-    const example = `/credit-notes/${id || "9"}/print?t=...`;
-    return (
-      <div style={{ padding: 24, fontFamily: "Inter, Arial, sans-serif" }}>
-        <div
-          style={{
-            maxWidth: 760,
-            border: "1px solid #e2e8f0",
-            borderRadius: 16,
-            padding: 18,
-            background: "#fff",
-            color: "#0f172a",
-          }}
-        >
-          <div style={{ fontWeight: 800, fontSize: 16 }}>This print link requires a public token.</div>
-          <div style={{ marginTop: 8, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
-            Use a shared link like: <b>{example}</b>
-          </div>
-
-          <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              onClick={() => nav("/credit-notes")}
-              style={{
-                border: "1px solid #e2e8f0",
-                background: "#fff",
-                borderRadius: 12,
-                padding: "10px 12px",
-                cursor: "pointer",
-                fontWeight: 700,
-              }}
-            >
-              Back to Credit Notes
-            </button>
-            <button
-              onClick={() => nav("/dashboard")}
-              style={{
-                border: "1px solid #e2e8f0",
-                background: "#fff",
-                borderRadius: 12,
-                padding: "10px 12px",
-                cursor: "pointer",
-                fontWeight: 700,
-              }}
-            >
-              Dashboard
-            </button>
-          </div>
-
-          <div style={{ marginTop: 14, fontSize: 12, color: "#64748b" }}>
-            Tip: your “Share” button should generate the <b>t</b> parameter and open this route.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // =====================
-  // Load (public endpoint)
-  // =====================
-  async function load() {
-    setLoading(true);
-    setErr(null);
-
-    try {
-      const raw = String(id || "").trim();
-      if (!raw) throw new Error("Missing credit note id");
-
-      const cnId = Number(raw);
-      if (!Number.isFinite(cnId) || cnId <= 0) throw new Error("Invalid credit note id");
-
-      // ✅ public endpoint (server checks token)
-      const res = await fetch(`/api/public/credit-note-print?id=${cnId}&t=${encodeURIComponent(publicToken)}`);
-      const json = await safeJson(res);
-
-      if (!json?.ok) throw new Error(json?.error || "Failed to load");
-
-      setCn(json.credit_note);
-      setItems(json.items || []);
-      setCustomer(json.customer || json.credit_note?.customers || null);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to load credit note");
-      setCn(null);
-      setItems([]);
-      setCustomer(null);
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  // Auto-print ONLY for public mode (shared link)
   useEffect(() => {
-    void load();
+    if (loading) return;
+    if (!cn) return;
+    if (!isPublicMode) return;
+    safePrintOnce();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, publicToken]);
-
-  // ✅ do NOT block printing forever on logo; fallback timer
-  useEffect(() => {
-    if (logoReady) return;
-    const t = window.setTimeout(() => setLogoReady(true), 650);
-    return () => window.clearTimeout(t);
-  }, [logoReady]);
-
-  // ✅ Auto-print once ready (portrait)
-  useEffect(() => {
-    if (printedRef.current) return;
-    if (loading || err || !cn) return;
-    if (!logoReady) return;
-
-    const raf1 = requestAnimationFrame(() => {
-      const raf2 = requestAnimationFrame(() => {
-        try {
-          window.focus();
-          window.print();
-          printedRef.current = true;
-          window.setTimeout(() => setShowManualPrint(true), 650);
-        } catch {
-          setShowManualPrint(true);
-        }
-      });
-      return () => cancelAnimationFrame(raf2);
-    });
-
-    return () => cancelAnimationFrame(raf1);
-  }, [loading, err, cn, logoReady]);
+  }, [loading, cn?.id, isPublicMode]);
 
   if (loading) return <div style={{ padding: 24, fontFamily: "Inter, Arial, sans-serif" }}>Loading credit note…</div>;
-  if (err || !cn)
+
+  if (cnQ.isError || !cn) {
     return (
       <div style={{ padding: 24, fontFamily: "Inter, Arial, sans-serif", color: "#b91c1c" }}>
-        {err || "Not found"}
-        <div style={{ marginTop: 10, color: "#475569", fontSize: 12 }}>Tip: check the ID in the URL + your token.</div>
+        Credit note not found / invalid link.
+        {isPublicMode ? (
+          <div style={{ marginTop: 10, color: "#475569", fontSize: 12 }}>
+            Public links must include a valid token (<b>?t=...</b>)
+          </div>
+        ) : (
+          <div style={{ marginTop: 10, color: "#475569", fontSize: 12 }}>
+            Please check the ID and your access.
+          </div>
+        )}
       </div>
     );
+  }
 
   const cnNo = cn.credit_note_number || `#${cn.id}`;
 
@@ -250,9 +286,6 @@ export default function CreditNotePrint() {
       <style>{`
         /* ===============================
            PREMIUM PRINT — PORTRAIT A4
-           - luxury look (ink + gold)
-           - portrait
-           - stable print margins
         =============================== */
         @page { size: A4 portrait; margin: 12mm; }
         * { box-sizing: border-box; }
@@ -279,7 +312,7 @@ export default function CreditNotePrint() {
         }
 
         .cnp-root{
-          font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans";
           color: var(--ink);
           background: var(--paper);
         }
@@ -297,19 +330,7 @@ export default function CreditNotePrint() {
           gap:10px;
           box-shadow: var(--shadow);
         }
-        .cnp-btn{
-          border: 1px solid rgba(15,23,42,.18);
-          padding: 9px 12px;
-          border-radius: 12px;
-          background: linear-gradient(180deg, #111827, #0b1220);
-          color: #fff;
-          font-weight: 800;
-          cursor: pointer;
-          letter-spacing:.2px;
-        }
-        .cnp-btn:active{ transform: translateY(1px); }
 
-        /* Paper frame */
         .sheet{
           position: relative;
           border-radius: 18px;
@@ -317,8 +338,6 @@ export default function CreditNotePrint() {
           overflow: hidden;
           background: #fff;
         }
-
-        /* Luxury border (gold hairlines) */
         .sheet::before{
           content:"";
           position:absolute;
@@ -377,14 +396,8 @@ export default function CreditNotePrint() {
           gap: 10px;
         }
 
-        .company{
-          line-height:1.15;
-        }
-        .company .name{
-          font-size: 18px;
-          font-weight: 900;
-          letter-spacing: .3px;
-        }
+        .company{ line-height:1.15; }
+        .company .name{ font-size: 18px; font-weight: 900; letter-spacing: .3px; }
         .company .sub{
           margin-top: 3px;
           font-size: 11px;
@@ -392,9 +405,7 @@ export default function CreditNotePrint() {
           line-height: 1.35;
         }
 
-        .docBadge{
-          text-align:right;
-        }
+        .docBadge{ text-align:right; }
         .docBadge .title{
           display:inline-flex;
           align-items:center;
@@ -416,7 +427,6 @@ export default function CreditNotePrint() {
           line-height: 1.3;
         }
 
-        /* Status pill */
         .status{
           margin-top: 2px;
           display:inline-flex;
@@ -444,7 +454,6 @@ export default function CreditNotePrint() {
           margin: 10px 0 0;
         }
 
-        /* Blocks row */
         .row2{
           display:grid;
           grid-template-columns: 1fr 1fr;
@@ -502,7 +511,6 @@ export default function CreditNotePrint() {
         .k{ color: var(--muted); font-weight: 800; }
         .v{ font-weight: 700; }
 
-        /* Items table */
         .tblWrap{
           margin-top: 14px;
           border-radius: var(--radius);
@@ -510,11 +518,7 @@ export default function CreditNotePrint() {
           overflow:hidden;
           background: #fff;
         }
-        table{
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 11px;
-        }
+        table{ width: 100%; border-collapse: collapse; font-size: 11px; }
         thead th{
           background: linear-gradient(180deg, rgba(201,161,74,.26), rgba(201,161,74,.08));
           color: var(--ink);
@@ -538,7 +542,6 @@ export default function CreditNotePrint() {
         .desc{ font-weight: 850; }
         .mut{ color: var(--muted); font-weight: 650; font-size: 10px; margin-top: 2px; }
 
-        /* Bottom zone */
         .bottom{
           display:grid;
           grid-template-columns: 1.3fr .7fr;
@@ -599,7 +602,6 @@ export default function CreditNotePrint() {
         .grand .lab{ font-weight: 950; letter-spacing:.3px; }
         .grand .val{ font-size: 16px; font-weight: 1000; }
 
-        /* Signatures */
         .sign{
           display:grid;
           grid-template-columns: 1fr 1fr 1fr;
@@ -633,40 +635,50 @@ export default function CreditNotePrint() {
           gap:10px;
           align-items:flex-end;
         }
-        .foot .gold{
-          color: #9a7b2e;
-          font-weight: 850;
-        }
+        .foot .gold{ color: #9a7b2e; font-weight: 850; }
 
         @media print{
           .cnp-printBar{ display:none !important; }
-          /* Ensure no heavy shadows on printer */
           .sheet{ box-shadow: none !important; }
         }
       `}</style>
 
-      {showManualPrint ? (
-        <div className="cnp-printBar">
-          <div style={{ fontSize: 12, color: "#475569" }}>
-            <b>Save PDF:</b> Click <b>Print</b> → choose <b>Save as PDF</b>.
-          </div>
-          <button className="cnp-btn" onClick={() => window.print()}>
-            Print / Save PDF
-          </button>
+      {/* Toolbar (screen only) */}
+      <div className="cnp-printBar">
+        <div style={{ fontSize: 12, color: "#475569" }}>
+          {isPublicMode ? (
+            <>
+              <b>Shared link:</b> you can <b>Print</b> → <b>Save as PDF</b>.
+            </>
+          ) : (
+            <>
+              <b>Internal print:</b> click <b>Print</b> → <b>Save as PDF</b>.
+            </>
+          )}
         </div>
-      ) : null}
 
-      <div className="sheet">
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (isPublicMode) nav("/auth");
+              else nav(-1);
+            }}
+          >
+            {isPublicMode ? "Close" : "Back"}
+          </Button>
+
+          <Button onClick={() => safePrintOnce()} disabled={printPreparing}>
+            {printPreparing ? "Preparing…" : "Print / Save PDF"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="sheet" ref={printRootRef}>
         <div className="pad">
           <div className="hdr">
             <div className="brand">
-              <img
-                src={LOGO_SRC}
-                alt="Company Logo"
-                className="logo"
-                onLoad={() => setLogoReady(true)}
-                onError={() => setLogoReady(true)}
-              />
+              <img src={LOGO_SRC} alt="Company Logo" className="logo" />
             </div>
 
             <div className="hdrRight">
@@ -784,7 +796,7 @@ export default function CreditNotePrint() {
               </thead>
 
               <tbody>
-                {items.map((it, idx) => {
+                {items.map((it: any, idx: number) => {
                   const p = it.product || it.products || null;
                   const code = p?.item_code || p?.sku || "—";
                   const desc = it.description || p?.name || `#${it.id}`;
@@ -794,7 +806,9 @@ export default function CreditNotePrint() {
                       <td className="c">{idx + 1}</td>
                       <td>
                         <div className="desc">{desc}</div>
-                        {p?.item_code || p?.sku ? <div className="mut">{p?.item_code ? `Item: ${p.item_code}` : `SKU: ${p.sku}`}</div> : null}
+                        {p?.item_code || p?.sku ? (
+                          <div className="mut">{p?.item_code ? `Item: ${p.item_code}` : `SKU: ${p.sku}`}</div>
+                        ) : null}
                       </td>
                       <td className="c">{code}</td>
                       <td className="r">{n(it.total_qty).toFixed(2)}</td>
@@ -876,5 +890,6 @@ export default function CreditNotePrint() {
     </div>
   );
 }
+
 
 

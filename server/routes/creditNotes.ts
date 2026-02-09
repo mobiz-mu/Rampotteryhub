@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { supaAdmin } from "../supabaseAdmin";
+import crypto from "crypto";
+
 
 const r = Router();
 
@@ -340,5 +342,58 @@ r.post("/:id/restore", async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || "Failed to restore credit note" });
   }
 });
+
+
+/** POST /api/credit-notes/:id/public-link
+ * Creates (or returns existing) public token for printing.
+ * Returns: { ok: true, token: "uuid" }
+ */
+r.post("/:id/public-link", async (req, res) => {
+  try {
+    const supabase = supaAdmin();
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ ok: false, error: "Invalid id" });
+
+    // Ensure CN exists
+    const { data: cn, error: cnErr } = await supabase
+      .from("credit_notes")
+      .select("id, credit_note_number")
+      .eq("id", id)
+      .single();
+
+    if (cnErr || !cn) return res.status(404).json({ ok: false, error: "Credit note not found" });
+
+    // If there is already an ACTIVE token, reuse it
+    const { data: existing, error: exErr } = await supabase
+      .from("credit_note_public_links")
+      .select("token")
+      .eq("credit_note_id", id)
+      .is("revoked_at", null)
+      .order("id", { ascending: false })
+      .limit(1);
+
+    if (exErr) throw exErr;
+
+    const token = existing?.[0]?.token;
+    if (token) {
+      return res.json({ ok: true, token });
+    }
+
+    // Create new token
+    const newToken = crypto.randomUUID();
+
+    const { error: insErr } = await supabase.from("credit_note_public_links").insert({
+      credit_note_id: id,
+      token: newToken,
+    });
+
+    if (insErr) throw insErr;
+
+    return res.json({ ok: true, token: newToken });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, error: e?.message || "Failed to create public link" });
+  }
+});
+
 
 export default r;

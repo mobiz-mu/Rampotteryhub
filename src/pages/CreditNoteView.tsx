@@ -31,6 +31,8 @@ import {
   FileText,
   BadgeCheck,
   AlertTriangle,
+  Link as LinkIcon,
+  Copy,
 } from "lucide-react";
 
 /* =========================
@@ -218,9 +220,51 @@ export default function CreditNoteView() {
     }
   }
 
+  /** ✅ INTERNAL print (no token) */
   function onPrint() {
     if (!cn?.id) return;
     window.open(`/credit-notes/${cn.id}/print`, "_blank", "noopener,noreferrer");
+  }
+
+  /**
+   * ✅ PUBLIC share link:
+   * calls backend to get/create token, then opens:
+   * /credit-notes/:id/print?t=TOKEN
+   *
+   * If your endpoint name differs, change the rpFetch URL below.
+   */
+  async function onSharePrint() {
+    if (!cn?.id) return;
+
+    try {
+      setActionBusy(true);
+
+      // ✅ CHANGE THIS URL ONLY if your server uses a different route:
+      const res = await rpFetch(`/api/credit-notes/${cn.id}/public-link`, { method: "POST" });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) throw new Error(json?.error || "Failed to generate share link");
+
+      const token = String(json?.token || "").trim();
+      if (!token) throw new Error("Token missing from server response");
+
+      const origin = window.location.origin || "https://rampotteryhub.com";
+      const url = `${origin}/credit-notes/${cn.id}/print?t=${encodeURIComponent(token)}`;
+
+      // copy + open
+      try {
+        await navigator.clipboard.writeText(url);
+        toast("Public link copied", { description: "Link copied to clipboard and opened in a new tab." });
+      } catch {
+        toast("Public link generated", { description: "Opened in a new tab." });
+      }
+
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      toast("Share failed", { description: e?.message || "Error" });
+    } finally {
+      setActionBusy(false);
+    }
   }
 
   // ===== returns after hooks =====
@@ -289,9 +333,7 @@ export default function CreditNoteView() {
                 Credit Note <span className="text-slate-900">{cn.credit_note_number || `#${cn.id}`}</span>
               </div>
               <span
-                className={
-                  "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)
-                }
+                className={"inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)}
               >
                 {st}
               </span>
@@ -328,10 +370,15 @@ export default function CreditNoteView() {
               </button>
             </DropdownMenuTrigger>
 
-            <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuContent align="end" className="w-60">
               <DropdownMenuItem onClick={onPrint}>
                 <Printer className="mr-2 h-4 w-4" />
-                Print
+                Print (internal)
+              </DropdownMenuItem>
+
+              <DropdownMenuItem onClick={onSharePrint}>
+                <LinkIcon className="mr-2 h-4 w-4" />
+                Share public print link
               </DropdownMenuItem>
 
               <DropdownMenuSeparator />
@@ -377,7 +424,11 @@ export default function CreditNoteView() {
           <div className="mt-2 text-xs text-slate-500 space-y-1">
             {customer?.phone ? <div>{customer.phone}</div> : null}
             {customer?.email ? <div>{customer.email}</div> : null}
-            {customer?.address ? <div className="truncate" title={customer.address}>{customer.address}</div> : null}
+            {customer?.address ? (
+              <div className="truncate" title={customer.address}>
+                {customer.address}
+              </div>
+            ) : null}
           </div>
         </Card>
 
@@ -390,11 +441,7 @@ export default function CreditNoteView() {
           </div>
 
           <div className="mt-2">
-            <span
-              className={
-                "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)
-              }
-            >
+            <span className={"inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)}>
               {st}
             </span>
           </div>

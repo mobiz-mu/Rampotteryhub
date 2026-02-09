@@ -1,6 +1,6 @@
 // src/pages/InvoiceView.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { round2 } from "@/lib/invoiceTotals";
 import type { Invoice } from "@/types/invoice";
 import type { Product } from "@/types/product";
 
-/** ✅ your domain (same idea as Invoices.tsx) */
+/** ✅ fallback domain */
 const APP_ORIGIN = "https://rampotteryhub.com";
 
 /* =========================
@@ -51,7 +51,6 @@ function fmtQty(uom: string, v: any) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(x));
 }
 
-/** ✅ phone normalization (same as Invoices.tsx logic) */
 function digitsOnly(v: any) {
   return String(v ?? "").replace(/[^\d]/g, "");
 }
@@ -62,7 +61,6 @@ function normalizeMuPhone(raw: any) {
   return "";
 }
 
-/** ✅ WhatsApp text format (EXACT same structure as Invoices.tsx) */
 function buildWhatsAppInvoiceText(opts: {
   customerName?: string;
   invoiceNo: string;
@@ -91,6 +89,45 @@ function openWhatsApp(to: string, text: string) {
   window.open(`https://wa.me/${to}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
 }
 
+function originNow() {
+  if (typeof window !== "undefined") return window.location.origin;
+  return APP_ORIGIN;
+}
+
+async function postJson(url: string, body?: any) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : "{}",
+  });
+
+  const text = await res.text();
+  let json: any = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {}
+
+  if (!res.ok || !json?.ok) throw new Error(json?.error || "Request failed");
+  return json;
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  }
+}
+
 /* simple debounce */
 function useDebouncedValue<T>(value: T, delay = 250) {
   const [debounced, setDebounced] = useState(value);
@@ -104,8 +141,7 @@ function useDebouncedValue<T>(value: T, delay = 250) {
 /**
  * OPTION A (Totals-level manual discount)
  * - DOES NOT modify invoice_items
- * - Discount is applied when user clicks "Apply Discount"
- * - Works with mixed VAT lines (0% and 15%) by discounting each line base proportionally
+ * - Mixed VAT lines supported by discounting base proportionally
  */
 function computeTotalsWithManualDiscount(params: {
   items: any[];
@@ -157,11 +193,9 @@ function computeTotalsWithManualDiscount(params: {
 
 /* =========================
    Premium tiny UI atoms
-   ✅ fixed visibility: uses foreground tokens (not text-white)
 ========================= */
 function Pill(props: { children: React.ReactNode; tone?: "default" | "good" | "warn" | "bad" }) {
   const tone = props.tone || "default";
-
   const cls =
     tone === "good"
       ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/20"
@@ -206,16 +240,17 @@ export default function InvoiceView() {
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
-  // qty + uom for add
   const [addUom, setAddUom] = useState<"BOX" | "PCS" | "KG">("BOX");
   const [qtyValue, setQtyValue] = useState<string>("0");
-  const [unitsPerBoxOverride, setUnitsPerBoxOverride] = useState<string>(""); // optional for BOX
+  const [unitsPerBoxOverride, setUnitsPerBoxOverride] = useState<string>("");
 
-  // local editable header fields (avoid API spam)
   const [hdrInvoiceDate, setHdrInvoiceDate] = useState("");
   const [hdrDueDate, setHdrDueDate] = useState("");
   const [hdrVatPercent, setHdrVatPercent] = useState<string>("15");
   const [hdrDiscountPercent, setHdrDiscountPercent] = useState<string>("0");
+
+  const [shareToken, setShareToken] = useState<string>("");
+  const [shareLoading, setShareLoading] = useState(false);
 
   /* =========================
      LOAD DATA
@@ -234,23 +269,26 @@ export default function InvoiceView() {
     staleTime: 10_000,
   });
 
-  const customersQ = useQuery({
-    queryKey: ["customers", "all-lite"],
-    queryFn: () => listCustomers({ activeOnly: false, limit: 3000 }),
-    enabled: !!invoiceQ.data?.customer_id,
-    staleTime: 60_000,
-  });
-
   const inv = invoiceQ.data as any;
   const items = itemsQ.data || [];
 
-  // hydrate local header state when invoice loads
+  const customersQ = useQuery({
+    queryKey: ["customers", "all-lite"],
+    queryFn: () => listCustomers({ activeOnly: false, limit: 3000 }),
+    enabled: !!inv?.customer_id,
+    staleTime: 60_000,
+  });
+
+  // hydrate local header state when invoice loads (ONE effect only)
   useEffect(() => {
     if (!inv) return;
     setHdrInvoiceDate(String(inv.invoice_date || ""));
     setHdrDueDate(String(inv.due_date || ""));
     setHdrVatPercent(String(inv.vat_percent ?? 15));
     setHdrDiscountPercent(String(inv.discount_percent ?? 0));
+
+    // If you store token on invoice row, keep it (optional)
+    setShareToken(String(inv.public_token || ""));
   }, [inv?.id]);
 
   // products query (debounced)
@@ -267,10 +305,16 @@ export default function InvoiceView() {
   }, [customersQ.data, inv?.customer_id, inv]);
 
   /* =========================
-     WhatsApp share
-     ✅ FIXED: same message format as Invoices.tsx
-     ✅ FIXED: send to CUSTOMER phone (not company WA_PHONE)
+     Share URL + WhatsApp message
   ========================= */
+  const publicPrintUrl = useMemo(() => {
+    if (!inv) return "";
+    const base = originNow();
+    return shareToken
+      ? `${base}/invoices/${inv.id}/print?t=${encodeURIComponent(shareToken)}`
+      : `${base}/invoices/${inv.id}/print`;
+  }, [inv?.id, shareToken]);
+
   const waTo = useMemo(() => {
     const c: any = customer || {};
     return normalizeMuPhone(c.whatsapp || c.phone || inv?.customer_whatsapp || inv?.customer_phone);
@@ -278,13 +322,10 @@ export default function InvoiceView() {
 
   const waMsg = useMemo(() => {
     if (!inv) return "";
-
     const invNo = inv.invoice_number || `#${inv.id}`;
     const gross = n2(inv.gross_total ?? inv.total_amount);
     const paid = n2(inv.amount_paid);
-    const due = Math.max(0, n2(inv.balance_remaining ?? (gross - paid))); // ✅ nullish (not ||)
-
-    const pdfUrl = `${APP_ORIGIN}/invoices/${inv.id}/print`;
+    const due = Math.max(0, n2(inv.balance_remaining ?? (gross - paid)));
 
     return buildWhatsAppInvoiceText({
       customerName: (customer as any)?.name || inv.customer_name,
@@ -292,16 +333,54 @@ export default function InvoiceView() {
       invoiceAmount: gross,
       amountPaid: paid,
       amountDue: due,
-      pdfUrl,
+      pdfUrl: publicPrintUrl,
     });
-  }, [customer, inv]);
+  }, [customer, inv, publicPrintUrl]);
 
   function onSendWhatsApp() {
     if (!waTo) {
       toast.error("No WhatsApp/phone number found for this customer.");
       return;
     }
+    if (!shareToken) {
+      toast.error("Generate share link first.");
+      return;
+    }
     openWhatsApp(waTo, waMsg);
+  }
+
+  async function onGenerateShareLink() {
+    if (!inv) return;
+    setShareLoading(true);
+    try {
+      const json = await postJson(`/api/invoices/${inv.id}/public-link`, { expiresDays: 0 });
+      setShareToken(String(json.token || ""));
+      toast.success(json.reused ? "Share link loaded" : "Share link generated");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to generate share link");
+    } finally {
+      setShareLoading(false);
+    }
+  }
+
+  async function onCopyShareLink() {
+    if (!publicPrintUrl) return;
+    const ok = await copyToClipboard(publicPrintUrl);
+    ok ? toast.success("Link copied") : toast.error("Copy failed");
+  }
+
+  async function onRevokeShareLink() {
+    if (!inv) return;
+    setShareLoading(true);
+    try {
+      await postJson(`/api/invoices/${inv.id}/public-link/revoke`);
+      setShareToken("");
+      toast.success("Share link revoked");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to revoke link");
+    } finally {
+      setShareLoading(false);
+    }
   }
 
   /* =========================
@@ -421,7 +500,8 @@ export default function InvoiceView() {
       const vatRate = clampPct(hdrVatPercent);
       const uom = addUom;
 
-      const qty = uom === "KG" ? Math.max(0, roundKg(qtyValue)) : Math.max(0, Math.trunc(n2(qtyValue)));
+      const qty =
+        uom === "KG" ? Math.max(0, roundKg(qtyValue)) : Math.max(0, Math.trunc(n2(qtyValue)));
       if (qty <= 0) throw new Error("Quantity must be greater than 0");
 
       const baseEx = n2((selectedProduct as any).selling_price); // EXCL VAT
@@ -479,10 +559,8 @@ export default function InvoiceView() {
   const delItemM = useMutation({
     mutationFn: async (itemId: number) => {
       if (!inv) throw new Error("Invoice not loaded");
-
       await deleteInvoiceItem(itemId);
       await qc.invalidateQueries({ queryKey: ["invoice_items", invoiceId] });
-
       await recalcBaseTotalsM.mutateAsync();
       await qc.invalidateQueries({ queryKey: ["invoice", invoiceId] });
     },
@@ -493,10 +571,7 @@ export default function InvoiceView() {
   /* =========================
      DERIVED
   ========================= */
-  const isLoading =
-    invoiceQ.isLoading ||
-    itemsQ.isLoading ||
-    (customersQ.isLoading && !!invoiceQ.data?.customer_id);
+  const isLoading = invoiceQ.isLoading || itemsQ.isLoading || (customersQ.isLoading && !!inv?.customer_id);
 
   const productsList = productsQ.data || [];
   const hasProductsSearch = debouncedProductSearch.trim().length > 0;
@@ -521,6 +596,7 @@ export default function InvoiceView() {
   /* =========================
      RENDER
   ========================= */
+  if (!isValidId(invoiceId)) return <Navigate to="/invoices" replace />;
   if (isLoading) return <div className="text-sm text-muted-foreground">Loading invoice…</div>;
   if (!inv) return <div className="text-sm text-destructive">Invoice not found</div>;
 
@@ -530,9 +606,7 @@ export default function InvoiceView() {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-2xl font-semibold truncate text-foreground">
-              Invoice {inv.invoice_number}
-            </div>
+            <div className="text-2xl font-semibold truncate text-foreground">Invoice {inv.invoice_number}</div>
             <Pill tone={statusTone as any}>Status: {String(inv.status || "—")}</Pill>
             <Pill>Customer: {(customer as any)?.name || `#${inv.customer_id}`}</Pill>
           </div>
@@ -550,14 +624,38 @@ export default function InvoiceView() {
             Print
           </Button>
 
-          {/* ✅ FIXED WhatsApp button (same format + sends to customer) */}
+          <Button
+            variant="outline"
+            onClick={onGenerateShareLink}
+            disabled={shareLoading}
+            title="Creates a public token for sharing"
+          >
+            {shareLoading ? "Working..." : shareToken ? "Refresh Share Link" : "Generate Share Link"}
+          </Button>
+
+          <Button variant="outline" onClick={onCopyShareLink} disabled={!shareToken}>
+            Copy Link
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => window.open(publicPrintUrl, "_blank", "noopener,noreferrer")}
+            disabled={!shareToken}
+          >
+            Open Public Print
+          </Button>
+
           <Button
             onClick={onSendWhatsApp}
-            disabled={!waTo}
+            disabled={!waTo || !shareToken}
             className="gradient-primary text-primary-foreground shadow-glow"
-            title={!waTo ? "No WhatsApp/phone for this customer" : "Send invoice details to WhatsApp"}
+            title={!shareToken ? "Generate share link first" : !waTo ? "No WhatsApp/phone found" : "Send invoice link"}
           >
             Send via WhatsApp
+          </Button>
+
+          <Button variant="outline" onClick={onRevokeShareLink} disabled={!shareToken || shareLoading}>
+            Revoke Link
           </Button>
         </div>
       </div>
@@ -566,7 +664,11 @@ export default function InvoiceView() {
       <div className="grid gap-3 md:grid-cols-5">
         <StatCard label="Subtotal" value={rs(inv.subtotal)} />
         <StatCard label="VAT" value={rs(inv.vat_amount)} hint={`VAT %: ${money(inv.vat_percent ?? hdrVatPercent)}`} />
-        <StatCard label="Discount" value={rs(inv.discount_amount)} hint={`Discount %: ${money(inv.discount_percent ?? hdrDiscountPercent)}`} />
+        <StatCard
+          label="Discount"
+          value={rs(inv.discount_amount)}
+          hint={`Discount %: ${money(inv.discount_percent ?? hdrDiscountPercent)}`}
+        />
         <StatCard label="Gross" value={rs(inv.gross_total)} />
         <StatCard label="Balance" value={rs(inv.balance_remaining)} emphasize />
       </div>
@@ -582,15 +684,29 @@ export default function InvoiceView() {
           </div>
 
           <div className="flex gap-2">
-            <Button onClick={() => saveHeaderM.mutate()} disabled={saveHeaderM.isPending} className="gradient-primary text-primary-foreground shadow-glow">
+            <Button
+              onClick={() => saveHeaderM.mutate()}
+              disabled={saveHeaderM.isPending}
+              className="gradient-primary text-primary-foreground shadow-glow"
+            >
               {saveHeaderM.isPending ? "Saving..." : "Save Header"}
             </Button>
 
-            <Button variant="outline" onClick={() => applyDiscountM.mutate()} disabled={applyDiscountM.isPending} title="Manual: apply discount to totals only">
+            <Button
+              variant="outline"
+              onClick={() => applyDiscountM.mutate()}
+              disabled={applyDiscountM.isPending}
+              title="Manual: apply discount to totals only"
+            >
               {applyDiscountM.isPending ? "Applying..." : "Apply Discount"}
             </Button>
 
-            <Button variant="outline" onClick={() => recalcBaseTotalsM.mutate()} disabled={recalcBaseTotalsM.isPending} title="Recalculate base totals from items">
+            <Button
+              variant="outline"
+              onClick={() => recalcBaseTotalsM.mutate()}
+              disabled={recalcBaseTotalsM.isPending}
+              title="Recalculate base totals from items"
+            >
               {recalcBaseTotalsM.isPending ? "Recalculating..." : "Recalculate Totals"}
             </Button>
           </div>
@@ -623,16 +739,12 @@ export default function InvoiceView() {
         </div>
       </Card>
 
-      {/* ADD ITEM
-          ✅ Updated to visually match the Items section style (same “row” feel + pills)
-      */}
+      {/* ADD ITEM */}
       <Card className="p-4 md:p-5 shadow-premium space-y-3 rounded-2xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold text-foreground">Add Item</div>
-            <div className="text-xs text-muted-foreground">
-              Search product, choose unit (BOX / PCS / Kg), then add quantity.
-            </div>
+            <div className="text-xs text-muted-foreground">Search product, choose unit (BOX / PCS / Kg), then add quantity.</div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -677,7 +789,6 @@ export default function InvoiceView() {
           </Button>
         </div>
 
-        {/* Selected product summary — same “pills” as Items rows */}
         {selectedInfo ? (
           <div className="rounded-2xl border bg-background p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -691,7 +802,6 @@ export default function InvoiceView() {
           </div>
         ) : null}
 
-        {/* Product results — styled like Items section rows */}
         <div className="border rounded-2xl overflow-hidden">
           {!hasProductsSearch ? (
             <div className="p-4 text-sm text-muted-foreground">Start typing to search products…</div>
@@ -707,9 +817,7 @@ export default function InvoiceView() {
                   <button
                     key={p.id}
                     onClick={() => setSelectedProduct(p)}
-                    className={`w-full text-left px-4 py-4 transition ${
-                      active ? "bg-rose-50" : "hover:bg-slate-50"
-                    }`}
+                    className={`w-full text-left px-4 py-4 transition ${active ? "bg-rose-50" : "hover:bg-slate-50"}`}
                     type="button"
                   >
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -794,3 +902,4 @@ export default function InvoiceView() {
     </div>
   );
 }
+

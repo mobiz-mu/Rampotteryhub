@@ -13,7 +13,6 @@ type Party = {
 
 type DocCompany = {
   brn?: string | null;
-  vat_no?: string | null;
   addressLines?: string[] | null;
   phonesLine?: string | null;
   email?: string | null;
@@ -25,7 +24,7 @@ type DocCompany = {
 export type RamPotteryDocItem = {
   sn: number;
   item_code?: string;
-  box?: string; // "BOX" / "PCS" / "KG"
+  box?: string; // BOX / PCS
   unit_per_box?: string | number;
   total_qty?: string | number;
   description?: string;
@@ -37,7 +36,7 @@ export type RamPotteryDocItem = {
 
 type Totals = {
   subtotal?: number | null;
-  vatLabel?: string;
+  vatLabel?: string; // "VAT 15%"
   vat_amount?: number | null;
   total_amount?: number | null;
   previous_balance?: number | null;
@@ -46,21 +45,20 @@ type Totals = {
 };
 
 export type RamPotteryDocProps = {
-  docTitle?: string;
-  companyName?: string;
-
-  logoSrc?: string; // default "/logo.png"
+  docTitle?: string; // VAT INVOICE
+  companyName?: string; // RAM POTTERY LTD
+  logoSrc?: string;
 
   customer: Party;
   company: DocCompany;
 
-  docNoLabel?: string;
+  docNoLabel?: string; // INVOICE NO:
   docNoValue?: string;
 
-  dateLabel?: string;
+  dateLabel?: string; // DATE:
   dateValue?: string;
 
-  purchaseOrderLabel?: string;
+  purchaseOrderLabel?: string; // PURCHASE ORDER NO:
   purchaseOrderValue?: string;
 
   salesRepName?: string;
@@ -71,10 +69,6 @@ export type RamPotteryDocProps = {
 
   preparedBy?: string | null;
   deliveredBy?: string | null;
-
-  /** disabled by default now */
-  showFooterBar?: boolean;
-  footerBarText?: string;
 };
 
 function n2(v: any) {
@@ -82,11 +76,182 @@ function n2(v: any) {
   return Number.isFinite(x) ? x : 0;
 }
 function money(v: any) {
-  const n = n2(v);
-  return n.toLocaleString("en-MU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const x = Number(v ?? 0);
+  if (!Number.isFinite(x)) return "";
+  return x.toLocaleString("en-MU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function txt(v: any) {
   return String(v ?? "").trim();
+}
+
+function TableHeader() {
+  return (
+    <thead>
+      <tr>
+        <th>SN</th>
+        <th>
+          ITEM
+          <br />
+          CODE
+        </th>
+        <th>BOX</th>
+        <th>
+          UNIT
+          <br />
+          PER
+          <br />
+          BOX
+        </th>
+        <th>
+          TOTAL
+          <br />
+          QTY
+        </th>
+        <th>DESCRIPTION</th>
+        <th>
+          UNIT
+          <br />
+          PRICE
+          <br />
+          (EXCL
+          <br />
+          VAT)
+        </th>
+        <th>VAT</th>
+        <th>
+          UNIT
+          <br />
+          PRICE
+          <br />
+          (INCL
+          <br />
+          VAT)
+        </th>
+        <th>
+          TOTAL
+          <br />
+          AMOUNT
+          <br />
+          (INCL VAT)
+        </th>
+      </tr>
+    </thead>
+  );
+}
+
+function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
+  return (
+    <table className="rpdoc-table">
+      <colgroup>
+        <col style={{ width: "5.2%" }} />
+        <col style={{ width: "8.5%" }} />
+        <col style={{ width: "6.5%" }} />
+        <col style={{ width: "9.0%" }} />
+        <col style={{ width: "8.5%" }} />
+        <col style={{ width: "23.0%" }} />
+        <col style={{ width: "9.2%" }} />
+        <col style={{ width: "6.8%" }} />
+        <col style={{ width: "9.2%" }} />
+        <col style={{ width: "14.1%" }} />
+      </colgroup>
+
+      <TableHeader />
+
+      <tbody>
+        {(items || []).map((it, idx) => (
+          <tr key={idx}>
+            <td>{it.sn}</td>
+            <td>{txt(it.item_code)}</td>
+            <td>{txt(it.box)}</td>
+            <td>{txt(it.unit_per_box)}</td>
+            <td>{txt(it.total_qty)}</td>
+            <td className="rpdoc-desc">{txt(it.description)}</td>
+            <td>{money(it.unit_price_excl_vat)}</td>
+            <td>{money(it.unit_vat)}</td>
+            <td>{money(it.unit_price_incl_vat)}</td>
+            <td>{money(it.line_total)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function NotesTotals({ totals, balanceRemaining }: { totals: Totals; balanceRemaining: number }) {
+  return (
+    <div className="rpdoc-footerGrid">
+      <div className="rpdoc-notesBox">
+        <div className="rpdoc-notesTitle">Note:</div>
+        <ul>
+          <li>Goods once sold cannot be returned or exchanged.</li>
+          <li>For any manufacturing defects, this invoice must be produced for refund or exchange.</li>
+          <li>Customer must verify that quantity conforms with invoice, not responsible after delivery.</li>
+          <li>Interest of 1% above bank rate will be charged if not settled within 30 days.</li>
+          <li>
+            All cheques to be issued on <span className="rpdoc-redStrong">RAM POTTERY LTD.</span>
+          </li>
+          <li>
+            Bank transfer to <span className="rpdoc-redStrong">000 44 570 46 59</span> MCB Bank
+          </li>
+        </ul>
+      </div>
+
+      <div className="rpdoc-totalsBox">
+        <div className="rpdoc-totalRow">
+          <span>SUB TOTAL</span>
+          <span>{money(totals?.subtotal)}</span>
+        </div>
+        <div className="rpdoc-totalRow">
+          <span>{txt(totals?.vatLabel) || "VAT 15%"}</span>
+          <span>{money(totals?.vat_amount)}</span>
+        </div>
+        <div className="rpdoc-totalRow rpdoc-totalRowBig">
+          <span>TOTAL AMOUNT</span>
+          <span>{money(totals?.total_amount)}</span>
+        </div>
+        <div className="rpdoc-totalRow">
+          <span>PREVIOUS BALANCE</span>
+          <span>{money(totals?.previous_balance)}</span>
+        </div>
+        <div className="rpdoc-totalRow">
+          <span>GROSS TOTAL</span>
+          <span>{money(n2(totals?.total_amount) + n2(totals?.previous_balance))}</span>
+        </div>
+        <div className="rpdoc-totalRow">
+          <span>AMOUNT PAID</span>
+          <span>{money(totals?.amount_paid)}</span>
+        </div>
+        <div className="rpdoc-totalRow">
+          <span>BALANCE REMAINING</span>
+          <span>{money(balanceRemaining)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Signatures({ preparedBy, deliveredBy }: { preparedBy: string; deliveredBy: string }) {
+  return (
+    <div className="rpdoc-signatures">
+      <div className="rpdoc-sig">
+        <div className="rpdoc-sigLine" />
+        <div className="rpdoc-sigTitle">Signature</div>
+        <div className="rpdoc-sigSub">Prepared by : {preparedBy}</div>
+      </div>
+
+      <div className="rpdoc-sig">
+        <div className="rpdoc-sigLine" />
+        <div className="rpdoc-sigTitle">Signature</div>
+        <div className="rpdoc-sigSub">Delivered by : {deliveredBy}</div>
+      </div>
+
+      <div className="rpdoc-sig">
+        <div className="rpdoc-sigLine" />
+        <div className="rpdoc-sigTitle">Signature</div>
+        <div className="rpdoc-sigSub">Customer Name:.................................</div>
+      </div>
+    </div>
+  );
 }
 
 export default function RamPotteryDoc(props: RamPotteryDocProps) {
@@ -94,308 +259,190 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
     docTitle = "VAT INVOICE",
     companyName = "RAM POTTERY LTD",
     logoSrc = "/logo.png",
-
     customer,
     company,
-
-    docNoLabel = "Invoice No:",
+    docNoLabel = "INVOICE NO:",
     docNoValue = "",
-
-    dateLabel = "Date:",
+    dateLabel = "DATE:",
     dateValue = "",
-
-    purchaseOrderLabel = "Purchase Order No:",
+    purchaseOrderLabel = "PO NO.:",
     purchaseOrderValue = "",
-
     salesRepName = "",
     salesRepPhone = "",
-
     items,
     totals,
-
     preparedBy = "",
     deliveredBy = "",
-
-    // ✅ default OFF (removes thank-you red bar)
-    showFooterBar = false,
-    footerBarText = "We thank you for your purchase and look forward to being of service to you again",
   } = props;
-
-  const brn = txt(company?.brn);
-  const vatNo = txt(company?.vat_no);
 
   const addressLines = company?.addressLines?.length
     ? company.addressLines
     : ["Robert Kennedy Street, Reunion Maurel,", "Petit Raffray - Mauritius"];
 
-  const phonesLine = company?.phonesLine || "Tel: +230 57788884  +230 58060268  +230 52522844";
+  const phonesLine = company?.phonesLine || "Tel: +230 57788884 +230 58060268 +230 52522844";
   const email = company?.email || "info@rampottery.com";
   const website = company?.website || "www.rampottery.com";
 
   const taglineTop = company?.taglineTop || "MANUFACTURER & IMPORTER OF QUALITY CLAY";
   const taglineBottom = company?.taglineBottom || "PRODUCTS AND OTHER RELIGIOUS ITEMS";
 
-  const computedBalance = useMemo(() => {
+  const docItems = useMemo(() => (items || []).map((x, i) => ({ ...x, sn: x?.sn ?? i + 1 })), [items]);
+
+  const balanceRemaining = useMemo(() => {
     const gross = n2(totals?.total_amount) + n2(totals?.previous_balance);
-    return Math.max(0, gross - n2(totals?.amount_paid));
-  }, [totals?.total_amount, totals?.previous_balance, totals?.amount_paid]);
+    return Number.isFinite(Number(totals?.balance_remaining))
+      ? n2(totals?.balance_remaining)
+      : Math.max(0, gross - n2(totals?.amount_paid));
+  }, [totals?.total_amount, totals?.previous_balance, totals?.amount_paid, totals?.balance_remaining]);
 
-  const balanceRemaining =
-    totals?.balance_remaining === null || totals?.balance_remaining === undefined
-      ? computedBalance
-      : n2(totals.balance_remaining);
+  const splitFooterToSecondPage = docItems.length >= 7;
+  const totalPages = splitFooterToSecondPage ? 2 : 1;
 
-  return (
-    // ✅ A4 wrapper: centers + prevents overflow in print/pdf
-    <div className="rpdoc-a4">
-      <div className="rpdoc-shell">
-        <div className="invoice-container">
-          {/* HEADER (logo left, content centered) */}
-          <div className="header">
-            <div className="rpdoc-headerGrid">
-              <div className="rpdoc-headerLeft">
-                <img className="rpdoc-logoBig" src={logoSrc} alt="Ram Pottery Logo" />
-              </div>
+  const HeaderBlock = (
+    <div className="rpdoc-header">
+      <div className="rpdoc-headerGrid">
+        <div className="rpdoc-logoCol">
+          <img className="rpdoc-logoImg" src={logoSrc} alt="Ram Pottery" draggable={false} />
+        </div>
 
-              <div className="rpdoc-headerCenter">
-                <div className="company-name">{companyName}</div>
+        <div className="rpdoc-headerCenter">
+          <div className="rpdoc-companyName">{companyName}</div>
 
-                <div className="company-details">
-                  <div className="tagline">{taglineTop}</div>
-                  <div className="tagline">{taglineBottom}</div>
-                  <br />
-                  {addressLines.map((l, idx) => (
-                    <React.Fragment key={idx}>
-                      {l}
-                      <br />
-                    </React.Fragment>
-                  ))}
-                  
-                  {phonesLine}
-                  
-                  <div className="rpdoc-contact-line">
-                  <span className="label-red">Email:</span> {email}
-                  <span className="sep">•</span>
-                  <span className="label-red">Web:</span> {website}
-                </div>
-               </div>
-                <div className="vat-invoice">{docTitle}</div>
-              </div>
+          <div className="rpdoc-taglines">
+            <div>{taglineTop}</div>
+            <div>{taglineBottom}</div>
+          </div>
 
-              <div className="rpdoc-headerRight" />
+          <div className="rpdoc-address">
+            {addressLines.map((l, idx) => (
+              <div key={idx}>{l}</div>
+            ))}
+          </div>
+
+          <div className="rpdoc-contact">
+            <div className="rpdoc-contactLine">
+              <span className="rpdoc-redStrong">Tel:</span> {phonesLine.replace(/^Tel:\s*/i, "")}
+            </div>
+            <div className="rpdoc-contactLine">
+              <span className="rpdoc-redStrong">Email:</span> {email}
+              <span className="rpdoc-dot">•</span>
+              <span className="rpdoc-redStrong">Web:</span> {website}
             </div>
           </div>
 
-          {/* CUSTOMER + INVOICE DETAILS */}
-          <div className="row">
-            <div className="box">
-              <div className="box-title">CUSTOMER DETAILS</div>
-              <div className="box-content rpdoc-boxContentTight">
-                <div className="rpdoc-kv">
-                  <div className="k">Name:</div>
-                  <div className="v">{txt(customer?.name)}</div>
-                </div>
+          <div className="rpdoc-title">{docTitle}</div>
+        </div>
 
-                <div className="rpdoc-kv">
-                  <div className="k">Address:</div>
-                  <div className="v">{txt(customer?.address)}</div>
-                </div>
+        <div className="rpdoc-headerSpacer" />
+      </div>
+    </div>
+  );
 
-                <div className="rpdoc-kv">
-                  <div className="k">Tel:</div>
-                  <div className="v">{txt(customer?.phone)}</div>
-                </div>
+  const BoxesBlock = (
+    <div className="rpdoc-boxes">
+      <div className="rpdoc-box">
+        <div className="rpdoc-boxHead">CUSTOMER DETAILS</div>
+        <div className="rpdoc-boxBody">
+          <div className="rpdoc-kv">
+            <div className="k">Name:</div>
+            <div className="v">{txt(customer?.name)}</div>
+          </div>
+          <div className="rpdoc-kv">
+            <div className="k">Address:</div>
+            <div className="v">{txt(customer?.address)}</div>
+          </div>
+          <div className="rpdoc-kv">
+            <div className="k">Tel:</div>
+            <div className="v">{txt(customer?.phone)}</div>
+          </div>
 
-                <div className="rpdoc-kv-row2">
-                  <div className="rpdoc-kv">
-                    <div className="k">BRN:</div>
-                    <div className="v">{txt(customer?.brn)}</div>
-                  </div>
-                  <div className="rpdoc-kv">
-                    <div className="k">VAT No:</div>
-                    <div className="v">{txt(customer?.vat_no)}</div>
-                  </div>
-                </div>
-
-                <div className="rpdoc-kv">
-                  <div className="k">Customer Code:</div>
-                  <div className="v">{txt(customer?.customer_code)}</div>
-                </div>
-              </div>
+          {/* BRN + VAT on one row */}
+          <div className="rpdoc-kvLine">
+            <div className="kvPair">
+              <div className="k">BRN:</div>
+              <div className="v rpdoc-nowrap">{txt(customer?.brn)}</div>
             </div>
 
-            <div className="box">
-              <div className="right-box-header">
-                BRN: {brn || "-"} | VAT: {vatNo || "-"}
-              </div>
-
-              <div className="box-content rpdoc-boxContentTight">
-                <div className="rpdoc-kv">
-                  <div className="k">{docNoLabel}</div>
-                  <div className="v">{txt(docNoValue)}</div>
-                </div>
-
-                <div className="rpdoc-kv">
-                  <div className="k">{dateLabel}</div>
-                  <div className="v">{txt(dateValue)}</div>
-                </div>
-
-                <div className="rpdoc-kv">
-                  <div className="k">{purchaseOrderLabel}</div>
-                  <div className="v">{txt(purchaseOrderValue)}</div>
-                </div>
-
-                <div className="rpdoc-kv rpdoc-sales-row">
-                 <div className="k">Sales Rep:</div>
-
-                 <div className="v rpdoc-sales-flex">
-                    <span className="rpdoc-sales-name">{txt(salesRepName)}</span>
-
-                      {salesRepPhone && (
-                    <span className="rpdoc-sales-phone">
-                      Tel: {txt(salesRepPhone)}
-                    </span>
-                  )}
-               </div>
-              </div>
-              </div>
+            <div className="kvPair">
+              <div className="k">VAT NO:</div>
+              <div className="v rpdoc-nowrap">{txt(customer?.vat_no)}</div>
             </div>
           </div>
 
-          {/* TABLE */}
-          <table className="invoice-table">
-            <thead>
-              <tr>
-                <th>SN</th>
-                <th>ITEM CODE</th>
-                <th>BOX</th>
-                <th>UNIT PER BOX</th>
-                <th>TOTAL QTY</th>
-                <th>DESCRIPTION</th>
-                <th>
-                  UNIT PRICE
-                  <br />
-                  (EXCL VAT)
-                </th>
-                <th>VAT</th>
-                <th>
-                  UNIT PRICE
-                  <br />
-                  (INCL VAT)
-                </th>
-                <th>
-                  TOTAL AMOUNT
-                  <br />
-                  (INCL VAT)
-                </th>
-              </tr>
-            </thead>
+          <div className="rpdoc-kv">
+            <div className="k">Customer Code:</div>
+            <div className="v">{txt(customer?.customer_code)}</div>
+          </div>
+        </div>
+      </div>
 
-            <tbody>
-              {(items || []).map((it, idx) => (
-                <tr key={idx}>
-                  <td>{it.sn}</td>
-                  <td>{txt(it.item_code)}</td>
-                  <td>{txt(it.box)}</td>
-                  <td>{txt(it.unit_per_box)}</td>
-                  <td>{txt(it.total_qty)}</td>
-                  <td className="desc">{txt(it.description)}</td>
-                  <td>{money(it.unit_price_excl_vat)}</td>
-                  <td>{money(it.unit_vat)}</td>
-                  <td>{money(it.unit_price_incl_vat)}</td>
-                  <td>{money(it.line_total)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {/* NOTES + TOTALS */}
-          <div className="notes-totals">
-            <div className="notes">
-              <div className="notes-title">Note:</div>
-
-              <ul>
-                <li>Goods once sold cannot be returned or exchanged.</li>
-                <li>For any manufacturing defects, this invoice must be produced for refund or exchange.</li>
-                <li>Customer must verify that quantity conforms with invoice; not responsible after delivery.</li>
-                <li>Interest of 1% above bank rate will be charged if not settled within 30 days.</li>
-                <li className="note-emphasis">All cheques to be issued on RAM POTTERY LTD.</li>
-                <li className="note-emphasis">Bank transfer to 000 44 570 46 59 MCB Bank</li>
-              </ul>
-            </div>
-
-            <div className="totals">
-              <table>
-                <tbody>
-                  <tr>
-                    <td>SUB TOTAL</td>
-                    <td>{money(totals?.subtotal)}</td>
-                  </tr>
-                  <tr>
-                    <td>{txt(totals?.vatLabel) || "VAT"}</td>
-                    <td>{money(totals?.vat_amount)}</td>
-                  </tr>
-                  <tr>
-                    <td>TOTAL AMOUNT</td>
-                    <td>{money(totals?.total_amount)}</td>
-                  </tr>
-                  <tr>
-                    <td>PREVIOUS BALANCE</td>
-                    <td>{money(totals?.previous_balance)}</td>
-                  </tr>
-                  <tr>
-                    <td>GROSS TOTAL</td>
-                    <td>{money(n2(totals?.total_amount) + n2(totals?.previous_balance))}</td>
-                  </tr>
-                  <tr>
-                    <td>AMOUNT PAID</td>
-                    <td>{money(totals?.amount_paid)}</td>
-                  </tr>
-                  <tr>
-                    <td>BALANCE REMAINING</td>
-                    <td>{money(balanceRemaining)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+      <div className="rpdoc-box">
+        <div className="rpdoc-boxHead">BRN: {txt(company?.brn) || "-"}</div>
+        <div className="rpdoc-boxBody">
+          <div className="rpdoc-kv">
+            <div className="k">{docNoLabel}</div>
+            <div className="v">{txt(docNoValue)}</div>
+          </div>
+          <div className="rpdoc-kv">
+            <div className="k">{dateLabel}</div>
+            <div className="v">{txt(dateValue)}</div>
+          </div>
+          <div className="rpdoc-kv">
+            <div className="k">{purchaseOrderLabel}</div>
+            <div className="v">{txt(purchaseOrderValue)}</div>
           </div>
 
-          {/* SIGNATURES */}
-          <div className="signatures">
-            <div className="signature-box">
-              <div className="signature-line"></div>
-              <div>
-                <b>Signature</b>
-              </div>
-              <div>Prepared by: {txt(preparedBy)}</div>
-            </div>
-
-            <div className="signature-box">
-              <div className="signature-line"></div>
-              <div>
-                <b>Signature</b>
-              </div>
-              <div>Delivered by: {txt(deliveredBy)}</div>
-            </div>
-
-            <div className="signature-box">
-              <div className="signature-line"></div>
-              <div>
-                <b>Customer Signature</b>
-              </div>
-              <div>Customer Name: __________</div>
-              <div>Please verify before sign</div>
-            </div>
+          <div className="rpdoc-kv">
+            <div className="k">Sales Rep :</div>
+            <div className="v">{txt(salesRepName)}</div>
           </div>
-
-          {/* ✅ Footer bar removed (still supported if you want later) */}
-          {showFooterBar ? <div className="footer-bar">{footerBarText}</div> : null}
-
-          {/* Page footer placeholder (InvoicePrint adds counters via CSS) */}
-          <div className="rp-page-footer" />
+          <div className="rpdoc-kv">
+            <div className="k">Tel:</div>
+            <div className="v">{txt(salesRepPhone)}</div>
+          </div>
         </div>
       </div>
     </div>
   );
+
+  const FooterBlock = (
+  <div className="rpdoc-footerRegion">
+    <NotesTotals totals={totals} balanceRemaining={balanceRemaining} />
+    <div className="rpdoc-signaturesWrap">
+      <Signatures preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+    </div>
+  </div>
+);
+
+const Page1 = (
+  <section className="rpdoc-page">
+    <div className="rpdoc-pageNumber">Page 1 / {totalPages}</div>
+
+    <div className="rpdoc-frame">
+      {HeaderBlock}
+      {BoxesBlock}
+
+      <div className="rpdoc-tableWrap">
+        <ItemsTable items={docItems} />
+      </div>
+
+      {!splitFooterToSecondPage ? FooterBlock : null}
+    </div>
+  </section>
+);
+
+const Page2 = splitFooterToSecondPage ? (
+  <section className="rpdoc-page">
+    <div className="rpdoc-pageNumber">Page 2 / {totalPages}</div>
+    <div className="rpdoc-frame">{FooterBlock}</div>
+  </section>
+) : null;
+
+return (
+  <div className="rpdoc-pages" id="rpdoc-root">
+    {Page1}
+    {Page2}
+  </div>
+);
 }
 

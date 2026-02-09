@@ -1,10 +1,11 @@
 // src/pages/InvoicePrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams, Navigate } from "react-router-dom";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import html2pdf from "html2pdf.js";
 
+import { getInvoicePrintBundle } from "@/lib/invoices";
 import RamPotteryDoc, { RamPotteryDocItem } from "@/components/print/RamPotteryDoc";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -16,8 +17,8 @@ const WA_PHONE = "2307788884";
    helpers
 ========================= */
 function isValidId(v: any) {
-  const n = Number(v);
-  return Number.isFinite(n) && n > 0;
+  const x = Number(v);
+  return Number.isFinite(x) && x > 0;
 }
 function n(v: any) {
   const x = Number(v ?? 0);
@@ -56,7 +57,7 @@ async function waitForImages(root: HTMLElement) {
   );
 }
 
-/** Safe JSON parse (prevents “Unexpected end of JSON input”) */
+/** Safe JSON parse */
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
@@ -67,9 +68,10 @@ async function safeJson(res: Response) {
   }
 }
 
-/* =========================
-   Component
-========================= */
+/** A4 px (approx) at 96dpi */
+const A4_W_PX = 794;
+const A4_H_PX = 1123;
+
 export default function InvoicePrint() {
   const { id } = useParams();
   const invoiceId = Number(id);
@@ -77,22 +79,30 @@ export default function InvoicePrint() {
 
   const [sp] = useSearchParams();
   const publicToken = (sp.get("t") || "").trim();
+  const isPublicMode = !!publicToken;
 
-  // ✅ if no token, require login
+  // auth check (only needed for internal mode)
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  // ✅ Root that contains ONLY the A4 document pages
+  const docRootRef = useRef<HTMLDivElement | null>(null);
+
+  // Prevent spamming print while preparing
+  const [printPreparing, setPrintPreparing] = useState(false);
 
   useEffect(() => {
     let alive = true;
 
     (async () => {
-      if (publicToken) {
+      if (isPublicMode) {
         if (alive) {
           setIsLoggedIn(false);
           setAuthChecked(true);
         }
         return;
       }
+
       const { data } = await supabase.auth.getSession();
       if (!alive) return;
       setIsLoggedIn(!!data?.session);
@@ -102,74 +112,34 @@ export default function InvoicePrint() {
     return () => {
       alive = false;
     };
-  }, [publicToken]);
-
-  // A4 wrapper root (exact node for print + pdf)
-  const printRootRef = useRef<HTMLDivElement | null>(null);
-
-  // Ensures auto-print triggers only once
-  const printOnceRef = useRef(false);
-
-  // Prevent spamming print while preparing
-  const [printPreparing, setPrintPreparing] = useState(false);
+  }, [isPublicMode]);
 
   /* =========================
-     Load invoice (PUBLIC via server endpoint)
-     - avoids Supabase RLS issues
-     Endpoint: /api/public/invoice-print?id=48&t=TOKEN
+     Load invoice
   ========================= */
   const invoiceQ = useQuery({
-    queryKey: ["public_invoice_print", invoiceId, publicToken],
-    enabled: isValidId(invoiceId) && (!!publicToken || (authChecked && isLoggedIn)),
+    queryKey: ["invoice_print_bundle", invoiceId, publicToken],
+    enabled: isValidId(invoiceId) && (isPublicMode ? true : authChecked),
     queryFn: async () => {
-      // If no token, still use same endpoint but with empty token? NO.
-      // Internal print should be protected pages anyway. Here we keep it strict:
-      if (!publicToken) {
-        throw new Error("Missing public token");
+      if (isPublicMode) {
+        const res = await fetch(`/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`);
+        const json = await safeJson(res);
+        if (!json?.ok) throw new Error(json?.error || "Failed to load");
+        return json as { ok: true; invoice: any; items: any[]; customer?: any };
       }
 
-      const res = await fetch(`/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`);
-      const json = await safeJson(res);
-
-      if (!json?.ok) throw new Error(json?.error || "Failed to load");
-      return json as {
-        ok: true;
-        invoice: any;
-        items: any[];
-        customer?: any;
-      };
+      if (!isLoggedIn) throw new Error("Unauthorized");
+      return await getInvoicePrintBundle(invoiceId);
     },
     staleTime: 15_000,
   });
 
-  // Guard: if no token and not logged in → block
-  if (!publicToken) {
-    if (!authChecked) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
-    if (!isLoggedIn) return <Navigate to="/auth" replace />;
-    // If logged in but no token, you can decide:
-    // Option A: allow internal print by querying Supabase (not recommended here).
-    // Option B (strict): require token always for this route.
-    return (
-      <div className="p-6 text-sm text-destructive">
-        This print link requires a public token.
-        <div className="mt-2 text-xs text-muted-foreground">
-          Use a shared link like: <b>/invoices/{invoiceId}/print?t=...</b>
-        </div>
-      </div>
-    );
-  }
-
   const isLoading = invoiceQ.isLoading;
   const payload = invoiceQ.data as any;
-  const inv = payload?.invoice;
+  const inv = payload?.invoice ?? null;
   const items = payload?.items || [];
   const customer = payload?.customer || inv?.customers || inv?.customer || null;
 
-  /* =========================
-     Map items to RamPotteryDocItem
-     Your invoice_items columns:
-     - box_qty, units_per_box, total_qty, pcs_qty, description
-  ========================= */
   const docItems: RamPotteryDocItem[] = useMemo(() => {
     return (items || []).map((it: any, idx: number) => {
       const p = it.product || it.products || null;
@@ -177,7 +147,7 @@ export default function InvoicePrint() {
       return {
         sn: idx + 1,
         item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
-        box: "BOX",
+        box: String(it.uom || "BOX").toUpperCase() === "PCS" ? "PCS" : "BOX",
         unit_per_box: Number(it.units_per_box ?? p?.units_per_box ?? 0),
         total_qty: Number(it.total_qty ?? 0),
         description: it.description || p?.name || "",
@@ -190,17 +160,19 @@ export default function InvoicePrint() {
   }, [items]);
 
   /* =========================
-     WhatsApp link
+     WhatsApp link (ONLY public)
   ========================= */
   const origin = typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
-  const viewUrl = `${origin}/invoices/${invoiceId}/print?t=${encodeURIComponent(publicToken)}`;
+  const viewUrl = isPublicMode
+    ? `${origin}/invoices/${invoiceId}/print?t=${encodeURIComponent(publicToken)}`
+    : `${origin}/invoices/${invoiceId}/print`;
 
   const waHref = useMemo(() => {
-    if (!inv) return "#";
+    if (!inv || !isPublicMode) return "#";
 
     const gross = n(inv.gross_total ?? inv.total_amount ?? inv.total_incl_vat);
     const paid = n(inv.amount_paid);
-    const due = n(inv.balance_remaining) || Math.max(0, gross - paid);
+    const due = Number.isFinite(Number(inv.balance_remaining)) ? n(inv.balance_remaining) : Math.max(0, gross - paid);
 
     const msg = [
       "Ram Pottery Ltd",
@@ -218,61 +190,73 @@ export default function InvoicePrint() {
       .join("\n");
 
     return `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`;
-  }, [inv, customer?.name, viewUrl, publicToken, invoiceId]);
+  }, [inv, customer?.name, viewUrl, isPublicMode]);
 
   /* =========================
-     Print (only once, after ready)
+     PRINT (reliable)
+     - adds a body class so print CSS can isolate the A4 doc
+     - waits fonts + images
+     - resets after print (so Ctrl+P works again)
   ========================= */
-  async function safePrintOnce() {
-    if (printOnceRef.current) return;
-    if (!printRootRef.current) return;
+  useEffect(() => {
+    const after = () => {
+      document.body.classList.remove("rp-printing");
+      setPrintPreparing(false);
+    };
+    window.addEventListener("afterprint", after);
+    return () => window.removeEventListener("afterprint", after);
+  }, []);
 
-    printOnceRef.current = true;
+  async function doPrint() {
+    if (!docRootRef.current) return;
+    if (printPreparing) return;
+
     setPrintPreparing(true);
+    document.body.classList.add("rp-printing");
 
     try {
       // @ts-ignore
-      if (document?.fonts?.ready) {
-        // @ts-ignore
-        await document.fonts.ready;
-      }
+      if (document?.fonts?.ready) await document.fonts.ready;
     } catch {}
 
-    await waitForImages(printRootRef.current);
+    await waitForImages(docRootRef.current);
 
+    // give the browser 1 tick to apply rp-printing CSS before opening dialog
     window.setTimeout(() => {
       window.print();
-      setPrintPreparing(false);
     }, 200);
   }
 
-  // Auto print once AFTER render (public token links)
-  useEffect(() => {
-    if (isLoading) return;
-    if (!inv) return;
-    if (!publicToken) return;
-    safePrintOnce();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, inv?.id, publicToken]);
-
   /* =========================
-     PDF download (Fallback only)
+     PDF download (html2pdf tuned)
+     - closer to screen by fixing windowWidth/Height
+     - scale moderate (too high can distort)
   ========================= */
   async function downloadPdfClient() {
-    if (!printRootRef.current || !inv) return;
+    if (!docRootRef.current || !inv) return;
 
-    const node = printRootRef.current;
+    const node = docRootRef.current;
+
+    try {
+      // @ts-ignore
+      if (document?.fonts?.ready) await document.fonts.ready;
+    } catch {}
+
     await waitForImages(node);
 
-    html2pdf()
+    await html2pdf()
       .set({
         filename: `Invoice-${inv.invoice_number || inv.id}.pdf`,
         margin: 0,
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: {
-          scale: 3,
+          scale: 2.2, // higher can shift borders/weights
           useCORS: true,
           backgroundColor: "#ffffff",
+          scrollY: 0,
+          scrollX: 0,
+          windowWidth: A4_W_PX,
+          windowHeight: A4_H_PX,
         },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
         pagebreak: { mode: ["css", "legacy"] },
@@ -282,8 +266,17 @@ export default function InvoicePrint() {
   }
 
   /* =========================
-     Render states
+     Safe returns AFTER hooks
   ========================= */
+  if (!isValidId(invoiceId)) {
+    return <div className="p-6 text-sm text-muted-foreground">Invalid invoice id.</div>;
+  }
+
+  if (!isPublicMode) {
+    if (!authChecked) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
+    if (!isLoggedIn) return <Navigate to="/auth" replace />;
+  }
+
   if (isLoading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading print…</div>;
   }
@@ -292,16 +285,17 @@ export default function InvoicePrint() {
     return (
       <div className="p-6 text-sm text-destructive">
         Invoice not found / invalid link.
-        <div className="mt-2 text-xs text-muted-foreground">
-          Public links must include a valid token (<b>?t=...</b>)
-        </div>
+        {isPublicMode ? (
+          <div className="mt-2 text-xs text-muted-foreground">
+            Public links must include a valid token (<b>?t=...</b>)
+          </div>
+        ) : (
+          <div className="mt-2 text-xs text-muted-foreground">Please check invoice ID and your access.</div>
+        )}
       </div>
     );
   }
 
-  /* =========================
-     Render
-  ========================= */
   return (
     <div className="print-shell p-4">
       {/* Toolbar (hidden on print) */}
@@ -309,72 +303,73 @@ export default function InvoicePrint() {
         <div className="text-sm text-muted-foreground">Invoice {inv.invoice_number || `#${inv.id}`}</div>
 
         <div className="flex flex-wrap gap-2">
-          {/* ✅ Public users: no back button */}
-          {/* If you later want internal users to print without token, add a separate internal route */}
-          <Button variant="outline" onClick={() => nav("/auth")}>
-            Close
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (isPublicMode) nav("/auth");
+              else nav(-1);
+            }}
+          >
+            {isPublicMode ? "Close" : "Back"}
           </Button>
 
-          <Button variant="outline" asChild>
-            <a href={waHref} target="_blank" rel="noreferrer">
-              WhatsApp
-            </a>
-          </Button>
+          {isPublicMode ? (
+            <Button variant="outline" asChild>
+              <a href={waHref} target="_blank" rel="noreferrer">
+                WhatsApp
+              </a>
+            </Button>
+          ) : null}
 
           <Button variant="outline" onClick={downloadPdfClient}>
             Download PDF
           </Button>
 
-          <Button onClick={() => safePrintOnce()} disabled={printPreparing}>
+          <Button onClick={doPrint} disabled={printPreparing}>
             {printPreparing ? "Preparing…" : "Print"}
           </Button>
         </div>
       </div>
 
-      {/* A4 WRAPPER */}
+      {/* ✅ ONLY THE DOCUMENT */}
       <div className="print-stage">
-        <div ref={printRootRef} className="a4-sheet">
-          <div className="a4-content">
-            <RamPotteryDoc
-              variant="INVOICE"
-              showFooterBar={false}
-              docNoLabel="INVOICE NO:"
-              docNoValue={inv.invoice_number || `#${inv.id}`}
-              dateLabel="DATE:"
-              dateValue={fmtDDMMYYYY(inv.invoice_date)}
-              purchaseOrderLabel="PURCHASE ORDER NO:"
-              purchaseOrderValue={inv.purchase_order_no || ""}
-              salesRepName={inv.sales_rep || ""}
-              salesRepPhone={inv.sales_rep_phone || ""}
-              customer={{
-                name: customer?.name || "",
-                address: customer?.address || "",
-                phone: customer?.phone || "",
-                brn: customer?.brn || "",
-                vat_no: customer?.vat_no || "",
-                customer_code: customer?.customer_code || "",
-              }}
-              company={{
-                brn: "C17144377",
-                vat_no: "123456789",
-              }}
-              items={docItems}
-              totals={{
-                subtotal: Number(inv.subtotal || 0),
-                vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
-                vat_amount: Number(inv.vat_amount || 0),
-                total_amount: Number(inv.total_amount || 0),
-                previous_balance: Number(inv.previous_balance || 0),
-                amount_paid: Number(inv.amount_paid || 0),
-                balance_remaining: Number(inv.balance_remaining || 0),
-              }}
-              preparedBy={"Manish"}
-              deliveredBy={""}
-              logoSrc={"/logo.png"}
-            />
-          </div>
-
-          <div className="rp-page-footer" />
+        <div ref={docRootRef} id="rpdoc-print-root">
+          <RamPotteryDoc
+            docTitle="VAT INVOICE"
+            companyName="RAM POTTERY LTD"
+            logoSrc={"/logo.png"}
+            customer={{
+              name: customer?.name || "",
+              address: customer?.address || "",
+              phone: customer?.phone || "",
+              brn: customer?.brn || "",
+              vat_no: customer?.vat_no || "",
+              customer_code: customer?.customer_code || "",
+            }}
+            company={{
+              brn: "C17144377",
+            }}
+            docNoLabel="INVOICE NO:"
+            docNoValue={inv.invoice_number || `#${inv.id}`}
+            dateLabel="DATE:"
+            dateValue={fmtDDMMYYYY(inv.invoice_date)}
+            purchaseOrderLabel="PURCHASE ORDER NO:"
+            purchaseOrderValue={inv.purchase_order_no || ""}
+            salesRepName={inv.sales_rep || ""}
+            salesRepPhone={inv.sales_rep_phone || ""}
+            items={docItems}
+            totals={{
+              subtotal: Number(inv.subtotal || 0),
+              vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
+              vat_amount: Number(inv.vat_amount || 0),
+              total_amount: Number(inv.total_amount || 0),
+              previous_balance: Number(inv.previous_balance || 0),
+              amount_paid: Number(inv.amount_paid || 0),
+              balance_remaining: Number(inv.balance_remaining || 0),
+            }}
+            preparedBy={"Manish"}
+            deliveredBy={""}
+          />
         </div>
       </div>
     </div>
