@@ -177,7 +177,7 @@ const ALL_PERMISSION_KEYS: PermissionKey[] = permissionGroups.flatMap((g) => g.i
 function sanitizePerms(input: Record<string, boolean> | null | undefined): Record<string, boolean> {
   const src = input || {};
   const out: Record<string, boolean> = {};
-  for (const k of ALL_PERMISSION_KEYS) out[k] = !!src[k];
+  for (const k of ALL_PERMISSION_KEYS) out[k] = !!(src as any)[k];
   return out;
 }
 
@@ -231,10 +231,12 @@ function presetForRole(role: AppRole): Record<string, boolean> {
 }
 
 /* =========================
-   Hardened fetch helper (+ adds x-rp-user header best-effort)
+   Hardened fetch helper
+   - adds x-rp-user header (AuthContext first, localStorage fallback)
+   - never throws "empty response" unless truly empty
+   - detects proxy/backend down (ECONNREFUSED)
 ========================= */
-function getRpUserHeader() {
-  // Adjust if you store it under a different key
+function getRpUserHeaderFromStorage() {
   return (
     localStorage.getItem("x-rp-user") ||
     localStorage.getItem("rp_user") ||
@@ -243,17 +245,34 @@ function getRpUserHeader() {
   );
 }
 
-async function safePostJson<T>(url: string, payload: any): Promise<T> {
-  const rp = getRpUserHeader();
+class ApiError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(rp ? { "x-rp-user": rp } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
+async function safePostJson<T>(url: string, payload: any, rpUserHeader?: string): Promise<T> {
+  const rp = s(rpUserHeader) || s(getRpUserHeaderFromStorage());
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(rp ? { "x-rp-user": rp } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (e: any) {
+    // Network/proxy/backend down
+    throw new ApiError(
+      "API not reachable. Start backend: `npm run dev:server` (and keep Vite running).",
+      0
+    );
+  }
 
   const text = await res.text(); // read once
   let data: any = null;
@@ -263,54 +282,68 @@ async function safePostJson<T>(url: string, payload: any): Promise<T> {
       data = JSON.parse(text);
     } catch {
       const snippet = text.slice(0, 220).replace(/\s+/g, " ").trim();
-      throw new Error(
-        `Server did not return JSON (HTTP ${res.status}). Response: "${snippet}${text.length > 220 ? "…" : ""}"`
+      throw new ApiError(
+        `Server did not return JSON (HTTP ${res.status}). Response: "${snippet}${text.length > 220 ? "…" : ""}"`,
+        res.status
       );
     }
   } else {
-    throw new Error(`Empty server response (HTTP ${res.status}).`);
+    // true empty body
+    throw new ApiError(`Empty server response (HTTP ${res.status}).`, res.status);
   }
 
   if (!res.ok) {
-    throw new Error(data?.error || `Request failed (HTTP ${res.status})`);
+    throw new ApiError(data?.error || `Request failed (HTTP ${res.status})`, res.status);
   }
+
   return data as T;
 }
 
 /* =========================
-   Admin API calls (server routes)
+   Admin API calls (Express server routes)
 ========================= */
-async function apiCreateUser(payload: {
-  email: string;
-  password?: string;
-  full_name?: string;
-  role: AppRole;
-  is_active: boolean;
-  permissions: Record<string, boolean>;
-}) {
+async function apiCreateUser(
+  payload: {
+    email: string;
+    password?: string;
+    full_name?: string;
+    role: AppRole;
+    is_active: boolean;
+    permissions: Record<string, boolean>;
+  },
+  rpUserHeader?: string
+) {
   const json = await safePostJson<{ ok: boolean; error?: string; user_id?: string; temp_password?: string | null }>(
     "/api/admin/users/create",
-    payload
+    payload,
+    rpUserHeader
   );
   if (!json?.ok) throw new Error(json?.error || "Failed to create user");
   return json as { ok: true; user_id: string; temp_password: string | null };
 }
 
-async function apiUpdateUser(payload: {
-  user_id: string;
-  full_name?: string;
-  role?: AppRole;
-  is_active?: boolean;
-  permissions?: Record<string, boolean>;
-  reset_password?: string;
-}) {
-  const json = await safePostJson<{ ok: boolean; error?: string }>("/api/admin/users/update", payload);
+async function apiUpdateUser(
+  payload: {
+    user_id: string;
+    full_name?: string;
+    role?: AppRole;
+    is_active?: boolean;
+    permissions?: Record<string, boolean>;
+    reset_password?: string;
+  },
+  rpUserHeader?: string
+) {
+  const json = await safePostJson<{ ok: boolean; error?: string }>("/api/admin/users/update", payload, rpUserHeader);
   if (!json?.ok) throw new Error(json?.error || "Failed to update user");
   return json as { ok: true };
 }
 
-async function apiDeleteUser(user_id: string) {
-  const json = await safePostJson<{ ok: boolean; error?: string }>("/api/admin/users/delete", { user_id });
+async function apiDeleteUser(user_id: string, rpUserHeader?: string) {
+  const json = await safePostJson<{ ok: boolean; error?: string }>(
+    "/api/admin/users/delete",
+    { user_id },
+    rpUserHeader
+  );
   if (!json?.ok) throw new Error(json?.error || "Failed to delete user");
   return json as { ok: true };
 }
@@ -417,7 +450,7 @@ function PermissionMatrix({
 }
 
 /* =========================
-   Role change confirmation dialog (shadcn)
+   Role change confirmation dialog
 ========================= */
 function RoleResetConfirmDialog({
   open,
@@ -471,7 +504,19 @@ function RoleResetConfirmDialog({
 ========================= */
 export default function Users() {
   const { toast } = useToast();
-  const { isAdmin } = useAuth();
+
+  // NOTE: we keep your isAdmin guard. Additionally, we use AuthContext if it exposes rp user json
+  // If your context has a different shape, this still works because we fallback to localStorage.
+  const auth: any = useAuth();
+  const isAdmin = !!auth?.isAdmin;
+  const rpUserHeaderFromAuth =
+    typeof auth?.rpUserHeader === "string"
+      ? auth.rpUserHeader
+      : typeof auth?.rpUser === "string"
+      ? auth.rpUser
+      : typeof auth?.rp_user === "string"
+      ? auth.rp_user
+      : "";
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<UserRow[]>([]);
@@ -513,6 +558,8 @@ export default function Users() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmCtx, setConfirmCtx] = useState<"create" | "edit">("create");
   const [pendingRole, setPendingRole] = useState<AppRole>("viewer");
+
+  const rpHeader = s(rpUserHeaderFromAuth) || s(getRpUserHeaderFromStorage());
 
   const reload = async () => {
     setLoading(true);
@@ -587,10 +634,8 @@ export default function Users() {
   };
 
   const requestRoleChange = (ctx: "create" | "edit", next: AppRole) => {
-    // For create/edit: if changing, confirm first
     const current = ctx === "create" ? cRole : eRole;
     if (next === current) return;
-
     setConfirmCtx(ctx);
     setPendingRole(next);
     setConfirmOpen(true);
@@ -628,14 +673,17 @@ export default function Users() {
     try {
       const enforcedPerm = cRole === "admin" ? presetForRole("admin") : sanitizePerms(cPerm);
 
-      const res = await apiCreateUser({
-        email,
-        password: pwd || undefined,
-        full_name: s(cName) || undefined,
-        role: cRole,
-        is_active: !!cActive,
-        permissions: enforcedPerm,
-      });
+      const res = await apiCreateUser(
+        {
+          email,
+          password: pwd || undefined,
+          full_name: s(cName) || undefined,
+          role: cRole,
+          is_active: !!cActive,
+          permissions: enforcedPerm,
+        },
+        rpHeader
+      );
 
       setTempPwd(res.temp_password || "");
       toast({
@@ -670,14 +718,17 @@ export default function Users() {
     try {
       const enforcedPerm = eRole === "admin" ? presetForRole("admin") : sanitizePerms(ePerm);
 
-      await apiUpdateUser({
-        user_id: editing.user_id,
-        full_name: s(eName) || "",
-        role: eRole,
-        is_active: !!eActive,
-        permissions: enforcedPerm,
-        reset_password: newPwd || undefined,
-      });
+      await apiUpdateUser(
+        {
+          user_id: editing.user_id,
+          full_name: s(eName) || "",
+          role: eRole,
+          is_active: !!eActive,
+          permissions: enforcedPerm,
+          reset_password: newPwd || undefined,
+        },
+        rpHeader
+      );
 
       toast({ title: "Saved", description: "User updated successfully" });
       setOpenEdit(false);
@@ -694,7 +745,7 @@ export default function Users() {
 
     setDeleting(true);
     try {
-      await apiDeleteUser(deleteTarget.user_id);
+      await apiDeleteUser(deleteTarget.user_id, rpHeader);
       toast({ title: "Deleted", description: "User deleted successfully" });
       setOpenDelete(false);
       setDeleteTarget(null);
@@ -706,9 +757,9 @@ export default function Users() {
     }
   };
 
-  // =========================
-  // SECURE UI GUARD
-  // =========================
+  /* =========================
+     SECURE UI GUARD
+  ========================= */
   if (!isAdmin) {
     return (
       <div className="space-y-6">
@@ -737,7 +788,6 @@ export default function Users() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Role reset confirm dialog */}
       <RoleResetConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
@@ -902,7 +952,7 @@ export default function Users() {
                           <DropdownMenuItem
                             onClick={async () => {
                               try {
-                                await apiUpdateUser({ user_id: u.user_id, is_active: !u.is_active });
+                                await apiUpdateUser({ user_id: u.user_id, is_active: !u.is_active }, rpHeader);
                                 toast({
                                   title: "Updated",
                                   description: u.is_active ? "User deactivated" : "User activated",
@@ -936,8 +986,8 @@ export default function Users() {
           )}
 
           <div className="mt-4 text-xs text-muted-foreground">
-            Admin mutations go through <b>/api/admin/users/*</b>. If you see “Empty server response”, your backend isn’t
-            running (or proxy is failing).
+            Admin mutations go through <b>/api/admin/users/*</b>. If you see “API not reachable”, start{" "}
+            <b>npm run dev:server</b>.
           </div>
         </CardContent>
       </Card>
@@ -1071,7 +1121,11 @@ export default function Users() {
             <Button variant="outline" onClick={() => setOpenCreate(false)} disabled={creating}>
               Cancel
             </Button>
-            <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={handleCreate} disabled={creating}>
+            <Button
+              className="gradient-primary shadow-glow text-primary-foreground"
+              onClick={handleCreate}
+              disabled={creating}
+            >
               {creating ? "Creating..." : "Create User"}
             </Button>
           </DialogFooter>

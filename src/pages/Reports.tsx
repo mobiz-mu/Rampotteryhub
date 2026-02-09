@@ -210,7 +210,8 @@ export default function Reports() {
   const [to, setTo] = useState<string>(todayISO());
   const [granularity, setGranularity] = useState<Granularity>("DAILY");
 
-  const reportPdfRef = useRef<HTMLDivElement | null>(null);
+  // ✅ IMPORTANT: this container will be the ONLY thing visible in browser print
+  const reportPrintRef = useRef<HTMLDivElement | null>(null);
 
   const REPORTS = [
     { key: "DAILY_INVOICES", label: "Daily Invoices", icon: <FileText className="h-4 w-4" /> },
@@ -221,7 +222,6 @@ export default function Reports() {
     { key: "CUSTOMER_MONTHLY", label: "Sales by Customer (Monthly)", icon: <Users className="h-4 w-4" /> },
     { key: "VAT", label: "VAT Report", icon: <Percent className="h-4 w-4" /> },
     { key: "DISCOUNT", label: "Discount Report", icon: <Receipt className="h-4 w-4" /> },
-
     { key: "SALESMAN_PERIOD", label: "Report by Salesman (Period)", icon: <UserRound className="h-4 w-4" /> },
     { key: "PRODUCTS_PERIOD", label: "Report by Products Sold (Period)", icon: <Package className="h-4 w-4" /> },
     { key: "STATEMENT_CUSTOMER", label: "Statement of Account (Customer PDF)", icon: <FileText className="h-4 w-4" /> },
@@ -234,6 +234,9 @@ export default function Reports() {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedAt, setGeneratedAt] = useState<string>("");
+
+  // ✅ Freeze print header timestamp so it does not change on each render
+  const printStamp = useMemo(() => new Date().toLocaleString(), [activeReport, from, to, generatedAt]);
 
   function applyPreset(p: DatePreset) {
     setPreset(p);
@@ -737,22 +740,33 @@ export default function Reports() {
     return Array.from(map.values()).sort((a, b) => b.sales - a.sales);
   }, [invoiceItemsQ.data, invoiceById, productById]);
 
+  // ✅ FIXED: this block was causing your "Expression expected" + EOF issues when pasted badly
   const customersForSelect = useMemo(() => {
-    const list = (customersQ.data ?? []).map((c) => ({
-      id: c.id,
-      label: (String(c.client_name || "").trim() || String(c.name || "").trim() || `Customer #${c.id}`).trim(),
-      secondary:
+    const list = (customersQ.data ?? []).map((c) => {
+      const primary =
+        String(c.client_name || "").trim() || String(c.name || "").trim() || `Customer #${c.id}`;
+
+      const secondary =
         String(c.client_name || "").trim() &&
         String(c.name || "").trim() &&
         String(c.client_name || "").trim() !== String(c.name || "").trim()
           ? String(c.name || "").trim()
-          : "",
-    }));
+          : "";
+
+      return {
+        id: c.id,
+        label: primary,
+        secondary,
+      };
+    });
 
     list.sort((a, b) => a.label.localeCompare(b.label));
     return list;
   }, [customersQ.data]);
 
+  /* =========================
+    Statement helpers
+  ========================= */
   function openStatementPrint(autoPrint = false) {
     if (!statementCustomerId) return;
     const sp = new URLSearchParams();
@@ -773,6 +787,7 @@ export default function Reports() {
     const msg = statementShareText() + `\n\nTip: Save the PDF from the system and attach it in WhatsApp.`;
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
   }
+
   function openStatementEmail() {
     const cust = customersForSelect.find((c) => c.id === statementCustomerId);
     const cname = cust?.label || "Customer";
@@ -802,7 +817,9 @@ export default function Reports() {
     if (activeReport === "CUSTOMERS_DAILY") {
       const rows = customersDaily.map((d) => {
         const top =
-          d.topCustomers?.map((x: any) => `${x.customer}${x.secondary ? ` (${x.secondary})` : ""} (Rs ${money(x.amount)})`).join(" | ") || "";
+          d.topCustomers
+            ?.map((x: any) => `${x.customer}${x.secondary ? ` (${x.secondary})` : ""} (Rs ${money(x.amount)})`)
+            .join(" | ") || "";
         return { ...base, date: d.date, unique_customers: d.unique_customers, invoices: d.invoices, total: d.total, top_customers: top };
       });
       return downloadCSV(`customers_purchased_daily_${from}_to_${to}.csv`, rows);
@@ -874,7 +891,7 @@ export default function Reports() {
   }
 
   async function exportActivePDF() {
-    const node = reportPdfRef.current;
+    const node = reportPrintRef.current;
     if (!node) return toast.error("Nothing to export yet.");
     if (anyLoading || isGenerating) return toast.message("Please wait until the report finishes loading.");
 
@@ -894,7 +911,7 @@ export default function Reports() {
         useCORS: true,
         backgroundColor: "#ffffff",
         logging: false,
-        windowWidth: node.scrollWidth, // helps with wide tables
+        windowWidth: node.scrollWidth,
       },
       pagebreak: { mode: ["css", "legacy"] },
       jsPDF: { unit: "mm", format: "a4", orientation: pdfOrientationForReport(activeReport) },
@@ -912,12 +929,40 @@ export default function Reports() {
   }
 
   /* =========================
+    Browser Print (Fix: blank / endless loading)
+  ========================= */
+  function printBrowser() {
+    if (anyLoading || isGenerating) return toast.message("Please wait until the report finishes loading.");
+    // Let React paint before printing
+    setTimeout(() => window.print(), 80);
+  }
+
+  /* =========================
     UI
   ========================= */
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* ✅ Print isolation styles (only report-print visible) */}
+      <style>
+        {`
+          @media print{
+            html, body{ background:#fff !important; }
+            body *{ visibility:hidden !important; }
+            #report-print, #report-print *{ visibility:visible !important; }
+            #report-print{
+              position:absolute;
+              left:0; top:0;
+              width:100%;
+              padding:0 !important;
+              margin:0 !important;
+            }
+            .no-print{ display:none !important; }
+          }
+        `}
+      </style>
+
       {/* ===== Header ===== */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div className="no-print flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground tracking-tight">Reports</h1>
           <p className="text-muted-foreground mt-1">Premium reporting hub • Real figures • Daily & monthly exports</p>
@@ -953,8 +998,14 @@ export default function Reports() {
           </Button>
 
           <Button variant="outline" onClick={exportActivePDF} disabled={anyLoading || isGenerating}>
-            <Printer className="h-4 w-4 mr-2" />
+            <Download className="h-4 w-4 mr-2" />
             Download PDF
+          </Button>
+
+          {/* ✅ NEW: Browser Print (no endless loading / blank) */}
+          <Button variant="outline" onClick={printBrowser} disabled={anyLoading || isGenerating}>
+            <Printer className="h-4 w-4 mr-2" />
+            Print
           </Button>
 
           <Button
@@ -969,7 +1020,7 @@ export default function Reports() {
       </div>
 
       {/* ===== KPI Strip ===== */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="no-print grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <StatCard title="Revenue" value={`Rs ${money(kpi.revenue)}`} hint={`${from} → ${to}`} icon={<TrendingUp className="h-4 w-4" />} />
         <StatCard title="Invoices" value={`${kpi.invoicesCount}`} hint={`Unique customers: ${kpi.uniqueCustomers}`} icon={<FileText className="h-4 w-4" />} />
         <StatCard title="Collected" value={`Rs ${money(kpi.collected)}`} hint="From invoice_payments" icon={<Receipt className="h-4 w-4" />} />
@@ -979,7 +1030,7 @@ export default function Reports() {
       </div>
 
       {/* ===== Filters ===== */}
-      <Card className="shadow-premium">
+      <Card className="no-print shadow-premium">
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -1075,29 +1126,27 @@ export default function Reports() {
       </Card>
 
       {/* ===== Quick Tabs ===== */}
-      <Card className="shadow-premium">
+      <Card className="no-print shadow-premium">
         <CardContent className="p-4">
           <PillTabs value={activeReport} onChange={setActiveReport} items={REPORTS.map((r) => ({ key: r.key, label: r.label, icon: r.icon }))} />
         </CardContent>
       </Card>
 
-      {/* ===== Report Center (PDF container) ===== */}
-      <div ref={reportPdfRef} className="bg-white rounded-2xl">
-        {/* PDF header always included (good for export) */}
+      {/* ===== Report Center (PRINT + PDF container) ===== */}
+      <div id="report-print" ref={reportPrintRef} className="bg-white rounded-2xl">
+        {/* Print/PDF header always included */}
         <div className="px-1 pb-2">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-xl font-bold leading-tight">Reports</div>
-              <div className="text-sm text-muted-foreground">
-                {REPORTS.find((r) => r.key === activeReport)?.label || activeReport}
-              </div>
+              <div className="text-sm text-muted-foreground">{REPORTS.find((r) => r.key === activeReport)?.label || activeReport}</div>
             </div>
 
             <div className="text-right">
               <div className="text-sm font-semibold">
                 Period: {from} → {to}
               </div>
-              <div className="text-xs text-muted-foreground">Generated: {new Date().toLocaleString()}</div>
+              <div className="text-xs text-muted-foreground">Generated: {printStamp}</div>
             </div>
           </div>
           <div className="mt-2 h-px bg-border" />
@@ -1122,7 +1171,7 @@ export default function Reports() {
 
             {/* ========= STATEMENT ========= */}
             {activeReport === "STATEMENT_CUSTOMER" && !anyError && (
-              <Card className="shadow-premium">
+              <Card className="shadow-premium no-print">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Statement of Account (PDF)</CardTitle>
                   <CardDescription>Select a customer → open print view or share</CardDescription>
@@ -1612,10 +1661,9 @@ export default function Reports() {
         </Card>
       </div>
 
-      <div className="text-xs text-muted-foreground">
+      <div className="no-print text-xs text-muted-foreground">
         Tables used: <b>invoices</b>, <b>invoice_items</b>, <b>invoice_payments</b>, <b>customers</b>, <b>products</b>. (Sales excludes DRAFT/VOID)
       </div>
     </div>
   );
 }
-
