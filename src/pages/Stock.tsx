@@ -54,33 +54,68 @@ function genSku(prefix = "SKU") {
   return `${prefix}-${y}${m}${da}-${rnd}`;
 }
 
-/** build safe payload for DB (convert "" to null / numbers) */
+type StockUnit = "PCS" | "WEIGHT";
+type PriceUnit = "PCS" | "KG";
+
+function splitPcsToBoxUnits(pcs: number, upb: number) {
+  const safeUpb = Math.max(1, Math.trunc(n0(upb || 1)));
+  const safePcs = Math.max(0, Math.trunc(n0(pcs)));
+  return { boxes: Math.floor(safePcs / safeUpb), units: safePcs % safeUpb };
+}
+function splitGramsToKgG(g: number) {
+  const grams = Math.max(0, Math.trunc(n0(g)));
+  return { kg: Math.floor(grams / 1000), g: grams % 1000 };
+}
+
+/** build safe payload for DB */
 function toPayload(form: any): ProductUpsert {
   const sku = s(form.sku) || genSku();
   const name = s(form.name);
+  const stock_unit: StockUnit = form.stock_unit === "WEIGHT" ? "WEIGHT" : "PCS";
+  const selling_price_unit: PriceUnit = stock_unit === "WEIGHT" ? "KG" : form.selling_price_unit === "KG" ? "KG" : "PCS";
 
-  // NEW: store stock in PCS in DB
-  const upb = nInt(form.units_per_box);
-  const boxStock = Math.max(0, nInt(form.current_stock_boxes) ?? 0);
-  const unitStock = Math.max(0, nInt(form.current_stock_units) ?? 0);
-  const totalPcsStock = Math.max(0, boxStock * (upb ?? 1) + unitStock);
+  // STOCK -> base storage
+  let current_stock_pcs = 0;
+  let current_stock_grams = 0;
+
+  if (stock_unit === "PCS") {
+    const upb = nInt(form.units_per_box);
+    const boxStock = Math.max(0, nInt(form.current_stock_boxes) ?? 0);
+    const unitStock = Math.max(0, nInt(form.current_stock_units) ?? 0);
+    current_stock_pcs = Math.max(0, boxStock * (upb ?? 1) + unitStock);
+    current_stock_grams = 0;
+  } else {
+    const kg = Math.max(0, nInt(form.current_stock_kg) ?? 0);
+    const g = Math.max(0, nInt(form.current_stock_g) ?? 0);
+    current_stock_grams = Math.max(0, kg * 1000 + g);
+    current_stock_pcs = 0;
+  }
 
   return {
     sku,
     item_code: s(form.item_code) || null,
     name,
     description: s(form.description) || "",
-    units_per_box: upb,
+
+    // PCS only
+    units_per_box: stock_unit === "PCS" ? nInt(form.units_per_box) : null,
 
     cost_price: form.cost_price === "" ? null : Number.isFinite(Number(form.cost_price)) ? Number(form.cost_price) : null,
+
+    // keep same selling_price column
     selling_price: Math.max(0, n0(form.selling_price)),
 
-    // ✅ DB stays as PCS stock
-    current_stock: totalPcsStock,
+    // ✅ DB stocks
+    current_stock: current_stock_pcs,
 
     reorder_level: form.reorder_level === "" ? null : Math.max(0, nInt(form.reorder_level) ?? 0),
     is_active: !!form.is_active,
-    image_url: "", // kept for type compatibility; image feature removed
+    image_url: "",
+
+    // ✅ NEW DB fields
+    stock_unit,
+    current_stock_grams,
+    selling_price_unit,
   } as any;
 }
 
@@ -99,10 +134,18 @@ const emptyForm: any = {
   name: "",
   description: "",
 
-  // stock entry (NEW): boxes + units
+  stock_unit: "PCS" as StockUnit,
+
+  // PCS entry
   units_per_box: "",
   current_stock_boxes: "",
   current_stock_units: "",
+
+  // WEIGHT entry
+  current_stock_kg: "",
+  current_stock_g: "",
+
+  selling_price_unit: "PCS" as PriceUnit,
 
   cost_price: "",
   selling_price: "",
@@ -112,43 +155,32 @@ const emptyForm: any = {
 };
 
 function normalizeExcelRow(r: ExcelRowAny): any {
-  const productRef = s(
-    pick(r, ["Product Ref", "Product Ref:", "product_ref", "item_code", "Item Code", "ITEM CODE", "Ref", "REF"]) ?? ""
-  );
-
   const skuRaw = s(pick(r, ["SKU", "sku"]) ?? "");
   const sku = skuRaw || genSku();
 
-  const item_code = s(pick(r, ["Item Code", "item_code"]) ?? "") || productRef || "";
-
-  const name =
-    s(pick(r, ["Product Description", "Product Description (Name)", "name", "Name"]) ?? "") || "Unnamed product";
-
+  const item_code = s(pick(r, ["Item Code", "item_code", "Product Ref", "Ref"]) ?? "");
+  const name = s(pick(r, ["Product Description", "name", "Name"]) ?? "") || "Unnamed product";
   const description = s(pick(r, ["Description", "description", "Details"]) ?? "");
 
-  const units_per_box = pick(r, ["Units / Box", "Units/Box", "units_per_box", "UPB", "Units Per Box"]);
+  const stock_unit = (s(pick(r, ["Stock Unit", "stock_unit"]) ?? "PCS").toUpperCase() === "WEIGHT"
+    ? "WEIGHT"
+    : "PCS") as StockUnit;
 
-  // NEW: excel can provide stock as either:
-  // - "Current Stock (Pcs)" (preferred) OR
-  // - "Stock Boxes" + "Stock Units"
-  const current_stock_pcs = pick(r, ["Current Stock (Pcs)", "Current Stock PCS", "current_stock", "STOCK"]);
-  const stock_boxes = pick(r, ["Stock Boxes", "stock_boxes", "Boxes"]);
-  const stock_units = pick(r, ["Stock Units", "stock_units", "Units"]);
+  const selling_price_unit = (s(pick(r, ["Price Unit", "selling_price_unit"]) ?? "PCS").toUpperCase() === "KG"
+    ? "KG"
+    : "PCS") as PriceUnit;
 
-  const selling_price = pick(r, ["Price  / Pcs (Rs)", "Price / Pcs (Rs)", "Price", "selling_price", "SELLING PRICE"]);
+  const units_per_box = pick(r, ["Units / Box", "units_per_box", "UPB"]);
+  const selling_price = pick(r, ["Selling Price", "selling_price", "Price"]);
   const cost_price = pick(r, ["Cost Price", "cost_price", "COST"]);
   const reorder_level = pick(r, ["Reorder Level", "reorder_level", "REORDER"]);
   const is_active = parseBool(pick(r, ["Active", "is_active", "ACTIVE"]), true);
 
-  const upb = nInt(units_per_box) ?? 1;
+  const stock_boxes = pick(r, ["Stock Boxes", "stock_boxes", "Boxes"]);
+  const stock_units = pick(r, ["Stock Units", "stock_units", "Units"]);
 
-  // If pcs stock provided, keep it and split for UI (boxes + units)
-  const pcs = Math.max(0, nInt(current_stock_pcs) ?? 0);
-  const boxFromPcs = upb > 0 ? Math.floor(pcs / upb) : 0;
-  const unitFromPcs = upb > 0 ? pcs % upb : pcs;
-
-  const boxes = stock_boxes !== undefined && stock_boxes !== "" ? Math.max(0, nInt(stock_boxes) ?? 0) : boxFromPcs;
-  const units = stock_units !== undefined && stock_units !== "" ? Math.max(0, nInt(stock_units) ?? 0) : unitFromPcs;
+  const stock_kg = pick(r, ["Stock Kg", "stock_kg", "Kg"]);
+  const stock_g = pick(r, ["Stock Grams", "stock_g", "Grams", "g"]);
 
   return {
     ...emptyForm,
@@ -156,11 +188,16 @@ function normalizeExcelRow(r: ExcelRowAny): any {
     item_code: item_code || "",
     name,
     description,
+    stock_unit,
+    selling_price_unit,
+
     units_per_box: units_per_box === "" ? "" : String(nInt(units_per_box) ?? ""),
 
-    // NEW
-    current_stock_boxes: String(boxes),
-    current_stock_units: String(units),
+    current_stock_boxes: stock_boxes === "" ? "" : String(Math.max(0, nInt(stock_boxes) ?? 0)),
+    current_stock_units: stock_units === "" ? "" : String(Math.max(0, nInt(stock_units) ?? 0)),
+
+    current_stock_kg: stock_kg === "" ? "" : String(Math.max(0, nInt(stock_kg) ?? 0)),
+    current_stock_g: stock_g === "" ? "" : String(Math.max(0, nInt(stock_g) ?? 0)),
 
     selling_price: selling_price === "" ? "" : String(Math.max(0, n0(selling_price))),
     cost_price: cost_price === "" ? "" : String(n0(cost_price)),
@@ -173,39 +210,36 @@ function downloadTemplateXlsx() {
   const sheetRows = [
     {
       SN: 1,
-      "Product Ref": "ITEM-001",
-      SKU: "", // optional; auto generated if blank
-      "Product Description": "Sample Product Name",
-      "Units / Box": 25,
-      "Price / Pcs (Rs)": 45.0,
-      Description: "Optional long description",
-      "Cost Price": 30.0,
-
-      // NEW: enter stock as boxes + units
+      SKU: "",
+      "Item Code": "ITEM-PCS-001",
+      "Product Description": "Sample Lamp",
+      "Stock Unit": "PCS",
+      "Units / Box": 20,
       "Stock Boxes": 1,
-      "Stock Units": 0,
-
+      "Stock Units": 10,
+      "Price Unit": "PCS",
+      "Selling Price": 120.0,
+      "Cost Price": 80.0,
       "Reorder Level": 30,
+      Active: "TRUE",
+    },
+    {
+      SN: 2,
+      SKU: "",
+      "Item Code": "ITEM-KG-001",
+      "Product Description": "Sample Cement",
+      "Stock Unit": "WEIGHT",
+      "Stock Kg": 5,
+      "Stock Grams": 250,
+      "Price Unit": "KG",
+      "Selling Price": 180.0,
+      "Cost Price": 130.0,
+      "Reorder Level": 2,
       Active: "TRUE",
     },
   ];
 
   const ws = XLSX.utils.json_to_sheet(sheetRows);
-  ws["!cols"] = [
-    { wch: 6 },
-    { wch: 16 },
-    { wch: 18 },
-    { wch: 34 },
-    { wch: 12 },
-    { wch: 16 },
-    { wch: 42 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 10 },
-  ];
-
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "StockTemplate");
   XLSX.writeFile(wb, "stock-import-template.xlsx");
@@ -221,7 +255,6 @@ export default function Stock() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState<any>(emptyForm);
 
-  // Excel import input
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const productsQ = useQuery({
@@ -267,29 +300,30 @@ export default function Stock() {
       ...emptyForm,
       sku: genSku(),
       is_active: true,
+      stock_unit: "PCS",
+      selling_price_unit: "PCS",
       selling_price: "",
       cost_price: "",
       units_per_box: "",
       current_stock_boxes: "",
       current_stock_units: "",
+      current_stock_kg: "",
+      current_stock_g: "",
       reorder_level: "",
     });
     setOpen(true);
   }
 
-  function splitPcsToBoxUnits(pcs: number, upb: number) {
-    const safeUpb = Math.max(1, Math.trunc(n0(upb || 1)));
-    const safePcs = Math.max(0, Math.trunc(n0(pcs)));
-    return {
-      boxes: Math.floor(safePcs / safeUpb),
-      units: safePcs % safeUpb,
-    };
-  }
-
   function openEdit(p: Product) {
+    const stock_unit: StockUnit = ((p as any).stock_unit === "WEIGHT" ? "WEIGHT" : "PCS") as StockUnit;
+    const selling_price_unit: PriceUnit = ((p as any).selling_price_unit === "KG" ? "KG" : "PCS") as PriceUnit;
+
     const upb = Math.max(1, Math.trunc(n0(p.units_per_box ?? 1)));
     const pcs = Math.max(0, Math.trunc(n0(p.current_stock ?? 0)));
     const { boxes, units } = splitPcsToBoxUnits(pcs, upb);
+
+    const grams = Math.max(0, Math.trunc(n0((p as any).current_stock_grams ?? 0)));
+    const { kg, g } = splitGramsToKgG(grams);
 
     setEditing(p);
     setForm({
@@ -298,11 +332,16 @@ export default function Stock() {
       name: p.name || "",
       description: p.description ?? "",
 
-      units_per_box: p.units_per_box ?? "",
+      stock_unit,
+      selling_price_unit: stock_unit === "WEIGHT" ? "KG" : selling_price_unit,
 
-      // NEW: show stock split
-      current_stock_boxes: String(boxes),
-      current_stock_units: String(units),
+      units_per_box: stock_unit === "PCS" ? (p.units_per_box ?? "") : "",
+
+      current_stock_boxes: stock_unit === "PCS" ? String(boxes) : "",
+      current_stock_units: stock_unit === "PCS" ? String(units) : "",
+
+      current_stock_kg: stock_unit === "WEIGHT" ? String(kg) : "",
+      current_stock_g: stock_unit === "WEIGHT" ? String(g) : "",
 
       cost_price: p.cost_price ?? "",
       selling_price: p.selling_price ?? "",
@@ -316,30 +355,27 @@ export default function Stock() {
   async function save() {
     const sku = s(form.sku) || genSku();
     const name = s(form.name);
-
-    if (!name) {
-      toast.error("Name is required");
-      return;
-    }
+    if (!name) return toast.error("Name is required");
 
     if (form.selling_price === "" || !Number.isFinite(Number(form.selling_price))) {
-      toast.error("Selling Price is required");
-      return;
+      return toast.error("Selling Price is required");
     }
 
-    // NEW: validation for units_per_box if they enter box stock
-    const upb = nInt(form.units_per_box);
-    if ((nInt(form.current_stock_boxes) ?? 0) > 0 && (!upb || upb <= 0)) {
-      toast.error("Units / Box is required when Stock Boxes is used");
-      return;
-    }
+    const stock_unit: StockUnit = form.stock_unit === "WEIGHT" ? "WEIGHT" : "PCS";
 
-    // NEW: units must be < UPB (nice UX)
-    const units = Math.max(0, nInt(form.current_stock_units) ?? 0);
-    const safeUpb = Math.max(1, Math.trunc(n0(upb ?? 1)));
-    if (units >= safeUpb) {
-      toast.error(`Stock Units must be less than Units/Box (${safeUpb}).`);
-      return;
+    if (stock_unit === "PCS") {
+      const upb = nInt(form.units_per_box);
+      const boxes = Math.max(0, nInt(form.current_stock_boxes) ?? 0);
+      const units = Math.max(0, nInt(form.current_stock_units) ?? 0);
+
+      // if they use boxes, UPB required
+      if (boxes > 0 && (!upb || upb <= 0)) return toast.error("Units / Box is required when Stock Boxes is used");
+
+      const safeUpb = Math.max(1, Math.trunc(n0(upb ?? 1)));
+      if (units >= safeUpb) return toast.error(`Stock Units must be less than Units/Box (${safeUpb}).`);
+    } else {
+      const grams = Math.max(0, nInt(form.current_stock_g) ?? 0);
+      if (grams >= 1000) return toast.error("Stock Grams must be less than 1000 (use Kg + Grams).");
     }
 
     const payload = toPayload({ ...form, sku });
@@ -352,7 +388,6 @@ export default function Stock() {
         await createProduct(payload);
         toast.success("Product created");
       }
-
       qc.invalidateQueries({ queryKey: ["products"], exact: false });
       setOpen(false);
     } catch (e: any) {
@@ -362,48 +397,39 @@ export default function Stock() {
 
   const exportExcel = () => {
     const data = rows.map((p, idx) => {
+      const stock_unit: StockUnit = ((p as any).stock_unit === "WEIGHT" ? "WEIGHT" : "PCS") as StockUnit;
+      const selling_price_unit: PriceUnit = ((p as any).selling_price_unit === "KG" ? "KG" : "PCS") as PriceUnit;
+
       const upb = Math.max(1, Math.trunc(n0(p.units_per_box ?? 1)));
       const pcs = Math.max(0, Math.trunc(n0(p.current_stock ?? 0)));
-      const boxes = Math.floor(pcs / upb);
-      const units = pcs % upb;
+      const { boxes, units } = splitPcsToBoxUnits(pcs, upb);
+
+      const grams = Math.max(0, Math.trunc(n0((p as any).current_stock_grams ?? 0)));
+      const { kg, g } = splitGramsToKgG(grams);
 
       return {
         SN: idx + 1,
-        "Product Ref": p.item_code || p.sku || "",
         SKU: p.sku || "",
+        "Item Code": p.item_code || "",
         "Product Description": p.name || "",
-        "Units / Box": p.units_per_box ?? "",
-        "Price / Pcs (Rs)": Number(p.selling_price ?? 0),
-        Description: p.description || "",
+        "Stock Unit": stock_unit,
+
+        "Units / Box": stock_unit === "PCS" ? (p.units_per_box ?? "") : "",
+        "Stock Boxes": stock_unit === "PCS" ? boxes : "",
+        "Stock Units": stock_unit === "PCS" ? units : "",
+
+        "Stock Kg": stock_unit === "WEIGHT" ? kg : "",
+        "Stock Grams": stock_unit === "WEIGHT" ? g : "",
+
+        "Price Unit": selling_price_unit,
+        "Selling Price": Number(p.selling_price ?? 0),
         "Cost Price": p.cost_price ?? "",
-
-        // NEW export:
-        "Stock Boxes": boxes,
-        "Stock Units": units,
-        "Current Stock (Pcs)": pcs,
-
         "Reorder Level": p.reorder_level ?? "",
         Active: p.is_active ? "TRUE" : "FALSE",
       };
     });
 
     const ws = XLSX.utils.json_to_sheet(data);
-    ws["!cols"] = [
-      { wch: 6 },
-      { wch: 16 },
-      { wch: 18 },
-      { wch: 34 },
-      { wch: 12 },
-      { wch: 16 },
-      { wch: 42 },
-      { wch: 12 },
-      { wch: 12 },
-      { wch: 12 },
-      { wch: 16 },
-      { wch: 14 },
-      { wch: 10 },
-    ];
-
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "StockItems");
     XLSX.writeFile(wb, "stock-items.xlsx");
@@ -419,11 +445,7 @@ export default function Stock() {
 
       const ws = wb.Sheets[sheetName];
       const json = XLSX.utils.sheet_to_json<any>(ws, { defval: "" });
-
-      if (!json.length) {
-        toast.error("Excel is empty");
-        return;
-      }
+      if (!json.length) return toast.error("Excel is empty");
 
       const bySku = new Map<string, Product>();
       const byItemCode = new Map<string, Product>();
@@ -444,14 +466,12 @@ export default function Stock() {
         const sku = s(rowForm.sku) || genSku();
         const item_code = s(rowForm.item_code);
         const name = s(rowForm.name);
-
         if (!name) {
           skipped++;
           continue;
         }
 
         const payload = toPayload({ ...rowForm, sku });
-
         const existing = bySku.get(sku) || (item_code ? byItemCode.get(item_code) : undefined);
 
         if (existing) {
@@ -472,22 +492,32 @@ export default function Stock() {
     }
   };
 
-  // NEW: live stock preview (1 box, 25 units => pcs)
+  const renderedRows = useMemo(() => {
+    return rows.map((p) => {
+      const stock_unit: StockUnit = ((p as any).stock_unit === "WEIGHT" ? "WEIGHT" : "PCS") as StockUnit;
+
+      const upb = Math.max(1, Math.trunc(n0(p.units_per_box ?? 1)));
+      const pcs = Math.max(0, Math.trunc(n0(p.current_stock ?? 0)));
+      const { boxes, units } = splitPcsToBoxUnits(pcs, upb);
+
+      const grams = Math.max(0, Math.trunc(n0((p as any).current_stock_grams ?? 0)));
+      const { kg, g } = splitGramsToKgG(grams);
+
+      return { p, stock_unit, upb, pcs, boxes, units, grams, kg, g };
+    });
+  }, [rows]);
+
+  // live preview for dialog
+  const liveStockUnit: StockUnit = form.stock_unit === "WEIGHT" ? "WEIGHT" : "PCS";
+
   const liveUpb = Math.max(1, Math.trunc(n0(nInt(form.units_per_box) ?? 1)));
   const liveBoxes = Math.max(0, Math.trunc(n0(nInt(form.current_stock_boxes) ?? 0)));
   const liveUnits = Math.max(0, Math.trunc(n0(nInt(form.current_stock_units) ?? 0)));
   const livePcs = Math.max(0, liveBoxes * liveUpb + liveUnits);
 
-  // show on table also (optional)
-  const renderedRows = useMemo(() => {
-    return rows.map((p) => {
-      const upb = Math.max(1, Math.trunc(n0(p.units_per_box ?? 1)));
-      const pcs = Math.max(0, Math.trunc(n0(p.current_stock ?? 0)));
-      const boxes = Math.floor(pcs / upb);
-      const units = pcs % upb;
-      return { p, upb, pcs, boxes, units };
-    });
-  }, [rows]);
+  const liveKg = Math.max(0, Math.trunc(n0(nInt(form.current_stock_kg) ?? 0)));
+  const liveG = Math.max(0, Math.trunc(n0(nInt(form.current_stock_g) ?? 0)));
+  const liveGrams = Math.max(0, liveKg * 1000 + liveG);
 
   return (
     <div className="space-y-5">
@@ -495,7 +525,7 @@ export default function Stock() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-2xl font-semibold tracking-tight">Stock Items</div>
-          <div className="text-sm text-muted-foreground">SN • Ref • Description • Units/Box • Stock • Price</div>
+          <div className="text-sm text-muted-foreground">Auto switch: PCS (box/unit) or WEIGHT (kg/g)</div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -555,21 +585,13 @@ export default function Stock() {
 
         <div className="overflow-auto">
           <table className="w-full text-sm">
-            <colgroup>
-              <col style={{ width: "6%" }} />
-              <col style={{ width: "20%" }} />
-              <col style={{ width: "42%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "18%" }} />
-            </colgroup>
-
             <thead className="sticky top-0 z-10 bg-background/90 backdrop-blur border-b">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">SN</th>
-                <th className="px-4 py-3 text-left font-semibold">Product Ref:</th>
-                <th className="px-4 py-3 text-left font-semibold">Product Description</th>
-                <th className="px-4 py-3 text-right font-semibold">Units / Box</th>
-                <th className="px-4 py-3 text-right font-semibold">Price / Pcs (Rs)</th>
+                <th className="px-4 py-3 text-left font-semibold">Ref</th>
+                <th className="px-4 py-3 text-left font-semibold">Description</th>
+                <th className="px-4 py-3 text-right font-semibold">Stock</th>
+                <th className="px-4 py-3 text-right font-semibold">Price</th>
               </tr>
             </thead>
 
@@ -580,15 +602,16 @@ export default function Stock() {
                     Loading…
                   </td>
                 </tr>
-              ) : rows.length === 0 ? (
+              ) : renderedRows.length === 0 ? (
                 <tr>
                   <td className="px-4 py-10 text-muted-foreground" colSpan={5}>
                     No stock items found.
                   </td>
                 </tr>
               ) : (
-                renderedRows.map(({ p, upb, pcs, boxes, units }, idx) => {
+                renderedRows.map(({ p, stock_unit, upb, pcs, boxes, units, kg, g }, idx) => {
                   const ref = (p.item_code || p.sku || "-").toString();
+                  const priceUnit: PriceUnit = ((p as any).selling_price_unit === "KG" ? "KG" : "PCS") as PriceUnit;
 
                   return (
                     <tr
@@ -617,46 +640,42 @@ export default function Stock() {
                             {p.is_active ? "ACTIVE" : "INACTIVE"}
                           </span>
 
-                          <Switch
-                            checked={!!p.is_active}
-                            onCheckedChange={(v) => activeM.mutate({ id: p.id, active: !!v })}
-                          />
+                          <Switch checked={!!p.is_active} onCheckedChange={(v) => activeM.mutate({ id: p.id, active: !!v })} />
                         </div>
                       </td>
 
                       <td className="px-4 py-4 align-top">
                         <div className="font-semibold">{p.name}</div>
-                        {p.description ? (
-                          <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{p.description}</div>
-                        ) : null}
-
+                        {p.description ? <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{p.description}</div> : null}
                         <div className="mt-2 text-xs text-muted-foreground">
-                          Stock: <b>{boxes}</b> box, <b>{units}</b> unit ({pcs} pcs)
-                        </div>
-
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button variant="outline" className="h-8 px-3" onClick={() => openEdit(p)}>
-                            Edit
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="h-8 px-3"
-                            onClick={() => activeM.mutate({ id: p.id, active: !p.is_active })}
-                          >
-                            {p.is_active ? "Deactivate" : "Activate"}
-                          </Button>
+                          Type: <b>{stock_unit}</b> {stock_unit === "PCS" ? <>• UPB: <b>{upb}</b></> : null}
                         </div>
                       </td>
 
-                      <td className="px-4 py-4 align-top text-right font-medium">{p.units_per_box ?? "-"}</td>
+                      <td className="px-4 py-4 align-top text-right">
+                        {stock_unit === "PCS" ? (
+                          <div className="text-sm">
+                            <div>
+                              <b>{boxes}</b> box, <b>{units}</b> unit
+                            </div>
+                            <div className="text-xs text-muted-foreground">{pcs} pcs (DB)</div>
+                          </div>
+                        ) : (
+                          <div className="text-sm">
+                            <div>
+                              <b>{kg}</b> kg, <b>{g}</b> g
+                            </div>
+                            <div className="text-xs text-muted-foreground">{(p as any).current_stock_grams ?? 0} g (DB)</div>
+                          </div>
+                        )}
+                      </td>
 
                       <td className="px-4 py-4 align-top text-right">
-                        <div className="font-semibold">Rs {money(p.selling_price)}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">Cost: {money(p.cost_price)}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          DB Stock (pcs): {p.current_stock ?? 0}
-                          {p.reorder_level ? ` • Reorder: ${p.reorder_level}` : ""}
+                        <div className="font-semibold">
+                          Rs {money(p.selling_price)} / {priceUnit}
                         </div>
+                        <div className="mt-1 text-xs text-muted-foreground">Cost: {money(p.cost_price)}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{p.reorder_level ? `Reorder: ${p.reorder_level}` : ""}</div>
                       </td>
                     </tr>
                   );
@@ -667,7 +686,7 @@ export default function Stock() {
         </div>
 
         <div className="border-t px-4 py-3 text-xs text-muted-foreground">
-          Stock input is now <b>Boxes + Units</b>, saved as total <b>pcs</b> in DB (<b>current_stock</b>).
+          PCS saves into <b>current_stock</b> (pcs). WEIGHT saves into <b>current_stock_grams</b> (grams).
         </div>
       </Card>
 
@@ -679,8 +698,7 @@ export default function Stock() {
           </DialogHeader>
 
           <div className="grid gap-4 md:grid-cols-2">
-            {/* SKU auto */}
-            <Input placeholder="SKU (auto)" value={form.sku} readOnly className="bg-muted/30" title="SKU is auto generated" />
+            <Input placeholder="SKU (auto)" value={form.sku} readOnly className="bg-muted/30" />
 
             <Input placeholder="Item Code" value={form.item_code ?? ""} onChange={(e) => setForm({ ...form, item_code: e.target.value })} />
 
@@ -688,57 +706,118 @@ export default function Stock() {
 
             <Input placeholder="Description" value={form.description ?? ""} onChange={(e) => setForm({ ...form, description: e.target.value })} />
 
-            <Input
-              placeholder="Units / Box (e.g. 25)"
-              inputMode="numeric"
-              value={String(form.units_per_box ?? "")}
-              onChange={(e) => {
-                const v = e.target.value;
-                setForm((prev: any) => {
-                  const next = { ...prev, units_per_box: v };
-                  // auto-correct units if they became >= UPB
-                  const upb = Math.max(1, Math.trunc(n0(nInt(v) ?? 1)));
-                  const units = Math.max(0, Math.trunc(n0(nInt(next.current_stock_units) ?? 0)));
-                  if (units >= upb) next.current_stock_units = String(Math.max(0, upb - 1));
-                  return next;
-                });
-              }}
-            />
-
-            {/* NEW: stock entry as boxes + units */}
+            {/* Stock unit selector */}
             <div className="space-y-1">
-              <div className="text-xs text-muted-foreground">Stock Entry</div>
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  placeholder="Stock Boxes (e.g. 1)"
-                  inputMode="numeric"
-                  value={String(form.current_stock_boxes ?? "")}
-                  onChange={(e) => setForm({ ...form, current_stock_boxes: e.target.value })}
-                />
-                <Input
-                  placeholder="Stock Units (e.g. 0)"
-                  inputMode="numeric"
-                  value={String(form.current_stock_units ?? "")}
-                  onChange={(e) => setForm({ ...form, current_stock_units: e.target.value })}
-                />
-              </div>
-
-              <div className="text-[11px] text-muted-foreground">
-                Example: <b>1 box</b> + <b>0 unit</b> with <b>{liveUpb}</b> units/box = <b>{livePcs}</b> pcs (saved in DB)
-              </div>
+              <div className="text-xs text-muted-foreground">Stock Type</div>
+              <select
+                className="h-10 rounded-md border px-3 bg-background w-full"
+                value={form.stock_unit}
+                onChange={(e) => {
+                  const v: StockUnit = e.target.value === "WEIGHT" ? "WEIGHT" : "PCS";
+                  setForm((prev: any) => ({
+                    ...prev,
+                    stock_unit: v,
+                    selling_price_unit: v === "WEIGHT" ? "KG" : "PCS",
+                    // optional cleanup so old values don't confuse client
+                    ...(v === "WEIGHT"
+                      ? { units_per_box: "", current_stock_boxes: "", current_stock_units: "" }
+                      : { current_stock_kg: "", current_stock_g: "" }),
+                  }));
+                }}
+              >
+                <option value="PCS">PCS (Boxes + Units)</option>
+                <option value="WEIGHT">WEIGHT (Kg + Grams)</option>
+              </select>
             </div>
 
-            <Input
-              placeholder="Reorder Level"
-              inputMode="numeric"
-              value={String(form.reorder_level ?? "")}
-              onChange={(e) => setForm({ ...form, reorder_level: e.target.value })}
-            />
+            {/* Price unit */}
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">Selling Price Unit</div>
+              <select
+                className="h-10 rounded-md border px-3 bg-background w-full"
+                value={form.selling_price_unit}
+                onChange={(e) => setForm({ ...form, selling_price_unit: e.target.value === "KG" ? "KG" : "PCS" })}
+                disabled={liveStockUnit === "WEIGHT"}
+                title={liveStockUnit === "WEIGHT" ? "Weight items use price per KG" : ""}
+              >
+                <option value="PCS">PCS</option>
+                <option value="KG">KG</option>
+              </select>
+              {liveStockUnit === "WEIGHT" ? <div className="text-[11px] text-muted-foreground">Weight items use price per KG.</div> : null}
+            </div>
+
+            {/* PCS inputs */}
+            {liveStockUnit === "PCS" ? (
+              <>
+                <Input
+                  placeholder="Units / Box (e.g. 20)"
+                  inputMode="numeric"
+                  value={String(form.units_per_box ?? "")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setForm((prev: any) => {
+                      const next = { ...prev, units_per_box: v };
+                      const upb = Math.max(1, Math.trunc(n0(nInt(v) ?? 1)));
+                      const units = Math.max(0, Math.trunc(n0(nInt(next.current_stock_units) ?? 0)));
+                      if (units >= upb) next.current_stock_units = String(Math.max(0, upb - 1));
+                      return next;
+                    });
+                  }}
+                />
+
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">Stock Entry</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      placeholder="Stock Boxes (e.g. 1)"
+                      inputMode="numeric"
+                      value={String(form.current_stock_boxes ?? "")}
+                      onChange={(e) => setForm({ ...form, current_stock_boxes: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Stock Units (e.g. 10)"
+                      inputMode="numeric"
+                      value={String(form.current_stock_units ?? "")}
+                      onChange={(e) => setForm({ ...form, current_stock_units: e.target.value })}
+                    />
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Preview: <b>{liveBoxes}</b> box + <b>{liveUnits}</b> unit @ <b>{liveUpb}</b> UPB = <b>{livePcs}</b> pcs (saved)
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {/* WEIGHT inputs */}
+            {liveStockUnit === "WEIGHT" ? (
+              <div className="space-y-1 md:col-span-2">
+                <div className="text-xs text-muted-foreground">Stock Entry (Weight)</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Stock Kg (e.g. 5)"
+                    inputMode="numeric"
+                    value={String(form.current_stock_kg ?? "")}
+                    onChange={(e) => setForm({ ...form, current_stock_kg: e.target.value })}
+                  />
+                  <Input
+                    placeholder="Stock Grams (e.g. 250)"
+                    inputMode="numeric"
+                    value={String(form.current_stock_g ?? "")}
+                    onChange={(e) => setForm({ ...form, current_stock_g: e.target.value })}
+                  />
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Preview: <b>{liveKg}</b> kg + <b>{liveG}</b> g = <b>{liveGrams}</b> grams (saved)
+                </div>
+              </div>
+            ) : null}
+
+            <Input placeholder="Reorder Level" inputMode="numeric" value={String(form.reorder_level ?? "")} onChange={(e) => setForm({ ...form, reorder_level: e.target.value })} />
 
             <Input placeholder="Cost Price" inputMode="decimal" value={String(form.cost_price ?? "")} onChange={(e) => setForm({ ...form, cost_price: e.target.value })} />
 
             <Input
-              placeholder="Selling Price *"
+              placeholder={liveStockUnit === "WEIGHT" ? "Selling Price / KG *" : "Selling Price / PCS *"}
               inputMode="decimal"
               value={String(form.selling_price ?? "")}
               onChange={(e) => setForm({ ...form, selling_price: e.target.value })}
@@ -764,4 +843,5 @@ export default function Stock() {
     </div>
   );
 }
+
 

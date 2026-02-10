@@ -372,14 +372,18 @@ export default function InvoicePrint() {
             salesRepPhone={inv.sales_rep_phone || ""}
             items={docItems}
             totals={{
-              subtotal: Number(inv.subtotal || 0),
-              vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
-              vat_amount: Number(inv.vat_amount || 0),
-              total_amount: Number(inv.total_amount || 0),
-              previous_balance: Number(inv.previous_balance || 0),
-              amount_paid: Number(inv.amount_paid || 0),
-              balance_remaining: Number(inv.balance_remaining || 0),
-            }}
+             subtotal: Number(inv.subtotal || 0),
+             vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
+             vat_amount: Number(inv.vat_amount || 0),
+             total_amount: Number(inv.total_amount || 0),
+
+            previous_balance: Number(inv.previous_balance || 0),
+
+          // ✅ always show row, but blank when zero
+            amount_paid: n(inv.amount_paid) > 0 ? Number(inv.amount_paid) : null,
+            balance_remaining: n(inv.balance_remaining) > 0 ? Number(inv.balance_remaining) : null,
+         }}
+
             preparedBy={"Manish"}
             deliveredBy={""}
           />

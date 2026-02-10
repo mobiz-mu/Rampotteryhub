@@ -103,6 +103,15 @@ function money(v: any) {
   if (!Number.isFinite(x)) return "";
   return x.toLocaleString("en-MU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+function moneyBlankZero(v: any) {
+  // ✅ blank when null/undefined/"" OR numeric 0
+  if (v === null || v === undefined || v === "") return "";
+  const x = Number(v);
+  if (!Number.isFinite(x) || x === 0) return "";
+  return x.toLocaleString("en-MU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function txt(v: any) {
   return String(v ?? "").trim();
 }
@@ -309,16 +318,17 @@ function NotesTotals({ totals, balanceRemaining }: { totals: Totals; balanceRema
           <span>GROSS TOTAL</span>
           <span>{money(n2(totals?.total_amount) + n2(totals?.previous_balance))}</span>
         </div>
-        <div className="rpdoc-totalRow">
-          <span>AMOUNT PAID</span>
-          <span>{money(totals?.amount_paid)}</span>
-        </div>
-        <div className="rpdoc-totalRow">
-          <span>BALANCE REMAINING</span>
-          <span>{money(balanceRemaining)}</span>
-        </div>
+       <div className="rpdoc-totalRow">
+        <span>AMOUNT PAID</span>
+        <span>{moneyBlankZero(totals?.amount_paid)}</span>
       </div>
+
+      <div className="rpdoc-totalRow">
+      <span>BALANCE REMAINING</span>
+      <span></span>
+     </div>
     </div>
+   </div>
   );
 }
 
@@ -393,11 +403,15 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   const docItems = useMemo(() => (items || []).map((x, i) => ({ ...x, sn: x?.sn ?? i + 1 })), [items]);
 
   const balanceRemaining = useMemo(() => {
-    const gross = n2(totals?.total_amount) + n2(totals?.previous_balance);
-    return Number.isFinite(Number(totals?.balance_remaining))
-      ? n2(totals?.balance_remaining)
-      : Math.max(0, gross - n2(totals?.amount_paid));
-  }, [totals?.total_amount, totals?.previous_balance, totals?.amount_paid, totals?.balance_remaining]);
+  const gross = n2(totals?.total_amount) + n2(totals?.previous_balance);
+
+  if (totals?.balance_remaining !== null && totals?.balance_remaining !== undefined) {
+    return Math.max(0, n2(totals.balance_remaining));
+  }
+
+  return Math.max(0, gross - n2(totals?.amount_paid));
+}, [totals?.total_amount, totals?.previous_balance, totals?.amount_paid, totals?.balance_remaining]);
+
 
   const splitFooterToSecondPage = docItems.length >= 7;
   const totalPages = splitFooterToSecondPage ? 2 : 1;

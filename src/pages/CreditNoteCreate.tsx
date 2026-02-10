@@ -133,13 +133,31 @@ function rawNum(v: any) {
 }
 
 function recalc(row: CreditLine): CreditLine {
-  const uom: Uom = row.uom === "PCS" ? "PCS" : row.uom === "KG" ? "KG" : "BOX";
+  const uom: Uom =
+    row.uom === "PCS" ? "PCS" :
+    row.uom === "KG" ? "KG" :
+    "BOX";
 
-  const rawQty = n2(row.box_qty);
-  const qtyInput = uom === "KG" ? Math.max(0, roundKg(rawQty)) : Math.max(0, Math.trunc(rawQty));
+  const raw = n2(row.box_qty);
 
   const upb = uom === "BOX" ? safeUpb(row.units_per_box) : 1;
-  const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
+
+  let box_qty = 0;
+  let pcs_qty = 0;
+  let total_qty = 0;
+
+  if (uom === "BOX") {
+    box_qty = Math.max(0, Math.trunc(raw));
+    total_qty = box_qty * upb;
+  } 
+  else if (uom === "PCS") {
+    pcs_qty = Math.max(0, Math.trunc(raw));
+    total_qty = pcs_qty;
+  } 
+  else if (uom === "KG") {
+    box_qty = Math.max(0, roundKg(raw));
+    total_qty = box_qty;
+  }
 
   const rate = clampPct(row.vat_rate);
 
@@ -147,23 +165,21 @@ function recalc(row: CreditLine): CreditLine {
   const unitVatRaw = unitEx * (rate / 100);
   const unitIncRaw = unitEx + unitVatRaw;
 
-  const unitVat = roundTo(unitVatRaw, 3);
-  const unitInc = roundTo(unitIncRaw, 3);
-
-  const lineTotal = r2(n2(totalQty) * unitIncRaw);
-
   return {
     ...row,
     uom,
-    box_qty: qtyInput,
+    box_qty,
+    pcs_qty,
     units_per_box: upb,
-    total_qty: totalQty,
+    total_qty,
+
     vat_rate: rate,
-    unit_vat: unitVat,
-    unit_price_incl_vat: unitInc,
-    line_total: lineTotal,
+    unit_vat: roundTo(unitVatRaw, 3),
+    unit_price_incl_vat: roundTo(unitIncRaw, 3),
+    line_total: r2(total_qty * unitIncRaw),
   };
 }
+
 
 function blankLine(defaultVat: number): CreditLine {
   return recalc({
@@ -584,10 +600,11 @@ export default function CreditNoteCreate() {
      Save / Print
 ============================= */
   function isQtyValid(l: CreditLine) {
-    const q = n2(l.box_qty);
-    if (l.uom === "KG") return q > 0;
-    return Math.trunc(q) > 0;
-  }
+  if (l.uom === "PCS") return n2(l.pcs_qty) > 0;
+  if (l.uom === "KG") return n2(l.box_qty) > 0;
+  return Math.trunc(n2(l.box_qty)) > 0; // BOX
+}
+
 
   async function onSave() {
     if (!customerId) return toast.error("Please select a customer.");
@@ -678,8 +695,8 @@ export default function CreditNoteCreate() {
           item_code: l.item_code || null,
           description: l.description || null,
           uom,
-          box_qty: uom === "BOX" || uom === "KG" ? qtyInput : null,
-          pcs_qty: uom === "PCS" ? qtyInput : null,
+          box_qty: uom === "BOX" || uom === "KG" ? n2(l.box_qty) : 0,
+          pcs_qty: uom === "PCS" ? n2(l.pcs_qty) : 0,
           units_per_box: upb,
           total_qty: totalQty,
           unit_price_excl_vat: unitEx,
@@ -1370,7 +1387,8 @@ export default function CreditNoteCreate() {
             sn: i + 1,
             item_code: r.item_code,
             uom: r.uom,
-            box_qty: r.uom === "PCS" ? Math.trunc(n2(r.box_qty)) : n2(r.box_qty),
+            box_qty: r.uom === "BOX" || r.uom === "KG" ? n2(r.box_qty) : 0,
+            pcs_qty: r.uom === "PCS" ? Math.trunc(n2(r.pcs_qty)) : 0,
             units_per_box: r.uom === "BOX" ? Math.trunc(n2(r.units_per_box)) : 1,
             total_qty: n2(r.total_qty),
             description: r.description,

@@ -48,8 +48,9 @@ type InvoiceLine = {
 
   uom: Uom;
 
-  box_qty: number; // qty input (BOX/PCS integer, KG decimal)
-  units_per_box: number; // BOX only (editable)
+  box_qty: number; // BOX qty OR KG weight
+  pcs_qty: number; // ✅ PCS qty
+  units_per_box: number; // BOX only
   total_qty: number; // computed
 
   vat_rate: number; // per-row editable
@@ -129,39 +130,48 @@ function roundTo(v: any, dp: number) {
 }
 
 function recalc(row: InvoiceLine): InvoiceLine {
-  const uom: Uom = row.uom === "PCS" ? "PCS" : row.uom === "KG" ? "KG" : "BOX";
+  const uom: Uom =
+    row.uom === "PCS" ? "PCS" :
+    row.uom === "KG" ? "KG" :
+    "BOX";
 
-  // Qty rules:
-  const rawQty = n2(row.box_qty);
-  const qtyInput = uom === "KG" ? Math.max(0, roundKg(rawQty)) : Math.max(0, Math.trunc(rawQty));
+  const rawInput = n2(row.box_qty);
 
   const upb = uom === "BOX" ? safeUpb(row.units_per_box) : 1;
-  const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
+
+  let box_qty = 0;
+  let pcs_qty = 0;
+  let total_qty = 0;
+
+  if (uom === "BOX") {
+    box_qty = Math.max(0, Math.trunc(rawInput));
+    total_qty = box_qty * upb;
+  } else if (uom === "PCS") {
+    pcs_qty = Math.max(0, Math.trunc(rawInput));
+    total_qty = pcs_qty;
+  } else {
+    // KG
+    box_qty = Math.max(0, roundKg(rawInput));
+    total_qty = box_qty;
+  }
 
   const rate = clampPct(row.vat_rate);
 
-  // ✅ keep precision for per-unit VAT/INC (no 2dp rounding here)
   const unitEx = Math.max(0, n2(row.unit_price_excl_vat));
   const unitVatRaw = unitEx * (rate / 100);
   const unitIncRaw = unitEx + unitVatRaw;
 
-  // store nicely (3dp is enough for 2.875); you can change to 4/6 if you want
-  const unitVat = roundTo(unitVatRaw, 3);
-  const unitInc = roundTo(unitIncRaw, 3);
-
-  // ✅ only final totals are 2dp money
-  const lineTotal = r2(n2(totalQty) * unitIncRaw);
-
   return {
     ...row,
     uom,
-    box_qty: qtyInput,
+    box_qty,
+    pcs_qty,
     units_per_box: upb,
-    total_qty: totalQty,
+    total_qty,
     vat_rate: rate,
-    unit_vat: unitVat,
-    unit_price_incl_vat: unitInc,
-    line_total: lineTotal,
+    unit_vat: roundTo(unitVatRaw, 3),
+    unit_price_incl_vat: roundTo(unitIncRaw, 3),
+    line_total: r2(total_qty * unitIncRaw),
   };
 }
 
@@ -186,6 +196,7 @@ function blankLine(defaultVat: number): InvoiceLine {
     description: "",
     uom: "BOX",
     box_qty: 0,
+    pcs_qty: 0,
     units_per_box: 1,
     total_qty: 0,
     vat_rate: clampPct(defaultVat),
@@ -203,20 +214,26 @@ function setLineTotalQty(id: string, totalQty: number) {
   setLines((prev) =>
     prev.map((r) => {
       if (r.id !== id) return r;
+
       const tq = Math.max(0, r.uom === "KG" ? roundKg(totalQty) : Math.trunc(totalQty));
 
-      // If BOX: total_qty = box_qty * units_per_box  => box_qty = total_qty / units_per_box
       if (r.uom === "BOX") {
         const upb = safeUpb(r.units_per_box);
         const bq = upb > 0 ? tq / upb : 0;
         return recalc({ ...r, box_qty: bq, total_qty: tq } as InvoiceLine);
       }
 
-      // PCS / KG => total_qty == qty input
+      if (r.uom === "PCS") {
+        // store PCS in pcs_qty, but UI input uses box_qty
+        return recalc({ ...r, box_qty: tq, pcs_qty: tq, total_qty: tq } as InvoiceLine);
+      }
+
+      // KG
       return recalc({ ...r, box_qty: tq, total_qty: tq } as InvoiceLine);
     })
   );
 }
+
 
 function keepNumText(s: string) {
   // allow "", ".", "2.", "2.4375" while typing
@@ -485,7 +502,8 @@ export default function InvoiceCreate() {
             item_code: it.item_code || it.product?.item_code || it.product?.sku || "",
             description: it.description || it.product?.name || "",
             uom: it.uom === "PCS" ? "PCS" : it.uom === "KG" ? "KG" : "BOX",
-            box_qty: n2(it.box_qty ?? it.pcs_qty ?? 0),
+            box_qty: n2((it.uom === "PCS" ? it.pcs_qty : it.box_qty) ?? 0),
+            pcs_qty: n2(it.pcs_qty ?? 0),
             units_per_box: safeUpb(it.units_per_box ?? 1),
             total_qty: n2(it.total_qty ?? 0),
             vat_rate: clampPct(it.vat_rate ?? v),
@@ -636,7 +654,13 @@ useEffect(() => {
           unit_price_excl_vat: discountedEx,
           vat_rate: clampPct(r.vat_rate || vatDefault),
           uom: nextUom,
-          box_qty: nextUom === "KG" ? Math.max(0, roundKg(n2(r.box_qty || 0))) : Math.max(1, Math.trunc(n2(r.box_qty || 1))),
+          box_qty:
+           nextUom === "KG"
+            ? Math.max(0, roundKg(n2(r.box_qty || 0)))
+            : nextUom === "PCS"
+            ? Math.max(1, Math.trunc(n2(r.pcs_qty || r.box_qty || 1)))
+            : Math.max(1, Math.trunc(n2(r.box_qty || 1))),
+            pcs_qty: nextUom === "PCS" ? Math.max(1, Math.trunc(n2(r.pcs_qty || r.box_qty || 1))) : 0,
           price_overridden: false,
         } as InvoiceLine);
       })
@@ -665,10 +689,10 @@ useEffect(() => {
      Save / Print
   ============================ */
   function isQtyValid(l: InvoiceLine) {
-    const q = n2(l.box_qty);
-    if (l.uom === "KG") return q > 0;
-    return Math.trunc(q) > 0;
-  }
+  if (l.uom === "PCS") return n2(l.pcs_qty) > 0;
+  if (l.uom === "KG") return n2(l.box_qty) > 0;
+  return Math.trunc(n2(l.box_qty)) > 0; // BOX
+}
 
   async function onSave() {
     if (!customerId) return toast.error("Please select a customer.");
@@ -703,7 +727,13 @@ useEffect(() => {
         items: realLines.map((l) => {
           const uom: Uom = l.uom === "PCS" ? "PCS" : l.uom === "KG" ? "KG" : "BOX";
 
-          const qtyInput = uom === "KG" ? Math.max(0, roundKg(n2(l.box_qty))) : Math.max(0, Math.trunc(n2(l.box_qty)));
+          const qtyInput =
+          uom === "KG"
+          ? Math.max(0, roundKg(n2(l.box_qty)))
+          : uom === "PCS"
+          ? Math.max(0, Math.trunc(n2(l.pcs_qty)))
+          : Math.max(0, Math.trunc(n2(l.box_qty)));
+
           const upb = uom === "BOX" ? safeUpb(l.units_per_box) : 1;
           const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
 
@@ -717,9 +747,8 @@ useEffect(() => {
             description: l.description || null,
             uom,
 
-            // BOX => box_qty integer, PCS => pcs_qty integer, KG => box_qty numeric
-            box_qty: uom === "BOX" || uom === "KG" ? qtyInput : null,
-            pcs_qty: uom === "PCS" ? qtyInput : null,
+            box_qty: uom === "BOX" || uom === "KG" ? qtyInput : 0,
+            pcs_qty: uom === "PCS" ? qtyInput : 0,
 
             units_per_box: upb,
             total_qty: totalQty,
@@ -1411,7 +1440,8 @@ useEffect(() => {
           sn: i + 1,
           item_code: r.item_code,
           uom: r.uom,
-          box_qty: r.uom === "PCS" ? Math.trunc(n2(r.box_qty)) : n2(r.box_qty),
+          box_qty: r.uom === "BOX" || r.uom === "KG" ? n2(r.box_qty) : 0,
+          pcs_qty: r.uom === "PCS" ? Math.trunc(n2(r.pcs_qty)) : 0,
           units_per_box: r.uom === "BOX" ? Math.trunc(n2(r.units_per_box)) : 1,
           total_qty: n2(r.total_qty),
           description: r.description,
