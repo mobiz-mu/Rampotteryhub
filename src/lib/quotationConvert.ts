@@ -7,15 +7,18 @@ const n2 = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const clampPct = (v: any) => Math.max(0, Math.min(100, n2(v)));
 const up = (s: any) => String(s || "").trim().toUpperCase();
 
+function normUom(u: any): "BOX" | "PCS" | "KG" | "G" | "BAG" {
+  const x = up(u);
+  if (x === "PCS") return "PCS";
+  if (x === "KG") return "KG";
+  if (x === "G" || x === "GRAM" || x === "GRAMS") return "G";
+  if (x === "BAG" || x === "BAGS") return "BAG";
+  return "BOX";
+}
+
 /**
- * Convert a quotation -> invoice (1 click)
- * - Uses quotation_items invoice-style columns (BOX/PCS + UPB + total_qty + unit ex/vat/inc + line_total)
- * - Creates invoice using your existing invoice engine
- * - Marks quotation as CONVERTED
- *
- * NOTE:
- * If your quotations table doesn't have converted_invoice_id / converted_at columns,
- * we gracefully fall back to only updating status.
+ * Convert quotation -> invoice
+ * Supports multi-UOM quotation items.
  */
 export async function convertQuotationToInvoice(quotationId: number) {
   const qid = Number(quotationId);
@@ -28,16 +31,29 @@ export async function convertQuotationToInvoice(quotationId: number) {
   if (!items?.length) throw new Error("Quotation has no items");
 
   const vatPercent = clampPct((q as any).vat_percent ?? 15);
-  const discountPercent = clampPct((q as any).discount_percent ?? 0);
 
-  // ✅ Map quotation_items -> invoice items (same column logic as invoice UI/print)
   const mappedItems = (items as any[]).map((it) => {
-    const uom = up(it.uom) === "PCS" ? "PCS" : "BOX";
+    const uom = normUom(it.uom);
 
-    // In quotation UI, "box_qty" is the input qty (boxes OR pcs). Keep the same meaning.
-    const qtyInput = Math.max(0, Math.trunc(n2(it.box_qty ?? 0)));
-    const upb = uom === "PCS" ? 1 : Math.max(1, Math.trunc(n2(it.units_per_box ?? 1) || 1));
-    const totalQty = uom === "PCS" ? qtyInput : qtyInput * upb;
+    const box_qty = n2(it.box_qty ?? 0);
+    const pcs_qty = n2(it.pcs_qty ?? 0);
+    const grams_qty = n2(it.grams_qty ?? 0);
+    const bags_qty = n2(it.bags_qty ?? 0);
+    const upb = uom === "BOX" ? Math.max(1, Math.trunc(n2(it.units_per_box ?? 1) || 1)) : 1;
+
+    // ✅ Use stored total_qty (trusted) — fallback compute if needed
+    const totalQty =
+      n2(it.total_qty) > 0
+        ? n2(it.total_qty)
+        : uom === "BOX"
+        ? Math.trunc(box_qty) * upb
+        : uom === "PCS"
+        ? Math.trunc(pcs_qty)
+        : uom === "KG"
+        ? box_qty
+        : uom === "G"
+        ? Math.trunc(grams_qty)
+        : Math.trunc(bags_qty);
 
     const unitEx = Math.max(0, n2(it.unit_price_excl_vat ?? 0));
     const unitVat = Math.max(0, n2(it.unit_vat ?? 0));
@@ -48,54 +64,46 @@ export async function convertQuotationToInvoice(quotationId: number) {
       product_id: it.product_id ?? null,
       description: it.description ?? null,
 
-      // invoice-style qty columns
       uom,
-      box_qty: uom === "BOX" ? qtyInput : null,
-      pcs_qty: uom === "PCS" ? qtyInput : null, // keep for compatibility if your invoice schema has pcs_qty
+
+      // Keep as close as possible to invoice schema:
+      box_qty: uom === "BOX" ? Math.trunc(box_qty) : uom === "KG" ? box_qty : null,
+      pcs_qty: uom === "PCS" ? Math.trunc(pcs_qty) : null,
+      grams_qty: uom === "G" ? Math.trunc(grams_qty) : null,
+      bags_qty: uom === "BAG" ? Math.trunc(bags_qty) : null,
 
       units_per_box: upb,
       total_qty: totalQty,
 
-      // invoice-style price columns
       unit_price_excl_vat: unitEx,
       unit_vat: unitVat,
       unit_price_incl_vat: unitInc,
       line_total: lineTotal,
 
-      // some invoice engines want a vat_rate too
       vat_rate: vatPercent,
     };
   });
 
-  // ✅ Build invoice payload to match your InvoiceCreate.tsx engine shape
-  // (If your createInvoice uses different keys, adjust here only.)
   const payload: any = {
-    // party
     customerId: (q as any).customer_id ?? null,
     clientName: null,
     print_name_mode: "CUSTOMER",
 
-    // meta
     invoiceDate: (q as any).quotation_date || new Date().toISOString().slice(0, 10),
     purchaseOrderNo: null,
 
-    // tax/discount (global)
     vatPercent,
-    discountPercent,
+    discountPercent: clampPct((q as any).discount_percent ?? 0),
 
-    // balances (not applicable when converting)
     previousBalance: 0,
     amountPaid: 0,
 
-    // sales rep
     salesRep: (q as any).sales_rep ?? null,
     salesRepPhone: (q as any).sales_rep_phone ?? null,
 
-    // items
     items: mappedItems,
   };
 
-  // 1) Create invoice
   const invRes: any = await createInvoice(payload);
 
   const invoiceId = Number(invRes?.id ?? invRes?.invoice_id ?? 0);
@@ -105,10 +113,8 @@ export async function convertQuotationToInvoice(quotationId: number) {
 
   const invoiceNumber = String(invRes?.invoice_number || invRes?.invoiceNo || "").trim() || null;
 
-  // 2) Mark quotation converted (always update status)
   await setQuotationStatus(qid, "CONVERTED" as any);
 
-  // 3) Optional: store link columns if they exist (graceful fallback)
   try {
     const { error } = await supabase
       .from("quotations")
@@ -118,16 +124,13 @@ export async function convertQuotationToInvoice(quotationId: number) {
       })
       .eq("id", qid);
 
-    // If columns don't exist, Postgres error is usually 42703 (undefined_column)
     if (error) {
       const msg = String((error as any).message || "");
       const code = String((error as any).code || "");
-      if (code !== "42703" && !msg.toLowerCase().includes("column")) {
-        throw new Error(msg);
-      }
+      if (code !== "42703" && !msg.toLowerCase().includes("column")) throw new Error(msg);
     }
   } catch {
-    // ignore: status already set to CONVERTED
+    // ignore
   }
 
   return { invoiceId, invoiceNumber };

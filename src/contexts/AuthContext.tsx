@@ -1,16 +1,32 @@
 // src/contexts/AuthContext.tsx
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 
-export type AppRole = "admin" | "manager" | "accountant" | "sales" | "viewer";
+/* =====================================================
+   Types
+===================================================== */
+
+export type AppRole =
+  | "admin"
+  | "manager"
+  | "accountant"
+  | "sales"
+  | "viewer";
+
 export type PermissionsMap = Record<string, boolean>;
 
 type AuthCtx = {
   session: Session | null;
   user: User | null;
 
-  /** ✅ single loading flag that prevents flicker */
+  /** Single loading flag (prevents ProtectedRoute flicker) */
   loading: boolean;
 
   profile: any | null;
@@ -21,7 +37,11 @@ type AuthCtx = {
 
   can: (key: string) => boolean;
 
-  signIn: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  signIn: (
+    email: string,
+    password: string
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+
   signOut: () => Promise<void>;
 };
 
@@ -33,9 +53,20 @@ export function useAuth() {
   return v;
 }
 
+/* =====================================================
+   Helpers
+===================================================== */
+
 function normRole(v: any): AppRole {
   const r = String(v || "").toLowerCase();
-  if (r === "admin" || r === "manager" || r === "accountant" || r === "sales" || r === "viewer") return r;
+  if (
+    r === "admin" ||
+    r === "manager" ||
+    r === "accountant" ||
+    r === "sales" ||
+    r === "viewer"
+  )
+    return r;
   return "viewer";
 }
 
@@ -44,59 +75,87 @@ function normPerms(v: any): PermissionsMap {
   return v as PermissionsMap;
 }
 
+/* =====================================================
+   Provider
+===================================================== */
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<any>(null);
 
   const [sessionLoading, setSessionLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
 
-  const [profile, setProfile] = useState<any>(null);
-
   const user = session?.user ?? null;
 
-  // 1) Session bootstrap + auth changes
-useEffect(() => {
-  let alive = true;
-  const bootstrapped = { current: false };
+  /* =====================================================
+     1️⃣ Persist UUID for Express API auth
+     (x-rp-user header)
+  ===================================================== */
 
-  (async () => {
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (!alive) return;
-      if (error) console.error("getSession error:", error);
-
-      setSession(data.session ?? null);
-    } catch (e) {
-      console.error("getSession crash:", e);
-    } finally {
-      if (!alive) return;
-      bootstrapped.current = true;
-      setSessionLoading(false);
+  useEffect(() => {
+    if (user?.id) {
+      localStorage.setItem("x-rp-user", user.id);
+    } else {
+      localStorage.removeItem("x-rp-user");
     }
-  })();
+  }, [user?.id]);
 
-  const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-    if (!alive) return;
+  /* =====================================================
+     2️⃣ Session bootstrap + auth state changes
+  ===================================================== */
 
-    setSession(newSession ?? null);
+  useEffect(() => {
+    let alive = true;
+    let bootstrapped = false;
 
-    // ✅ critical: DO NOT end loading until bootstrap finished
-    if (bootstrapped.current) setSessionLoading(false);
-  });
+    (async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!alive) return;
 
-  return () => {
-    alive = false;
-    sub.subscription.unsubscribe();
-  };
-}, []);
+        if (error) {
+          console.error("getSession error:", error.message);
+        }
 
-  // 2) Load rp_users (authority for access control)
+        setSession(data.session ?? null);
+      } catch (e) {
+        console.error("getSession crash:", e);
+      } finally {
+        if (!alive) return;
+        bootstrapped = true;
+        setSessionLoading(false);
+      }
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event, newSession) => {
+        if (!alive) return;
+
+        setSession(newSession ?? null);
+
+        if (bootstrapped) {
+          setSessionLoading(false);
+        }
+      }
+    );
+
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  /* =====================================================
+     3️⃣ Load rp_users profile (authority layer)
+  ===================================================== */
+
   useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
-        if (!user) {
+        if (!user?.id) {
           if (alive) {
             setProfile(null);
             setProfileLoading(false);
@@ -121,7 +180,7 @@ useEffect(() => {
         }
 
         if (!data) {
-          // user exists but rp_users row not created
+          // Auth user exists but no rp_users row
           setProfile(null);
           return;
         }
@@ -146,18 +205,39 @@ useEffect(() => {
     };
   }, [user?.id]);
 
+  /* =====================================================
+     Auth actions
+  ===================================================== */
+
   async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
     if (error) return { ok: false as const, error: error.message };
     return { ok: true as const };
   }
 
   async function signOut() {
+    localStorage.removeItem("x-rp-user");
     await supabase.auth.signOut();
   }
 
-  const role: AppRole = useMemo(() => normRole(profile?.role), [profile?.role]);
-  const permissions: PermissionsMap = useMemo(() => normPerms(profile?.permissions), [profile?.permissions]);
+  /* =====================================================
+     Derived values
+  ===================================================== */
+
+  const role: AppRole = useMemo(
+    () => normRole(profile?.role),
+    [profile?.role]
+  );
+
+  const permissions: PermissionsMap = useMemo(
+    () => normPerms(profile?.permissions),
+    [profile?.permissions]
+  );
+
   const isAdmin = role === "admin";
 
   const can = useMemo(() => {
@@ -169,9 +249,12 @@ useEffect(() => {
     };
   }, [isAdmin, permissions]);
 
-  // ✅ This is the key fix: prevent ProtectedRoute flicker
-  const loading = sessionLoading || (session ? profileLoading : false);
+  /* =====================================================
+     FINAL LOADING STATE (no flicker)
+  ===================================================== */
 
+  const loading =
+    sessionLoading || (session ? profileLoading : false);
 
   const value = useMemo<AuthCtx>(
     () => ({
@@ -186,7 +269,16 @@ useEffect(() => {
       signIn,
       signOut,
     }),
-    [session, user, loading, profile, role, permissions, isAdmin, can]
+    [
+      session,
+      user,
+      loading,
+      profile,
+      role,
+      permissions,
+      isAdmin,
+      can,
+    ]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

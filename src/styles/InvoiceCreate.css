@@ -1050,6 +1050,11 @@
 }
 
 
+/* Optional: UOM dropdown slightly wider to fit "Grams" / "Bags" */
+.inv-input--uom{
+  min-width: 88px;
+}
+
 
 
 

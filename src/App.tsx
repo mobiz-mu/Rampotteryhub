@@ -124,6 +124,8 @@ export default function App() {
                 <Route path="suppliers" element={<Suppliers />} />
                 <Route path="ap/bills" element={<SupplierBills />} />
                 <Route path="ap/payments" element={<SupplierPayments />} />
+                <Route path="/suppliers" element={<Suppliers />} />
+                <Route path="/suppliers/new" element={<Suppliers />} />
 
                 {/* ✅ FIX: make these relative since they’re inside "/" shell */}
                 <Route path="aging" element={<AgingReport />} />

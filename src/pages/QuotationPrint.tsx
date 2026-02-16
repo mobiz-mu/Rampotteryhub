@@ -59,6 +59,44 @@ const n2 = (v: any) => {
   return Number.isFinite(x) ? x : 0;
 };
 
+function up(s: any) {
+  return String(s || "").trim().toUpperCase();
+}
+
+/** ✅ normalize to your new quotation UOM set */
+function normalizeUom(u: any): "BOX" | "PCS" | "KG" | "G" | "BAG" {
+  const x = up(u);
+  if (x === "PCS") return "PCS";
+  if (x === "KG") return "KG";
+  if (x === "G") return "G";
+  if (x === "GRAM" || x === "GRAMS") return "G";
+  if (x === "BAG" || x === "BAGS") return "BAG";
+  return "BOX";
+}
+
+/**
+ * ✅ Qty input field by UOM
+ * (this matches the recommended schema mapping)
+ * - BOX: box_qty
+ * - PCS: pcs_qty
+ * - KG : box_qty (stored as kg input)
+ * - G  : grams_qty
+ * - BAG: bags_qty
+ */
+function qtyInputByUom(it: any, uom: "BOX" | "PCS" | "KG" | "G" | "BAG") {
+  if (uom === "PCS") return n2(it?.pcs_qty ?? it?.box_qty ?? 0);
+  if (uom === "G") return n2(it?.grams_qty ?? 0);
+  if (uom === "BAG") return n2(it?.bags_qty ?? 0);
+  // BOX or KG
+  return n2(it?.box_qty ?? 0);
+}
+
+function intishQty(uom: "BOX" | "PCS" | "KG" | "G" | "BAG", v: any) {
+  const x = n2(v);
+  // keep KG as numeric (can be 12,3), others are int-like in your DB
+  return uom === "KG" ? x : Math.trunc(x);
+}
+
 export default function QuotationPrint() {
   // ✅ hooks always at top
   const { id } = useParams();
@@ -156,20 +194,56 @@ export default function QuotationPrint() {
     return String(qRow?.quotation_number || qRow?.quotation_no || qRow?.number || qRow?.id || quotationId);
   }, [qRow, quotationId]);
 
+  /**
+   * ✅ Build items for RamPotteryDoc (invoice-style object)
+   * Important:
+   * - We always pass `box_qty` as "input qty" for printing, even for KG/G/BAG,
+   *   because the doc template already knows how to show `uom` + qty.
+   * - We also pass pcs_qty/grams_qty/bags_qty when present (safe extra keys).
+   */
   const docItems = useMemo(() => {
     return (items || []).map((it: any, idx: number) => {
       const p = it.product || it.products || null;
 
-      const uom = String(it.uom || "BOX").toUpperCase() === "PCS" ? "PCS" : "BOX";
-      const upb = uom === "PCS" ? 1 : Math.max(1, Math.trunc(n2(it.units_per_box ?? p?.units_per_box ?? 1)));
+      const uom = normalizeUom(it.uom);
+      const inputQty = qtyInputByUom(it, uom);
+
+      // Unit column (UPB) should only apply to BOX; else 1
+      const upb =
+        uom === "BOX" ? Math.max(1, Math.trunc(n2(it.units_per_box ?? p?.units_per_box ?? 1))) : 1;
+
+      // Total qty:
+      // - BOX: box_qty * upb
+      // - PCS: pcs_qty
+      // - KG : kg_qty
+      // - G  : grams_qty
+      // - BAG: bags_qty
+      // Prefer stored total_qty if present (backend may already compute)
+      const storedTotalQty = n2(it.total_qty ?? 0);
+      const computedTotalQty =
+        uom === "BOX"
+          ? intishQty(uom, inputQty) * upb
+          : // keep KG numeric, others int
+            intishQty(uom, inputQty);
+
+      const totalQty = storedTotalQty > 0 ? storedTotalQty : computedTotalQty;
 
       return {
         sn: idx + 1,
         item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
         uom,
+
+        // ✅ input qty (kept as box_qty for compatibility with existing doc template)
+        box_qty: inputQty,
+        pcs_qty: n2(it.pcs_qty ?? 0),
+        grams_qty: n2(it.grams_qty ?? 0),
+        bags_qty: n2(it.bags_qty ?? 0),
+
         units_per_box: upb,
-        total_qty: Math.trunc(n2(it.total_qty ?? 0)),
+        total_qty: totalQty,
+
         description: String(it.description || p?.name || "").trim(),
+
         unit_price_excl_vat: n2(it.unit_price_excl_vat ?? 0),
         unit_vat: n2(it.unit_vat ?? 0),
         unit_price_incl_vat: n2(it.unit_price_incl_vat ?? 0),
@@ -179,7 +253,6 @@ export default function QuotationPrint() {
   }, [items]);
 
   function smartBack() {
-    // new tab/window can have no history → fallback route
     if (window.history.length > 1) nav(-1);
     else nav(`/quotations/${quotationId}`);
   }
@@ -319,13 +392,7 @@ export default function QuotationPrint() {
         </div>
 
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              // ✅ back should work in BOTH modes
-              smartBack();
-            }}
-          >
+          <Button variant="outline" onClick={smartBack}>
             Back
           </Button>
 
@@ -347,6 +414,3 @@ export default function QuotationPrint() {
     </div>
   );
 }
-
-
-

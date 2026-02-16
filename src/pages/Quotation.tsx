@@ -27,6 +27,7 @@ import {
   Send,
   Ban,
   PenLine,
+  ArrowRightLeft,
 } from "lucide-react";
 
 import { listQuotations } from "@/lib/quotations";
@@ -34,7 +35,16 @@ import { listQuotations } from "@/lib/quotations";
 /* =========================
    Helpers
 ========================= */
-type QuotationStatus = "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "CANCELLED" | string;
+type QuotationStatus =
+  | "DRAFT"
+  | "SENT"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "EXPIRED"
+  | "CONVERTED"
+  // legacy / older data:
+  | "CANCELLED"
+  | string;
 
 const n = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
@@ -55,11 +65,17 @@ function fmtDate(v: any) {
 
 function normStatus(st: any): QuotationStatus {
   const s = String(st || "DRAFT").toUpperCase();
+
   if (s === "DRAFT") return "DRAFT";
   if (s === "SENT") return "SENT";
   if (s === "ACCEPTED") return "ACCEPTED";
   if (s === "REJECTED") return "REJECTED";
-  if (s === "CANCELLED") return "CANCELLED";
+  if (s === "EXPIRED") return "EXPIRED";
+  if (s === "CONVERTED") return "CONVERTED";
+
+  // legacy
+  if (s === "CANCELLED" || s === "CANCELED") return "CANCELLED";
+
   return s;
 }
 
@@ -69,16 +85,41 @@ function statusLabel(st: QuotationStatus) {
   if (s === "SENT") return "Sent";
   if (s === "ACCEPTED") return "Accepted";
   if (s === "REJECTED") return "Rejected";
+  if (s === "EXPIRED") return "Expired";
+  if (s === "CONVERTED") return "Converted";
   if (s === "CANCELLED") return "Cancelled";
   return s;
 }
 
 function statusPillClass(st: QuotationStatus) {
   const s = String(st || "DRAFT").toUpperCase();
+
   if (s === "ACCEPTED") return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (s === "SENT") return "bg-amber-50 text-amber-700 border-amber-200";
+  if (s === "SENT") return "bg-blue-50 text-blue-700 border-blue-200";
+  if (s === "CONVERTED") return "bg-purple-50 text-purple-700 border-purple-200";
+  if (s === "EXPIRED") return "bg-amber-50 text-amber-800 border-amber-200";
   if (s === "REJECTED" || s === "CANCELLED") return "bg-rose-50 text-rose-700 border-rose-200";
+
   return "bg-slate-50 text-slate-700 border-slate-200"; // DRAFT/default
+}
+
+function isExpiredRow(r: any) {
+  const st = normStatus(r?.status);
+  if (st === "EXPIRED") return true;
+
+  // optional auto-expire hint if you store valid_until and status still DRAFT/SENT
+  const vu = String(r?.valid_until || "").trim();
+  if (!vu) return false;
+
+  const d = new Date(vu);
+  if (Number.isNaN(d.getTime())) return false;
+
+  const now = new Date();
+  // compare only date portion safely by setting time to start-of-day
+  const d0 = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const n0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  return d0 < n0 && (st === "DRAFT" || st === "SENT");
 }
 
 /* =========================
@@ -106,20 +147,31 @@ export default function Quotation() {
     staleTime: 12_000,
   });
 
-  const rows: Row[] = Array.isArray(listQ.data) ? listQ.data : [];
+  const rowsRaw: Row[] = Array.isArray(listQ.data) ? listQ.data : [];
+
+  // ✅ “Expired overlay” without mutating DB:
+  // if valid_until is past, treat it as EXPIRED visually.
+  const rows = useMemo(() => {
+    return rowsRaw.map((r) => {
+      if (isExpiredRow(r)) return { ...r, __ui_status: "EXPIRED" };
+      return r;
+    });
+  }, [rowsRaw]);
 
   const kpis = useMemo(() => {
     const totalValue = rows.reduce((sum, r) => sum + n(r.total_amount), 0);
 
-    const draft = rows.filter((r) => normStatus(r.status) === "DRAFT").length;
-    const sent = rows.filter((r) => normStatus(r.status) === "SENT").length;
-    const accepted = rows.filter((r) => normStatus(r.status) === "ACCEPTED").length;
+    const draft = rows.filter((r) => normStatus(r.__ui_status || r.status) === "DRAFT").length;
+    const sent = rows.filter((r) => normStatus(r.__ui_status || r.status) === "SENT").length;
+    const accepted = rows.filter((r) => normStatus(r.__ui_status || r.status) === "ACCEPTED").length;
+    const converted = rows.filter((r) => normStatus(r.__ui_status || r.status) === "CONVERTED").length;
+    const expired = rows.filter((r) => normStatus(r.__ui_status || r.status) === "EXPIRED").length;
     const closed = rows.filter((r) => {
-      const s = normStatus(r.status);
+      const s = normStatus(r.__ui_status || r.status);
       return s === "REJECTED" || s === "CANCELLED";
     }).length;
 
-    return { count: rows.length, totalValue, draft, sent, accepted, closed };
+    return { count: rows.length, totalValue, draft, sent, accepted, converted, expired, closed };
   }, [rows]);
 
   return (
@@ -139,9 +191,7 @@ export default function Quotation() {
 
           <div>
             <div className="text-2xl font-semibold tracking-tight">Quotations</div>
-            <div className="text-sm text-muted-foreground">
-              Draft • Send • Accept • Print — invoice-style engine & layout
-            </div>
+            <div className="text-sm text-muted-foreground">Draft • Send • Accept • Convert • Print</div>
           </div>
         </div>
 
@@ -179,27 +229,47 @@ export default function Quotation() {
 
         <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
           <div className="flex items-center justify-between">
-            <div className="text-xs text-muted-foreground">Sent</div>
+            <div className="text-xs text-muted-foreground">Pipeline</div>
             <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
               <Send className="h-4 w-4 text-slate-700" />
             </div>
           </div>
-          <div className="mt-2 text-2xl font-semibold">{kpis.sent}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Draft: <b className="text-slate-800">{kpis.draft}</b>
+          <div className="mt-2 text-sm text-slate-900 space-y-1">
+            <div className="flex justify-between">
+              <span className="text-slate-600">Draft</span>
+              <b>{kpis.draft}</b>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-600">Sent</span>
+              <b>{kpis.sent}</b>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-600">Expired</span>
+              <b>{kpis.expired}</b>
+            </div>
           </div>
         </Card>
 
         <Card className="p-4 rounded-2xl border bg-white/80 shadow-sm">
           <div className="flex items-center justify-between">
-            <div className="text-xs text-muted-foreground">Accepted</div>
+            <div className="text-xs text-muted-foreground">Outcome</div>
             <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border bg-white">
-              <BadgeCheck className="h-4 w-4 text-slate-700" />
+              <ArrowRightLeft className="h-4 w-4 text-slate-700" />
             </div>
           </div>
-          <div className="mt-2 text-2xl font-semibold">{kpis.accepted}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Closed: <b className="text-slate-800">{kpis.closed}</b>
+          <div className="mt-2 text-sm text-slate-900 space-y-1">
+            <div className="flex justify-between">
+              <span className="text-slate-600">Accepted</span>
+              <b>{kpis.accepted}</b>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-600">Converted</span>
+              <b>{kpis.converted}</b>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-600">Closed</span>
+              <b>{kpis.closed}</b>
+            </div>
           </div>
         </Card>
       </div>
@@ -210,7 +280,7 @@ export default function Quotation() {
           <div className="relative w-full max-w-[520px]">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <Input
-              placeholder="Search: quote no • customer • code"
+              placeholder="Search: quotation no • customer • code • id"
               value={qInput}
               onChange={(e) => setQInput(e.target.value)}
               className="pl-9"
@@ -232,6 +302,9 @@ export default function Quotation() {
               <option value="SENT">Sent</option>
               <option value="ACCEPTED">Accepted</option>
               <option value="REJECTED">Rejected</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="CONVERTED">Converted</option>
+              {/* legacy */}
               <option value="CANCELLED">Cancelled</option>
             </select>
           </div>
@@ -264,7 +337,7 @@ export default function Quotation() {
       {/* Table */}
       <Card className="overflow-hidden rounded-2xl border bg-white/80 shadow-sm">
         <div className="overflow-auto">
-          <table className="w-full min-w-[1080px]">
+          <table className="w-full min-w-[1180px]">
             <thead className="bg-slate-50">
               <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
                 <th className="px-4 py-3 text-left">Quotation</th>
@@ -278,12 +351,15 @@ export default function Quotation() {
 
             <tbody className="divide-y">
               {rows.map((r: any) => {
-                const st = normStatus(r.status);
+                const st = normStatus(r.__ui_status || r.status);
                 const quoteNo = String(r.quotation_number || r.quotation_no || r.number || `#${r.id}`);
 
                 const custName = String(r.customer_name || r.customers?.name || "").trim() || "—";
                 const custCode = String(r.customer_code || r.customers?.customer_code || "").trim();
                 const validUntil = r.valid_until ? fmtDate(r.valid_until) : null;
+
+                const canConvert = st === "ACCEPTED" || st === "SENT" || st === "DRAFT";
+                const isUiExpired = st === "EXPIRED" && normStatus(r.status) !== "EXPIRED";
 
                 return (
                   <tr
@@ -308,6 +384,7 @@ export default function Quotation() {
                       <div className="text-xs text-slate-500">
                         {custCode ? `Code: ${custCode}` : "—"}
                         {validUntil ? ` • Valid until: ${validUntil}` : ""}
+                        {isUiExpired ? " • (Auto-expired by date)" : ""}
                       </div>
                     </td>
 
@@ -344,7 +421,7 @@ export default function Quotation() {
                           </button>
                         </DropdownMenuTrigger>
 
-                        <DropdownMenuContent align="end" className="w-56">
+                        <DropdownMenuContent align="end" className="w-64">
                           <DropdownMenuItem onClick={() => nav(`/quotations/${r.id}`)}>
                             <Eye className="mr-2 h-4 w-4" />
                             Open
@@ -354,7 +431,12 @@ export default function Quotation() {
                             onClick={() => window.open(`/quotations/${r.id}/print`, "_blank", "noopener,noreferrer")}
                           >
                             <Printer className="mr-2 h-4 w-4" />
-                            Print
+                            Print / Save PDF
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem onClick={() => nav(`/quotations/new?duplicate=${r.id}`)}>
+                            <FileText className="mr-2 h-4 w-4" />
+                            Duplicate
                           </DropdownMenuItem>
 
                           <DropdownMenuSeparator />
@@ -364,13 +446,23 @@ export default function Quotation() {
                             Edit / Update
                           </DropdownMenuItem>
 
+                          <DropdownMenuItem
+                            onClick={() => nav(`/quotations/${r.id}`)}
+                            disabled={!canConvert || st === "CONVERTED"}
+                            title={st === "CONVERTED" ? "Already converted" : ""}
+                          >
+                            <ArrowRightLeft className="mr-2 h-4 w-4" />
+                            Convert → Invoice
+                          </DropdownMenuItem>
+
                           <DropdownMenuSeparator />
 
-                          {/* purely informational: no mutation hooks here (keeps logic intact) */}
                           <DropdownMenuItem disabled>
                             {st === "DRAFT" ? <FileText className="mr-2 h-4 w-4" /> : null}
                             {st === "SENT" ? <Send className="mr-2 h-4 w-4" /> : null}
                             {st === "ACCEPTED" ? <BadgeCheck className="mr-2 h-4 w-4" /> : null}
+                            {st === "CONVERTED" ? <ArrowRightLeft className="mr-2 h-4 w-4" /> : null}
+                            {st === "EXPIRED" ? <Ban className="mr-2 h-4 w-4" /> : null}
                             {st === "REJECTED" || st === "CANCELLED" ? <Ban className="mr-2 h-4 w-4" /> : null}
                             Status: {statusLabel(st)}
                           </DropdownMenuItem>
@@ -438,4 +530,3 @@ export default function Quotation() {
     </div>
   );
 }
-

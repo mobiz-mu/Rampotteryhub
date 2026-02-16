@@ -2,10 +2,15 @@
 import { supabase } from "@/integrations/supabase/client";
 
 /**
- * Quotation items (invoice-style columns):
- * BOX/PCS + UPB + TOTAL QTY + Unit Ex/VAT/Inc + Line Total
- *
- * ✅ Includes lightweight product join for UI display
+ * Quotation items (multi-UOM):
+ * BOX / PCS / KG / G / BAG
+ * qty columns:
+ * - box_qty (BOX qty OR KG qty when uom=KG)
+ * - pcs_qty
+ * - grams_qty
+ * - bags_qty
+ * - units_per_box (BOX only)
+ * - total_qty (computed + stored)
  */
 export async function listQuotationItems(quotationId: number) {
   const id = Number(quotationId);
@@ -20,13 +25,23 @@ export async function listQuotationItems(quotationId: number) {
       product_id,
       description,
       uom,
+
       box_qty,
+      pcs_qty,
+      grams_qty,
+      bags_qty,
       units_per_box,
       total_qty,
+
+      base_unit_price_excl_vat,
+      vat_rate,
+      price_overridden,
+
       unit_price_excl_vat,
       unit_vat,
       unit_price_incl_vat,
       line_total,
+
       product:products (
         id,
         name,
@@ -43,3 +58,4 @@ export async function listQuotationItems(quotationId: number) {
   if (error) throw new Error(error.message);
   return data || [];
 }
+

@@ -1,5 +1,5 @@
 // src/pages/Dashboard.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,7 +13,6 @@ import {
   FileText,
   Users,
   Package,
-  TrendingUp,
   ArrowUpRight,
   ArrowDownRight,
   Plus,
@@ -24,42 +23,29 @@ import {
   Landmark,
   Receipt,
   CheckCircle2,
-  CircleDollarSign,
+  Sparkles,
+  Gauge,
+  ReceiptText,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-/* =========================
-   Helpers (Dashboard formatting)
-   - 1,000 / 20,000 / 1,500,000 (no decimals)
-========================= */
-/* =========================
-   Helpers (Dashboard formatting)
-   - Counts: 0 decimals
-   - Money: 2 decimals (NO rounding to int)
-========================= */
 const NF0 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const NF2 = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function n0(v: any) {
+function n(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
 }
-
-// ✅ for counts only (invoices count, stock items, etc.)
-function fmt(v: any) {
-  return NF0.format(n0(v));
+function fmtCount(v: any) {
+  return NF0.format(n(v));
 }
-
-// ✅ for money (always 2 decimals)
 function fmtMoney(v: any) {
-  return NF2.format(n0(v));
+  return NF2.format(n(v));
 }
-
 function fmtRs(v: any) {
   return `Rs ${fmtMoney(v)}`;
 }
-
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -90,21 +76,38 @@ function trendFromPct(p: number): "up" | "down" | "neutral" {
   if (p < -0.1) return "down";
   return "neutral";
 }
-function shortId(n: any) {
-  const s = String(n ?? "");
+function shortId(v: any) {
+  const s = String(v ?? "");
   return s.length > 8 ? s.slice(0, 8) : s;
 }
 function fmtDate(d?: string) {
   if (!d) return "—";
   const x = new Date(d);
-  if (Number.isNaN(x.getTime())) return d;
-  return x.toLocaleDateString("en-GB").replaceAll("/", "-"); // DD-MM-YYYY
+  if (Number.isNaN(x.getTime())) return String(d);
+  return x.toLocaleDateString("en-GB");
 }
-/* =========================
-   Small UI components
-========================= */
+
+function statusMeta(raw: string, balance: number, dueDate?: string) {
+  const s = String(raw || "").toUpperCase();
+  const today = todayISO();
+  const isOverdue = balance > 0 && dueDate && String(dueDate) < today;
+
+  if (isOverdue) {
+    return { label: "OVERDUE", cls: "bg-rose-500/10 text-rose-700 border-rose-200 dark:text-rose-200 dark:border-rose-500/25" };
+  }
+  if (s === "PAID") {
+    return { label: "PAID", cls: "bg-emerald-500/10 text-emerald-700 border-emerald-200 dark:text-emerald-200 dark:border-emerald-500/25" };
+  }
+  if (s === "PARTIALLY_PAID") {
+    return { label: "PARTIALLY PAID", cls: "bg-amber-500/10 text-amber-700 border-amber-200 dark:text-amber-200 dark:border-amber-500/25" };
+  }
+  if (s === "ISSUED") {
+    return { label: "ISSUED", cls: "bg-sky-500/10 text-sky-700 border-sky-200 dark:text-sky-200 dark:border-sky-500/25" };
+  }
+  return { label: s || "—", cls: "bg-muted/40 text-foreground/80 border-border" };
+}
+
 function RsIcon({ className }: { className?: string }) {
-  // ✅ Make "Rs" red like the other icons
   return (
     <div className={cn("h-6 w-6 grid place-items-center font-extrabold tracking-tight text-primary", className)}>
       <span style={{ fontSize: 14, lineHeight: "14px" }}>Rs</span>
@@ -112,78 +115,92 @@ function RsIcon({ className }: { className?: string }) {
   );
 }
 
-interface StatCardProps {
+function StatCard(props: {
   title: string;
-  value: string;
+  valueRs: number;
   changePct: number;
   icon: React.ComponentType<{ className?: string }>;
   trend: "up" | "down" | "neutral";
   hint?: string;
-}
+  subline?: { label: string; value: string };
+}) {
+  const Icon = props.icon;
 
-function StatCard({ title, value, changePct, icon: Icon, trend, hint }: StatCardProps) {
   return (
-    <Card className="shadow-premium hover:shadow-lg transition-shadow">
-      <CardContent className="p-6">
+    <Card className="rp-card group overflow-hidden">
+      <CardContent className="p-5 md:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <p className="text-3xl font-bold mt-2 text-foreground whitespace-nowrap">
-           {value}
-           </p>
+          <div className="min-w-0 flex-1">
+            <p className="rp-label">{props.title}</p>
 
-            <div className="flex items-center gap-1 mt-2">
-              {trend === "up" ? (
-                <ArrowUpRight className="h-4 w-4 text-success" />
-              ) : trend === "down" ? (
-                <ArrowDownRight className="h-4 w-4 text-destructive" />
-              ) : null}
+            <div className="mt-2 flex items-baseline gap-2 min-w-0">
+              <span className="rp-currency">Rs</span>
+              <span className="rp-kpi tabular-nums truncate">{fmtMoney(props.valueRs)}</span>
+            </div>
+
+            <div className="flex items-center gap-1.5 mt-2">
+              {props.trend === "up" ? (
+                <ArrowUpRight className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              ) : props.trend === "down" ? (
+                <ArrowDownRight className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+              ) : (
+                <span className="h-4 w-4 inline-block" />
+              )}
 
               <span
                 className={cn(
-                  "text-sm font-medium",
-                  trend === "up" && "text-success",
-                  trend === "down" && "text-destructive",
-                  trend === "neutral" && "text-muted-foreground"
+                  "text-sm font-semibold tabular-nums",
+                  props.trend === "up" && "text-emerald-700 dark:text-emerald-300",
+                  props.trend === "down" && "text-rose-700 dark:text-rose-300",
+                  props.trend === "neutral" && "text-muted-foreground"
                 )}
               >
-                {changePct > 0 ? "+" : ""}
-                {changePct.toFixed(1)}%
+                {props.changePct > 0 ? "+" : ""}
+                {props.changePct.toFixed(1)}%
               </span>
               <span className="text-sm text-muted-foreground">vs last month</span>
             </div>
 
-            {hint ? <div className="mt-2 text-xs text-muted-foreground">{hint}</div> : null}
+            {props.subline ? (
+              <div className="rp-subline mt-3">
+                <span className="rp-subLabel">{props.subline.label}</span>
+                <span className="rp-subVal tabular-nums">{props.subline.value}</span>
+              </div>
+            ) : null}
+
+            {props.hint ? <div className="rp-hint mt-2">{props.hint}</div> : null}
           </div>
 
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-           <RsIcon className="h-6 w-6 text-primary" />
-         </div>
+          <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+            <div className="absolute -inset-12 opacity-0 group-hover:opacity-70 pointer-events-none blur-2xl bg-[radial-gradient(circle_at_30%_30%,rgba(185,28,28,.22),transparent_60%)] transition-opacity" />
+            <Icon className="h-6 w-6 text-primary relative z-[1]" />
+          </div>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-interface QuickActionProps {
+function QuickAction(props: {
   title: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
-}
+}) {
+  const Icon = props.icon;
 
-function QuickAction({ title, description, icon: Icon, href }: QuickActionProps) {
   return (
-    <Link to={href}>
-      <Card className="shadow-premium hover:shadow-lg transition-all hover:scale-[1.02] cursor-pointer group">
-        <CardContent className="p-6">
+    <Link to={props.href} className="block">
+      <Card className="rp-card group cursor-pointer overflow-hidden">
+        <CardContent className="p-5 md:p-6">
           <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-              <Icon className="h-6 w-6 text-primary group-hover:text-primary-foreground" />
+            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 transition-colors group-hover:bg-primary">
+              <div className="absolute -inset-10 opacity-0 group-hover:opacity-70 pointer-events-none blur-2xl bg-[radial-gradient(circle_at_30%_30%,rgba(185,28,28,.24),transparent_60%)] transition-opacity" />
+              <Icon className="h-6 w-6 text-primary group-hover:text-primary-foreground relative z-[1]" />
             </div>
             <div className="min-w-0">
-              <h3 className="font-semibold text-foreground">{title}</h3>
-              <p className="text-sm text-muted-foreground">{description}</p>
+              <h3 className="font-semibold text-foreground">{props.title}</h3>
+              <p className="text-sm text-muted-foreground">{props.description}</p>
             </div>
           </div>
         </CardContent>
@@ -192,21 +209,6 @@ function QuickAction({ title, description, icon: Icon, href }: QuickActionProps)
   );
 }
 
-function ErrorBox({ title, msg }: { title: string; msg: string }) {
-  return (
-    <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4">
-      <div className="text-sm font-semibold text-destructive">{title}</div>
-      <div className="mt-2 text-sm text-destructive/90 whitespace-pre-wrap">{msg}</div>
-      <div className="mt-3 text-xs text-muted-foreground">
-        If other pages load fine but Dashboard fails, it’s usually a missing column in a query. If everything fails, it’s RLS/policies.
-      </div>
-    </div>
-  );
-}
-
-/* =========================
-   Sales chart (Premium – wide, fits the blank area)
-========================= */
 function monthKey(d: Date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -217,41 +219,45 @@ function monthLabel(ym: string) {
   const dt = new Date(y, (m || 1) - 1, 1);
   return dt.toLocaleString(undefined, { month: "short" });
 }
-
 type SalesPoint = { ym: string; label: string; total: number };
 
 function SalesBarChart({ points }: { points: SalesPoint[] }) {
-  const max = Math.max(1, ...points.map((p) => n0(p.total)));
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setReady(true), 40);
+    return () => window.clearTimeout(t);
+  }, [points.length]);
+
+  const max = Math.max(1, ...points.map((p) => n(p.total)));
   const maxLabel = fmtRs(max);
-  const total6 = points.reduce((s, p) => s + n0(p.total), 0);
+  const total6 = points.reduce((s, p) => s + n(p.total), 0);
 
   return (
     <div className="rp-sales">
-      <div className="rp-topline">
-        <div className="rp-kpi">
-          <div className="rp-kpiLabel">6-month total</div>
-          <div className="rp-kpiValue">{fmtRs(total6)}</div>
+      <div className="rp-salesTop">
+        <div className="rp-miniKpi">
+          <div className="rp-miniLabel">6-month total</div>
+          <div className="rp-miniValue tabular-nums">{fmtRs(total6)}</div>
         </div>
-
-        <div className="rp-kpi2">
-          <div className="rp-kpiLabel">Best month</div>
-          <div className="rp-kpiValue">{maxLabel}</div>
+        <div className="rp-miniKpi">
+          <div className="rp-miniLabel">Best month</div>
+          <div className="rp-miniValue tabular-nums">{maxLabel}</div>
         </div>
-
         <div className="rp-miniHint">Hover bars for exact totals</div>
       </div>
 
       <div className="rp-grid">
         {points.map((p) => {
-          const ratio = n0(p.total) / max;
+          const ratio = n(p.total) / max;
           const h = Math.max(6, Math.round(ratio * 100));
-          const isTop = n0(p.total) === max && max > 0;
+          const isTop = n(p.total) === max && max > 0;
 
           return (
             <div key={p.ym} className="rp-col" title={`${p.label}: ${fmtRs(p.total)}`}>
               <div className={cn("rp-barWrap", isTop && "rp-barWrapTop")}>
                 <div className="rp-ambient" />
-                <div className="rp-bar" style={{ height: `${h}%` }} />
+                <div className="rp-bar" style={{ height: `${ready ? h : 6}%` }} />
                 <div className="rp-gloss" />
                 <div className="rp-baseLine" />
               </div>
@@ -265,17 +271,503 @@ function SalesBarChart({ points }: { points: SalesPoint[] }) {
         <span>Last 6 months (invoice totals)</span>
         <span className="rp-max">Max: {maxLabel}</span>
       </div>
+    </div>
+  );
+}
 
+function Donut({ paid, outstanding }: { paid: number; outstanding: number }) {
+  const [angle, setAngle] = useState(0);
+
+  const total = Math.max(1, n(paid) + n(outstanding));
+  const paidPct = Math.max(0, Math.min(1, n(paid) / total));
+  const target = paidPct * 360;
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setAngle(target), 40);
+    return () => window.clearTimeout(t);
+  }, [target]);
+
+  return (
+    <div className="rp-donut">
+      <div
+        className="rp-ring"
+        style={{
+          background: `conic-gradient(rgba(185,28,28,.92) 0deg ${angle}deg, rgba(15,23,42,.10) ${angle}deg 360deg)`,
+        }}
+      >
+        <div className="rp-hole">
+          <div className="rp-midLabel">Paid</div>
+          <div className="rp-midValue tabular-nums">{Math.round(paidPct * 100)}%</div>
+        </div>
+      </div>
+
+      <div className="rp-legend">
+        <div className="rp-legRow">
+          <span className="rp-dot rp-dotPaid" />
+          <span className="rp-legText">Paid</span>
+          <span className="rp-legVal tabular-nums">{fmtRs(paid)}</span>
+        </div>
+        <div className="rp-legRow">
+          <span className="rp-dot rp-dotOut" />
+          <span className="rp-legText">Outstanding</span>
+          <span className="rp-legVal tabular-nums">{fmtRs(outstanding)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const [useRolling30, setUseRolling30] = useState(true);
+
+  const fromThis = useRolling30 ? rollingDaysISO(30) : startOfMonthISO();
+  const toToday = todayISO();
+  const fromPrev = startOfPrevMonthISO();
+  const toPrev = endOfPrevMonthISO();
+
+  const salesStatuses = useMemo(() => ["ISSUED", "PARTIALLY_PAID", "PAID"], []);
+
+  const invoicesThisQ = useQuery({
+    queryKey: ["dash_invoices_this", fromThis, toToday],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select(
+          `
+          id,invoice_number,customer_id,invoice_date,due_date,total_amount,subtotal,vat_amount,status,amount_paid,balance_remaining,
+          customer:customers ( id,name,client_name,customer_code )
+        `
+        )
+        .gte("invoice_date", fromThis)
+        .lte("invoice_date", toToday)
+        .in("status", salesStatuses)
+        .order("invoice_date", { ascending: false })
+        .limit(1200);
+
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    staleTime: 10_000,
+  });
+
+  const invoicesPrevQ = useQuery({
+    queryKey: ["dash_invoices_prev", fromPrev, toPrev],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("id,total_amount,status")
+        .gte("invoice_date", fromPrev)
+        .lte("invoice_date", toPrev)
+        .in("status", salesStatuses);
+
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    staleTime: 30_000,
+  });
+
+  const paymentsThisQ = useQuery({
+    queryKey: ["dash_invoice_payments_this", fromThis, toToday],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoice_payments")
+        .select("id,invoice_id,payment_date,amount,method")
+        .gte("payment_date", fromThis)
+        .lte("payment_date", toToday)
+        .order("payment_date", { ascending: false })
+        .limit(2500);
+
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    staleTime: 10_000,
+  });
+
+  const paymentsPrevQ = useQuery({
+    queryKey: ["dash_invoice_payments_prev", fromPrev, toPrev],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoice_payments")
+        .select("id,amount,payment_date")
+        .gte("payment_date", fromPrev)
+        .lte("payment_date", toPrev);
+
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    staleTime: 30_000,
+  });
+
+  const productsQ = useQuery({
+    queryKey: ["dash_products"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products")
+        .select("id,sku,item_code,name,current_stock,reorder_level,is_active")
+        .order("name", { ascending: true });
+
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    staleTime: 45_000,
+  });
+
+  const supplierBillsOpenQ = useQuery({
+    queryKey: ["dash_supplier_bills_open"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("supplier_bills")
+        .select("id,total_amount,status,due_date,bill_date")
+        .in("status", ["OPEN", "PARTIALLY_PAID"])
+        .order("bill_date", { ascending: false })
+        .limit(800);
+
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    staleTime: 45_000,
+  });
+
+  const recentInvoicesQ = useQuery({
+    queryKey: ["dash_recent_invoices"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select(
+          `
+          id,invoice_number,customer_id,invoice_date,due_date,total_amount,balance_remaining,status,
+          customer:customers ( id,name,client_name,customer_code )
+        `
+        )
+        .in("status", salesStatuses)
+        .order("invoice_date", { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+      return (data ?? []) as any[];
+    },
+    staleTime: 10_000,
+  });
+
+  const sales6mQ = useQuery({
+    queryKey: ["dash_sales_6m"],
+    queryFn: async () => {
+      const now = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+      const fromISO = from.toISOString().slice(0, 10);
+      const toISO = todayISO();
+
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("invoice_date,total_amount,status")
+        .gte("invoice_date", fromISO)
+        .lte("invoice_date", toISO)
+        .in("status", salesStatuses);
+
+      if (error) throw error;
+      return (data ?? []) as { invoice_date: string; total_amount: any }[];
+    },
+    staleTime: 15_000,
+  });
+
+  const anyLoading =
+    invoicesThisQ.isLoading ||
+    invoicesPrevQ.isLoading ||
+    paymentsThisQ.isLoading ||
+    paymentsPrevQ.isLoading ||
+    productsQ.isLoading ||
+    supplierBillsOpenQ.isLoading ||
+    sales6mQ.isLoading ||
+    recentInvoicesQ.isLoading;
+
+  const anyError =
+    invoicesThisQ.error ||
+    invoicesPrevQ.error ||
+    paymentsThisQ.error ||
+    paymentsPrevQ.error ||
+    productsQ.error ||
+    supplierBillsOpenQ.error ||
+    sales6mQ.error ||
+    recentInvoicesQ.error;
+
+  const lastInvoiceDate = useMemo(() => {
+    const list = recentInvoicesQ.data ?? [];
+    const d = list?.[0]?.invoice_date;
+    return d ? fmtDate(String(d)) : "—";
+  }, [recentInvoicesQ.data]);
+
+  const kpis = useMemo(() => {
+    const invThis = invoicesThisQ.data ?? [];
+    const invPrev = invoicesPrevQ.data ?? [];
+    const payThis = paymentsThisQ.data ?? [];
+    const payPrev = paymentsPrevQ.data ?? [];
+    const prods = productsQ.data ?? [];
+    const openBills = supplierBillsOpenQ.data ?? [];
+
+    const revenueThis = invThis.reduce((s, r) => s + n(r.total_amount), 0);
+    const revenuePrev = invPrev.reduce((s, r) => s + n(r.total_amount), 0);
+
+    const vatThis = invThis.reduce((s, r) => s + Math.max(0, n(r.vat_amount)), 0);
+    const subtotalThis = invThis.reduce((s, r) => s + Math.max(0, n(r.subtotal)), 0);
+
+    const paymentsThis = payThis.reduce((s, r) => s + n(r.amount), 0);
+    const paymentsPrev = payPrev.reduce((s, r) => s + n(r.amount), 0);
+
+    const invoicesThisCount = invThis.length;
+    const invoicesPrevCount = invPrev.length;
+
+    const activeSkus = prods.filter((p: any) => (p.is_active ?? true) === true).length;
+
+    const lowStock = prods
+      .filter((p: any) => (p.is_active ?? true) === true && n(p.reorder_level) > 0)
+      .filter((p: any) => n(p.current_stock) <= n(p.reorder_level));
+
+    const lowStockCount = lowStock.length;
+
+    const paid = invThis.reduce((s, i: any) => {
+      const total = Math.max(0, n(i.total_amount));
+      const ap = Math.max(0, n(i.amount_paid));
+      return s + Math.min(ap, total);
+    }, 0);
+
+    const outstanding = invThis.reduce((s, i: any) => s + Math.max(0, n(i.balance_remaining)), 0);
+    const cashflow = revenueThis - paymentsThis;
+
+    const avgInvoice = invoicesThisCount > 0 ? revenueThis / invoicesThisCount : 0;
+    const vatRateApprox = subtotalThis > 0 ? (vatThis / subtotalThis) * 100 : 0;
+    const netAfterVat = Math.max(0, revenueThis - vatThis);
+
+    const tISO = todayISO();
+    const overdue = invThis
+      .filter((i: any) => n(i.balance_remaining) > 0 && i.due_date && String(i.due_date) < tISO)
+      .map((i: any) => ({ ...i, balance: Math.max(0, n(i.balance_remaining)) }))
+      .sort((a: any, b: any) => b.balance - a.balance);
+
+    const overdueCount = overdue.length;
+    const overdueTotal = overdue.reduce((s: number, r: any) => s + n(r.balance_remaining), 0);
+
+    let apDueSoon = 0;
+    let apOverdue = 0;
+    const now = new Date();
+    openBills.forEach((b: any) => {
+      if (!b.due_date) return;
+      const due = new Date(b.due_date);
+      if (Number.isNaN(due.getTime())) return;
+      const days = Math.floor((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      const amt = Math.max(0, n(b.total_amount));
+      if (days >= 0 && days <= 14) apDueSoon += amt;
+      if (days < 0) apOverdue += amt;
+    });
+
+    return {
+      revenueThis,
+      revenueChange: pctChange(revenueThis, revenuePrev),
+      paymentsThis,
+      paymentsChange: pctChange(paymentsThis, paymentsPrev),
+      invoicesThisCount,
+      invoicesChange: pctChange(invoicesThisCount, invoicesPrevCount),
+      vatThis,
+      netAfterVat,
+      avgInvoice,
+      vatRateApprox,
+      activeSkus,
+      lowStockCount,
+      overdueCount,
+      overdueTotal,
+      apDueSoon,
+      apOverdue,
+      cashflow,
+      paid,
+      outstanding,
+      lowStockTop: lowStock
+        .map((p: any) => ({
+          id: p.id,
+          sku: p.sku || p.item_code || `#${p.id}`,
+          name: p.name,
+          onHand: n(p.current_stock),
+          min: n(p.reorder_level),
+        }))
+        .sort((a: any, b: any) => a.onHand - b.onHand)
+        .slice(0, 8),
+    };
+  }, [
+    invoicesThisQ.data,
+    invoicesPrevQ.data,
+    paymentsThisQ.data,
+    paymentsPrevQ.data,
+    productsQ.data,
+    supplierBillsOpenQ.data,
+  ]);
+
+  const recentInvoices = useMemo(() => {
+    const list = recentInvoicesQ.data ?? [];
+    return list.slice(0, 12).map((i: any) => {
+      const c = i.customer || i.customers || null;
+      const cname = String(c?.client_name || "").trim() || String(c?.name || "").trim();
+      const code = String(c?.customer_code || "").trim();
+      const label = cname ? (code ? `${cname} • ${code}` : cname) : `Customer #${i.customer_id}`;
+
+      return {
+        id: i.id,
+        invoice_number: i.invoice_number || `INV-${shortId(i.id)}`,
+        invoice_date: i.invoice_date,
+        due_date: i.due_date,
+        customer: label,
+        total: n(i.total_amount),
+        balance: Math.max(0, n(i.balance_remaining)),
+        status: String(i.status ?? "—"),
+      };
+    });
+  }, [recentInvoicesQ.data]);
+
+  const salesPoints = useMemo<SalesPoint[]>(() => {
+    const now = new Date();
+    const months: string[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(monthKey(d));
+    }
+    const totals = new Map<string, number>();
+    months.forEach((k) => totals.set(k, 0));
+
+    (sales6mQ.data ?? []).forEach((row) => {
+      const d = new Date(String(row.invoice_date));
+      if (Number.isNaN(d.getTime())) return;
+      const k = monthKey(d);
+      if (!totals.has(k)) return;
+      totals.set(k, (totals.get(k) || 0) + n(row.total_amount));
+    });
+
+    return months.map((ym) => ({ ym, label: monthLabel(ym), total: totals.get(ym) || 0 }));
+  }, [sales6mQ.data]);
+
+  const quickActions = useMemo(
+    () => [
+      { title: "Create Invoice", description: "Generate a new invoice", icon: FileText, href: "/invoices/create" },
+      { title: "Create Quotation", description: "Prepare a quote", icon: Plus, href: "/quotations/create" },
+      { title: "Add Customer", description: "Register a new customer", icon: Users, href: "/customers" },
+      { title: "Stock Movements", description: "Adjust inventory & track", icon: Package, href: "/stock-movements" },
+    ],
+    []
+  );
+
+  function refetchAll() {
+    invoicesThisQ.refetch();
+    invoicesPrevQ.refetch();
+    paymentsThisQ.refetch();
+    paymentsPrevQ.refetch();
+    productsQ.refetch();
+    supplierBillsOpenQ.refetch();
+    sales6mQ.refetch();
+    recentInvoicesQ.refetch();
+  }
+
+  return (
+    <div className="space-y-6 md:space-y-8 animate-fade-in">
       <style>{`
-        .rp-sales{ position:relative; }
-        .rp-topline{
-          display:flex; align-items:flex-end; justify-content:space-between;
-          gap: 14px; padding: 2px 2px 10px 2px;
+        .rp-card{
+          border: 1px solid rgba(15,23,42,.08);
+          background: linear-gradient(to bottom, rgba(255,255,255,.94), rgba(255,255,255,.86));
+          box-shadow:
+            0 22px 70px rgba(2,6,23,.08),
+            0 1px 0 rgba(255,255,255,.78) inset;
+          transition: transform .18s ease, box-shadow .18s ease;
         }
-        .rp-kpi,.rp-kpi2{ display:flex; flex-direction:column; gap:2px; }
-        .rp-kpiLabel{ font-size: 11px; color: rgba(15,23,42,.60); font-weight: 800; letter-spacing:.2px; }
-        .rp-kpiValue{ font-size: 14px; font-weight: 950; letter-spacing:.2px; color: rgba(15,23,42,.88); }
+        .rp-card:hover{
+          transform: translateY(-1px);
+          box-shadow:
+            0 28px 90px rgba(2,6,23,.10),
+            0 1px 0 rgba(255,255,255,.78) inset;
+        }
+        :root.dark .rp-card{
+          border: 1px solid rgba(255,255,255,.10);
+          background: linear-gradient(to bottom, rgba(2,6,23,.78), rgba(2,6,23,.56));
+          box-shadow: 0 26px 80px rgba(0,0,0,.45);
+        }
+        :root.dark .rp-card:hover{ box-shadow: 0 34px 95px rgba(0,0,0,.55); }
+
+        .rp-label{
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: .10em;
+          text-transform: uppercase;
+          color: rgba(15,23,42,.62);
+        }
+        :root.dark .rp-label{ color: rgba(226,232,240,.62); }
+
+        .rp-currency{
+          font-size: 13px;
+          font-weight: 900;
+          letter-spacing: .02em;
+          color: rgba(15,23,42,.68);
+        }
+        :root.dark .rp-currency{ color: rgba(226,232,240,.70); }
+
+        .rp-kpi{
+          font-weight: 950;
+          letter-spacing: -0.035em;
+          line-height: 1.06;
+          font-size: clamp(20px, 1.55vw, 28px);
+          color: rgba(2,6,23,.92);
+        }
+        :root.dark .rp-kpi{ color: rgba(226,232,240,.92); }
+
+        .rp-hint{ font-size: 11px; color: rgba(15,23,42,.56); }
+        :root.dark .rp-hint{ color: rgba(226,232,240,.60); }
+
+        .rp-subline{
+          display:flex; align-items:center; justify-content:space-between; gap: 10px;
+          padding: 8px 10px;
+          border-radius: 14px;
+          border: 1px solid rgba(15,23,42,.08);
+          background: rgba(2,6,23,.02);
+        }
+        :root.dark .rp-subline{ border-color: rgba(255,255,255,.10); background: rgba(255,255,255,.04); }
+        .rp-subLabel{ font-size: 11px; font-weight: 800; color: rgba(15,23,42,.60); }
+        :root.dark .rp-subLabel{ color: rgba(226,232,240,.62); }
+        .rp-subVal{ font-size: 12px; font-weight: 950; color: rgba(15,23,42,.88); }
+        :root.dark .rp-subVal{ color: rgba(226,232,240,.90); }
+
+        .rp-hero{
+          position: relative;
+          border-radius: 24px;
+          padding: 16px 16px 14px 16px;
+          border: 1px solid rgba(15,23,42,.08);
+          background:
+            radial-gradient(circle at 18% 22%, rgba(185,28,28,.10), transparent 52%),
+            radial-gradient(circle at 72% 30%, rgba(2,6,23,.06), transparent 50%),
+            linear-gradient(to bottom, rgba(255,255,255,.92), rgba(255,255,255,.82));
+          box-shadow:
+            0 24px 80px rgba(2,6,23,.08),
+            0 1px 0 rgba(255,255,255,.78) inset;
+          overflow: hidden;
+        }
+        .rp-hero:before{
+          content:"";
+          position:absolute; inset:-160px -120px auto -120px;
+          height: 220px;
+          background: radial-gradient(circle at 30% 30%, rgba(185,28,28,.16), transparent 60%);
+          filter: blur(18px);
+          opacity: .9;
+          pointer-events:none;
+        }
+        :root.dark .rp-hero{
+          border-color: rgba(255,255,255,.10);
+          background:
+            radial-gradient(circle at 18% 22%, rgba(185,28,28,.20), transparent 52%),
+            radial-gradient(circle at 72% 30%, rgba(255,255,255,.06), transparent 50%),
+            linear-gradient(to bottom, rgba(2,6,23,.78), rgba(2,6,23,.56));
+          box-shadow: 0 30px 90px rgba(0,0,0,.55);
+        }
+
+        .rp-salesTop{ display:flex; align-items:flex-end; justify-content:space-between; gap: 14px; padding: 2px 2px 10px 2px; }
+        .rp-miniKpi{ display:flex; flex-direction:column; gap:2px; }
+        .rp-miniLabel{ font-size: 11px; color: rgba(15,23,42,.60); font-weight: 800; letter-spacing:.2px; }
+        .rp-miniValue{ font-size: 14px; font-weight: 950; letter-spacing:.2px; color: rgba(15,23,42,.88); }
         .rp-miniHint{ margin-left:auto; font-size: 12px; color: rgba(15,23,42,.55); }
+        :root.dark .rp-miniLabel{ color: rgba(226,232,240,.62); }
+        :root.dark .rp-miniValue{ color: rgba(226,232,240,.90); }
+        :root.dark .rp-miniHint{ color: rgba(226,232,240,.62); }
 
         .rp-grid{
           height: 160px;
@@ -285,7 +777,6 @@ function SalesBarChart({ points }: { points: SalesPoint[] }) {
           align-items:end;
         }
         .rp-col{ display:flex; flex-direction:column; align-items:center; gap: 10px; }
-
         .rp-barWrap{
           position:relative;
           width:100%;
@@ -305,13 +796,7 @@ function SalesBarChart({ points }: { points: SalesPoint[] }) {
           filter: blur(12px);
           opacity: .9;
         }
-
-        .rp-barWrapTop{
-          border-color: rgba(185,28,28,.22);
-          box-shadow:
-            0 20px 60px rgba(185,28,28,.10),
-            0 1px 0 rgba(255,255,255,.55) inset;
-        }
+        .rp-barWrapTop{ border-color: rgba(185,28,28,.22); box-shadow: 0 20px 60px rgba(185,28,28,.10), 0 1px 0 rgba(255,255,255,.55) inset; }
         .rp-bar{
           position:absolute; left: 10px; right: 10px; bottom: 10px;
           border-radius: 14px;
@@ -319,12 +804,10 @@ function SalesBarChart({ points }: { points: SalesPoint[] }) {
           box-shadow:
             0 26px 55px rgba(185,28,28,.14),
             0 1px 0 rgba(255,255,255,.35) inset;
-          transition: height .6s cubic-bezier(.2,.8,.2,1);
+          transition: height .7s cubic-bezier(.2,.8,.2,1);
+          will-change: height;
         }
-        .rp-baseLine{
-          position:absolute; left:0; right:0; bottom:0;
-          height: 1px; background: rgba(15,23,42,.06);
-        }
+        .rp-baseLine{ position:absolute; left:0; right:0; bottom:0; height: 1px; background: rgba(15,23,42,.06); }
         .rp-gloss{
           pointer-events:none;
           position:absolute; inset:0;
@@ -340,28 +823,10 @@ function SalesBarChart({ points }: { points: SalesPoint[] }) {
           72%{ opacity:0; }
           100%{ opacity:0; transform: translateX(26%) skewX(-10deg); }
         }
-        .rp-x{
-          font-size: 12px;
-          color: rgba(15,23,42,.72);
-          font-weight: 900;
-          letter-spacing:.2px;
-        }
-        .rp-foot{
-          margin-top: 10px;
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          font-size: 12px;
-          color: rgba(15,23,42,.55);
-        }
-        .rp-max{
-          font-weight: 900;
-          color: rgba(15,23,42,.82);
-        }
+        .rp-x{ font-size: 12px; color: rgba(15,23,42,.72); font-weight: 900; letter-spacing:.2px; }
+        .rp-foot{ margin-top: 10px; display:flex; align-items:center; justify-content:space-between; font-size: 12px; color: rgba(15,23,42,.55); }
+        .rp-max{ font-weight: 900; color: rgba(15,23,42,.82); }
 
-        :root.dark .rp-kpiLabel{ color: rgba(226,232,240,.62); }
-        :root.dark .rp-kpiValue{ color: rgba(226,232,240,.90); }
-        :root.dark .rp-miniHint{ color: rgba(226,232,240,.62); }
         :root.dark .rp-barWrap{
           background: linear-gradient(to bottom, rgba(255,255,255,.06), rgba(255,255,255,.03));
           border-color: rgba(255,255,255,.10);
@@ -371,59 +836,13 @@ function SalesBarChart({ points }: { points: SalesPoint[] }) {
         :root.dark .rp-x{ color: rgba(226,232,240,.78); }
         :root.dark .rp-foot{ color: rgba(226,232,240,.62); }
         :root.dark .rp-max{ color: rgba(226,232,240,.88); }
-      `}</style>
-    </div>
-  );
-}
 
-/* =========================
-   Paid vs Outstanding donut (no external libs)
-========================= */
-function Donut({
-  paid,
-  outstanding,
-}: {
-  paid: number;
-  outstanding: number;
-}) {
-  const total = Math.max(1, n0(paid) + n0(outstanding));
-  const paidPct = Math.max(0, Math.min(1, n0(paid) / total));
-  const angle = paidPct * 360;
-
-  return (
-    <div className="rp-donut">
-      <div
-          className="rp-ring"
-      style={{
-      background: `conic-gradient(rgba(185,28,28,.92) 0deg ${angle}deg, rgba(15,23,42,.10) ${angle}deg 360deg)`,
-    }}
-  >
-  <div className="rp-hole">
-    <div className="rp-midLabel">Paid</div>
-    <div className="rp-midValue">{Math.round(paidPct * 100)}%</div>
-  </div>
-</div>
-      <div className="rp-legend">
-        <div className="rp-legRow">
-          <span className="rp-dot rp-dotPaid" />
-          <span className="rp-legText">Paid</span>
-          <span className="rp-legVal">{fmtRs(paid)}</span>
-        </div>
-        <div className="rp-legRow">
-          <span className="rp-dot rp-dotOut" />
-          <span className="rp-legText">Outstanding</span>
-          <span className="rp-legVal">{fmtRs(outstanding)}</span>
-        </div>
-      </div>
-
-      <style>{`
         .rp-donut{ display:flex; gap: 14px; align-items:center; justify-content:space-between; }
         .rp-ring{
           width: 128px; height: 128px; border-radius: 999px;
-          box-shadow:
-            0 18px 50px rgba(2,6,23,.10),
-            0 1px 0 rgba(255,255,255,.55) inset;
+          box-shadow: 0 18px 50px rgba(2,6,23,.10), 0 1px 0 rgba(255,255,255,.55) inset;
           position: relative;
+          transition: background 700ms cubic-bezier(.2,.8,.2,1);
         }
         .rp-ring::after{
           content:"";
@@ -435,13 +854,11 @@ function Donut({
           pointer-events:none;
         }
         .rp-hole{
-         position:absolute;
-         inset: 18px;              /* centers it inside the ring */
-         border-radius: 999px;
-         background: rgba(255,255,255,.95);
-         border: 1px solid rgba(15,23,42,.08);
-         display:flex; flex-direction:column; align-items:center; justify-content:center;
-         box-shadow: 0 10px 30px rgba(2,6,23,.06);
+          position:absolute; inset: 18px; border-radius: 999px;
+          background: rgba(255,255,255,.95);
+          border: 1px solid rgba(15,23,42,.08);
+          display:flex; flex-direction:column; align-items:center; justify-content:center;
+          box-shadow: 0 10px 30px rgba(2,6,23,.06);
         }
         :root.dark .rp-hole{
           background: rgba(2,6,23,.75);
@@ -462,10 +879,7 @@ function Donut({
           border: 1px solid rgba(15,23,42,.08);
           background: rgba(2,6,23,.02);
         }
-        :root.dark .rp-legRow{
-          border-color: rgba(255,255,255,.10);
-          background: rgba(255,255,255,.04);
-        }
+        :root.dark .rp-legRow{ border-color: rgba(255,255,255,.10); background: rgba(255,255,255,.04); }
         .rp-dot{ width:10px; height:10px; border-radius:999px; }
         .rp-dotPaid{ background: rgba(185,28,28,.92); box-shadow: 0 0 0 3px rgba(185,28,28,.14); }
         .rp-dotOut{ background: rgba(15,23,42,.35); box-shadow: 0 0 0 3px rgba(15,23,42,.10); }
@@ -480,483 +894,159 @@ function Donut({
           .rp-ring{ margin-bottom: 8px; }
         }
       `}</style>
-    </div>
-  );
-}
 
-/* =========================
-   Page
-========================= */
-export default function Dashboard() {
-  // ✅ Toggle: MTD vs Last 30 Days
-  const [useRolling30, setUseRolling30] = useState(true);
+      <div className="rp-hero">
+        <div className="relative z-[1] flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl md:text-3xl font-black text-foreground tracking-tight">Ram Pottery Hub</h1>
 
-  const fromThis = useRolling30 ? rollingDaysISO(30) : startOfMonthISO();
-  const toToday = todayISO();
+              <Badge variant="secondary" className="border">
+                Live
+              </Badge>
 
-  const fromPrev = startOfPrevMonthISO();
-  const toPrev = endOfPrevMonthISO();
+              <Badge variant="secondary" className="border flex items-center gap-2">
+                <Clock className="h-3.5 w-3.5" />
+                Last invoice: <span className="font-semibold">{lastInvoiceDate}</span>
+              </Badge>
+            </div>
 
-  /* =========================
-     Queries (REAL DATA)
-  ========================= */
-  const invoicesThisQ = useQuery({
-    queryKey: ["dash_invoices_this", fromThis, toToday],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("invoices")
-        .select(
-          "id,invoice_number,customer_id,invoice_date,due_date,total_amount,vat_amount,subtotal,status,amount_paid,balance_remaining"
-        )
-        .gte("invoice_date", fromThis)
-        .lte("invoice_date", toToday)
-        .order("invoice_date", { ascending: false })
-        .limit(400);
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 8_000,
-  });
+            <p className="text-muted-foreground mt-2">
+              Dashboard • Premium overview • Period: <span className="font-semibold">{fmtDate(fromThis)}</span> →{" "}
+              <span className="font-semibold">{fmtDate(toToday)}</span>
+            </p>
 
-  const invoicesPrevQ = useQuery({
-    queryKey: ["dash_invoices_prev", fromPrev, toPrev],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("invoices")
-        .select("id,total_amount")
-        .gte("invoice_date", fromPrev)
-        .lte("invoice_date", toPrev);
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 20_000,
-  });
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="border bg-primary/10 text-primary">
+                Sales statuses: {salesStatuses.join(", ")}
+              </Badge>
 
-  const paymentsThisQ = useQuery({
-    queryKey: ["dash_payments_this", fromThis, toToday],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payments")
-        .select("id,customer_id,invoice_id,payment_date,amount,payment_method,notes")
-        .gte("payment_date", fromThis)
-        .lte("payment_date", toToday)
-        .order("payment_date", { ascending: false })
-        .limit(400);
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 8_000,
-  });
-
-  const paymentsPrevQ = useQuery({
-    queryKey: ["dash_payments_prev", fromPrev, toPrev],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("payments")
-        .select("id,amount")
-        .gte("payment_date", fromPrev)
-        .lte("payment_date", toPrev);
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 20_000,
-  });
-
-  // ✅ customers.company_name does not exist -> use columns you actually have
-  const customersQ = useQuery({
-    queryKey: ["dash_customers"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("customers").select("id,name,customer_code");
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 60_000,
-  });
-
-  const productsQ = useQuery({
-    queryKey: ["dash_products"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("products")
-        .select("id,sku,item_code,name,current_stock,reorder_level,is_active")
-        .order("name", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 30_000,
-  });
-
-  const supplierBillsOpenQ = useQuery({
-    queryKey: ["dash_supplier_bills_open"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("supplier_bills")
-        .select("id,total_amount,status,due_date,bill_date")
-        .in("status", ["OPEN", "PARTIALLY_PAID"])
-        .order("bill_date", { ascending: false })
-        .limit(200);
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 30_000,
-  });
-
-  // ✅ Recent invoices should be real & always show (not only this month)
-  const recentInvoicesQ = useQuery({
-    queryKey: ["dash_recent_invoices"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("invoices")
-        .select("id,invoice_number,customer_id,invoice_date,total_amount,balance_remaining,status")
-        .order("invoice_date", { ascending: false })
-        .limit(15);
-      if (error) throw error;
-      return (data ?? []) as any[];
-    },
-    staleTime: 8_000,
-  });
-
-  // ✅ Sales per month (last 6 months) from invoices totals
-  const sales6mQ = useQuery({
-    queryKey: ["dash_sales_6m"],
-    queryFn: async () => {
-      const now = new Date();
-      const from = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-      const fromISO = from.toISOString().slice(0, 10);
-      const toISO = todayISO();
-
-      const { data, error } = await supabase
-        .from("invoices")
-        .select("invoice_date,total_amount")
-        .gte("invoice_date", fromISO)
-        .lte("invoice_date", toISO);
-
-      if (error) throw error;
-      return (data ?? []) as { invoice_date: string; total_amount: any }[];
-    },
-    staleTime: 10_000,
-  });
-
-  const anyLoading =
-    invoicesThisQ.isLoading ||
-    invoicesPrevQ.isLoading ||
-    paymentsThisQ.isLoading ||
-    paymentsPrevQ.isLoading ||
-    customersQ.isLoading ||
-    productsQ.isLoading ||
-    supplierBillsOpenQ.isLoading ||
-    sales6mQ.isLoading ||
-    recentInvoicesQ.isLoading;
-
-  const anyError =
-    invoicesThisQ.error ||
-    invoicesPrevQ.error ||
-    paymentsThisQ.error ||
-    paymentsPrevQ.error ||
-    customersQ.error ||
-    productsQ.error ||
-    supplierBillsOpenQ.error ||
-    sales6mQ.error ||
-    recentInvoicesQ.error;
-
-  /* =========================
-     Derived maps + KPIs
-  ========================= */
-  const customerNameById = useMemo(() => {
-    const m = new Map<number, string>();
-    (customersQ.data ?? []).forEach((c: any) => {
-      const id = Number(c.id);
-      const name = c.name || c.customer_name || c.business_name || `Customer #${id}`;
-      if (Number.isFinite(id)) m.set(id, String(name));
-    });
-    return m;
-  }, [customersQ.data]);
-
-  const lastInvoiceDate = useMemo(() => {
-    const list = recentInvoicesQ.data ?? [];
-    const d = list?.[0]?.invoice_date;
-    return d ? fmtDate(String(d)) : "—";
-  }, [recentInvoicesQ.data]);
-
-  const kpis = useMemo(() => {
-    const invThis = invoicesThisQ.data ?? [];
-    const invPrev = invoicesPrevQ.data ?? [];
-    const payThis = paymentsThisQ.data ?? [];
-    const payPrev = paymentsPrevQ.data ?? [];
-    const prods = productsQ.data ?? [];
-    const openBills = supplierBillsOpenQ.data ?? [];
-
-    const revenueThis = invThis.reduce((s, r) => s + n0(r.total_amount), 0);
-    const revenuePrev = invPrev.reduce((s, r) => s + n0(r.total_amount), 0);
-
-    const paymentsThis = payThis.reduce((s, r) => s + n0(r.amount), 0);
-    const paymentsPrev = payPrev.reduce((s, r) => s + n0(r.amount), 0);
-
-    const invoicesThisCount = invThis.length;
-    const invoicesPrevCount = invPrev.length;
-
-    const activeSkus = prods.filter((p: any) => p.is_active ?? true).length;
-
-    const lowStock = prods
-      .filter((p: any) => (p.is_active ?? true) && n0(p.reorder_level) > 0)
-      .filter((p: any) => n0(p.current_stock) <= n0(p.reorder_level));
-    const lowStockCount = lowStock.length;
-
-    // Paid vs Outstanding (from invoices in selected window)
-    const paid = invThis.reduce((s, i: any) => s + Math.min(n0(i.amount_paid), n0(i.total_amount)), 0);
-    const outstanding = invThis.reduce((s, i: any) => s + Math.max(0, n0(i.balance_remaining)), 0);
-
-    // Cashflow KPI (Invoices - Payments)
-    const cashflow = revenueThis - paymentsThis;
-
-    // Overdue invoices
-    const t = todayISO();
-    const overdue = invThis
-      .filter((i: any) => n0(i.balance_remaining) > 0 && i.due_date && String(i.due_date) < t)
-      .map((i: any) => ({ ...i, balance: n0(i.balance_remaining) }))
-      .sort((a: any, b: any) => b.balance - a.balance);
-
-    const overdueCount = overdue.length;
-    const overdueTotal = overdue.reduce((s: number, r: any) => s + n0(r.balance_remaining), 0);
-
-    // AP due soon/overdue
-    let apDueSoon = 0;
-    let apOverdue = 0;
-    const now = new Date();
-    openBills.forEach((b: any) => {
-      if (!b.due_date) return;
-      const due = new Date(b.due_date);
-      const days = Math.floor((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      const amt = n0(b.total_amount);
-      if (days >= 0 && days <= 14) apDueSoon += amt;
-      if (days < 0) apOverdue += amt;
-    });
-
-    const revenueChange = pctChange(revenueThis, revenuePrev);
-    const paymentsChange = pctChange(paymentsThis, paymentsPrev);
-    const invoicesChange = pctChange(invoicesThisCount, invoicesPrevCount);
-
-    return {
-      revenueThis,
-      revenueChange,
-      invoicesThisCount,
-      invoicesChange,
-      activeSkus,
-      paymentsThis,
-      paymentsChange,
-      overdueCount,
-      overdueTotal,
-      lowStockCount,
-      apDueSoon,
-      apOverdue,
-      cashflow,
-      paid,
-      outstanding,
-      lowStockTop: lowStock
-        .map((p: any) => ({
-          id: p.id,
-          sku: p.sku || p.item_code || `#${p.id}`,
-          name: p.name,
-          onHand: n0(p.current_stock),
-          min: n0(p.reorder_level),
-        }))
-        .sort((a: any, b: any) => a.onHand - b.onHand)
-        .slice(0, 8),
-    };
-  }, [
-    invoicesThisQ.data,
-    invoicesPrevQ.data,
-    paymentsThisQ.data,
-    paymentsPrevQ.data,
-    productsQ.data,
-    supplierBillsOpenQ.data,
-  ]);
-
-  const recentInvoices = useMemo(() => {
-    const list = recentInvoicesQ.data ?? [];
-    return list.slice(0, 12).map((i: any) => ({
-      id: i.id,
-      invoice_number: i.invoice_number || `INV-${shortId(i.id)}`,
-      invoice_date: i.invoice_date,
-      customer: customerNameById.get(Number(i.customer_id)) || `Customer #${i.customer_id}`,
-      total: n0(i.total_amount),
-      balance: n0(i.balance_remaining),
-      status: String(i.status ?? "—"),
-    }));
-  }, [recentInvoicesQ.data, customerNameById]);
-
-  const salesPoints = useMemo<SalesPoint[]>(() => {
-    const now = new Date();
-    const months: string[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      months.push(monthKey(d));
-    }
-    const totals = new Map<string, number>();
-    months.forEach((k) => totals.set(k, 0));
-
-    (sales6mQ.data ?? []).forEach((row) => {
-      const d = new Date(String(row.invoice_date));
-      if (Number.isNaN(d.getTime())) return;
-      const k = monthKey(d);
-      if (!totals.has(k)) return;
-      totals.set(k, (totals.get(k) || 0) + n0(row.total_amount));
-    });
-
-    return months.map((ym) => ({
-      ym,
-      label: monthLabel(ym),
-      total: totals.get(ym) || 0,
-    }));
-  }, [sales6mQ.data]);
-
-  const quickActions: QuickActionProps[] = [
-    { title: "Create Invoice", description: "Generate a new invoice", icon: FileText, href: "/invoices/create" },
-    { title: "Create Quotation", description: "Prepare a quote", icon: Plus, href: "/quotations/create" },
-    { title: "Add Customer", description: "Register a new customer", icon: Users, href: "/customers" },
-    { title: "Stock Movements", description: "Adjust inventory & track", icon: Package, href: "/stock-movements" },
-  ];
-
-  function refetchAll() {
-    invoicesThisQ.refetch();
-    invoicesPrevQ.refetch();
-    paymentsThisQ.refetch();
-    paymentsPrevQ.refetch();
-    customersQ.refetch();
-    productsQ.refetch();
-    supplierBillsOpenQ.refetch();
-    sales6mQ.refetch();
-    recentInvoicesQ.refetch();
-  }
-
-  return (
-    <div className="space-y-8 animate-fade-in">
-      {/* Header (premium) */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-3xl font-bold text-foreground tracking-tight">Ram Pottery Hub</h1>
-
-            <Badge variant="secondary" className="border">
-              Live
-            </Badge>
-
-            <Badge variant="secondary" className="border flex items-center gap-2">
-              <Clock className="h-3.5 w-3.5" />
-              Last invoice: <span className="font-semibold">{lastInvoiceDate}</span>
-            </Badge>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Gauge className="h-3.5 w-3.5" />
+                Real-time KPIs • Supabase
+              </div>
+            </div>
           </div>
 
-          <p className="text-muted-foreground mt-1">Dashboard • Luxury overview</p>
-        </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 rounded-2xl border bg-card/70 px-3 py-2">
+              <span className={cn("text-xs font-semibold", !useRolling30 ? "text-foreground" : "text-muted-foreground")}>
+                MTD
+              </span>
+              <Switch checked={useRolling30} onCheckedChange={(v) => setUseRolling30(!!v)} />
+              <span className={cn("text-xs font-semibold", useRolling30 ? "text-foreground" : "text-muted-foreground")}>
+                Last 30 Days
+              </span>
+            </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* ✅ Toggle MTD ↔ Rolling 30 */}
-          <div className="flex items-center gap-2 rounded-xl border bg-card/70 px-3 py-2 shadow-premium">
-            <span className={cn("text-xs font-semibold", !useRolling30 ? "text-foreground" : "text-muted-foreground")}>
-              MTD
-            </span>
-            <Switch checked={useRolling30} onCheckedChange={(v) => setUseRolling30(!!v)} />
-            <span className={cn("text-xs font-semibold", useRolling30 ? "text-foreground" : "text-muted-foreground")}>
-              Last 30 Days
-            </span>
+            <Button variant="outline" onClick={refetchAll} disabled={anyLoading}>
+              <RefreshCw className={cn("h-4 w-4 mr-2", anyLoading && "animate-spin")} />
+              {anyLoading ? "Loading..." : "Refresh"}
+            </Button>
+
+            <Button asChild className="gradient-primary shadow-glow text-primary-foreground">
+              <Link to="/invoices/create">
+                <Plus className="h-4 w-4 mr-2" />
+                New Invoice
+              </Link>
+            </Button>
           </div>
-
-          <Button variant="outline" onClick={refetchAll} disabled={anyLoading}>
-            <RefreshCw className={cn("h-4 w-4 mr-2", anyLoading && "animate-spin")} />
-            {anyLoading ? "Loading..." : "Refresh"}
-          </Button>
-
-          <Button asChild className="gradient-primary shadow-glow text-primary-foreground">
-            <Link to="/invoices/create">
-              <Plus className="h-4 w-4 mr-2" />
-              New Invoice
-            </Link>
-          </Button>
         </div>
       </div>
 
-      {/* Errors */}
       {anyError ? (
-        <ErrorBox
-          title="Failed to load dashboard data (RLS / permissions / missing columns)"
-          msg={(anyError as any)?.message || "Unknown error"}
-        />
+        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4">
+          <div className="text-sm font-semibold text-rose-700 dark:text-rose-300">Failed to load dashboard data</div>
+          <div className="mt-2 text-sm text-rose-700/90 dark:text-rose-300/90 whitespace-pre-wrap">
+            {(anyError as any)?.message || "Unknown error"}
+          </div>
+          <div className="mt-3 text-xs text-muted-foreground">
+            If other pages work and Dashboard fails, it’s usually a missing column in one query or an RLS policy.
+          </div>
+        </div>
       ) : null}
 
-      {/* KPI Grid */}
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title={useRolling30 ? "Revenue (Last 30 Days)" : "Revenue (MTD)"}
-          value={fmtRs(kpis.revenueThis)}
+          valueRs={kpis.revenueThis}
           changePct={kpis.revenueChange}
           icon={RsIcon as any}
           trend={trendFromPct(kpis.revenueChange)}
+          subline={{ label: "Net after VAT (proxy)", value: fmtRs(kpis.netAfterVat) }}
           hint="From invoices.total_amount"
         />
+
         <StatCard
           title={useRolling30 ? "Payments (Last 30 Days)" : "Payments Received (MTD)"}
-          value={fmtRs(kpis.paymentsThis)}
+          valueRs={kpis.paymentsThis}
           changePct={kpis.paymentsChange}
           icon={Wallet}
           trend={trendFromPct(kpis.paymentsChange)}
-          hint="From payments.amount"
+          subline={{ label: "Outstanding", value: fmtRs(kpis.outstanding) }}
+          hint="From invoice_payments.amount"
         />
+
         <StatCard
-          title={useRolling30 ? "Invoices (Last 30 Days)" : "Invoices Created (MTD)"}
-          value={`${fmt(kpis.invoicesThisCount)}`}
+          title={useRolling30 ? "Avg Invoice (Last 30 Days)" : "Avg Invoice (MTD)"}
+          valueRs={kpis.avgInvoice}
           changePct={kpis.invoicesChange}
           icon={FileText}
           trend={trendFromPct(kpis.invoicesChange)}
-          hint="Invoice volume"
+          subline={{ label: "Invoices count", value: fmtCount(kpis.invoicesThisCount) }}
+          hint="Average invoice value"
         />
+
         <StatCard
-          title="Stock Items (Active)"
-          value={`${fmt(kpis.activeSkus)}`}
+          title="VAT & Stock Health"
+          valueRs={kpis.vatThis}
           changePct={0}
-          icon={Package}
+          icon={ReceiptText}
           trend="neutral"
-          hint={`Low stock: ${fmt(kpis.lowStockCount)}`}
+          subline={{ label: "VAT rate (approx)", value: `${kpis.vatRateApprox.toFixed(1)}%` }}
+          hint={`Low stock: ${fmtCount(kpis.lowStockCount)} • Active SKUs: ${fmtCount(kpis.activeSkus)}`}
         />
       </div>
 
-      {/* ✅ New premium KPI row: Cashflow + Paid/Outstanding donut */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="shadow-premium lg:col-span-1">
+      <div className="grid gap-4 md:gap-6 lg:grid-cols-3">
+        <Card className="rp-card lg:col-span-1 overflow-hidden">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Cashflow</CardTitle>
             <CardDescription>Invoices − Payments (selected window)</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-3xl font-black tracking-tight">{fmtRs(kpis.cashflow)}</div>
-                <div className="mt-2 text-sm text-muted-foreground">
-                  {useRolling30 ? "Last 30 days" : "MTD"} • Live
+              <div className="min-w-0 flex-1">
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="rp-currency">Rs</span>
+                  <span className="rp-kpi tabular-nums">{fmtMoney(kpis.cashflow)}</span>
                 </div>
+                <div className="mt-2 text-sm text-muted-foreground">{useRolling30 ? "Last 30 days" : "MTD"} • Live</div>
               </div>
-              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <CircleDollarSign className="h-6 w-6 text-primary" />
+
+              <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center relative overflow-hidden">
+                <div className="absolute -inset-10 opacity-70 pointer-events-none blur-2xl bg-[radial-gradient(circle_at_30%_30%,rgba(185,28,28,.20),transparent_60%)]" />
+                <Receipt className="h-6 w-6 text-primary relative z-[1]" />
               </div>
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-xl border bg-card/70 p-3">
+              <div className="rounded-2xl border bg-card/70 p-3">
                 <div className="text-xs text-muted-foreground font-semibold">Invoices</div>
-                <div className="mt-1 text-sm font-extrabold">{fmtRs(kpis.revenueThis)}</div>
+                <div className="mt-1 text-sm font-extrabold tabular-nums whitespace-nowrap">{fmtRs(kpis.revenueThis)}</div>
               </div>
-              <div className="rounded-xl border bg-card/70 p-3">
+              <div className="rounded-2xl border bg-card/70 p-3">
                 <div className="text-xs text-muted-foreground font-semibold">Payments</div>
-                <div className="mt-1 text-sm font-extrabold">{fmtRs(kpis.paymentsThis)}</div>
+                <div className="mt-1 text-sm font-extrabold tabular-nums whitespace-nowrap">{fmtRs(kpis.paymentsThis)}</div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-premium lg:col-span-2 overflow-hidden">
+        <Card className="rp-card lg:col-span-2 overflow-hidden">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Paid vs Outstanding</CardTitle>
-            <CardDescription>Based on invoice paid + balance (selected window)</CardDescription>
+            <CardDescription>Based on invoice amount_paid + balance_remaining (selected window)</CardDescription>
           </CardHeader>
           <CardContent>
             <Donut paid={kpis.paid} outstanding={kpis.outstanding} />
@@ -964,9 +1054,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Quick Actions + Alerts rail (Sales chart moved UP into the blank space) */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* LEFT (2 cols) */}
+      <div className="grid gap-4 md:gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-foreground">Quick Actions</h2>
@@ -981,47 +1069,46 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* Insights row */}
           <div className="grid gap-4 sm:grid-cols-3">
-            <Card className="shadow-premium">
+            <Card className="rp-card overflow-hidden">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">AR (Overdue)</div>
-                    <div className="mt-1 text-lg font-semibold">{fmtRs(kpis.overdueTotal)}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{fmt(kpis.overdueCount)} invoices overdue</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums whitespace-nowrap">{fmtRs(kpis.overdueTotal)}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{fmtCount(kpis.overdueCount)} invoices overdue</div>
                   </div>
-                  <div className="h-10 w-10 rounded-xl border bg-background flex items-center justify-center text-muted-foreground">
+                  <div className="h-10 w-10 rounded-2xl border bg-background flex items-center justify-center text-muted-foreground">
                     <Clock className="h-5 w-5" />
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="shadow-premium">
+            <Card className="rp-card overflow-hidden">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">AP Due Soon</div>
-                    <div className="mt-1 text-lg font-semibold">{fmtRs(kpis.apDueSoon)}</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums whitespace-nowrap">{fmtRs(kpis.apDueSoon)}</div>
                     <div className="mt-1 text-xs text-muted-foreground">Supplier bills due ≤ 14 days</div>
                   </div>
-                  <div className="h-10 w-10 rounded-xl border bg-background flex items-center justify-center text-muted-foreground">
+                  <div className="h-10 w-10 rounded-2xl border bg-background flex items-center justify-center text-muted-foreground">
                     <Landmark className="h-5 w-5" />
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="shadow-premium">
+            <Card className="rp-card overflow-hidden">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">Low Stock Alerts</div>
-                    <div className="mt-1 text-lg font-semibold">{fmt(kpis.lowStockCount)}</div>
+                    <div className="mt-1 text-lg font-semibold tabular-nums">{fmtCount(kpis.lowStockCount)}</div>
                     <div className="mt-1 text-xs text-muted-foreground">Items at/below reorder level</div>
                   </div>
-                  <div className="h-10 w-10 rounded-xl border bg-background flex items-center justify-center text-muted-foreground">
+                  <div className="h-10 w-10 rounded-2xl border bg-background flex items-center justify-center text-muted-foreground">
                     <Package className="h-5 w-5" />
                   </div>
                 </div>
@@ -1029,8 +1116,7 @@ export default function Dashboard() {
             </Card>
           </div>
 
-          {/* ✅ Sales chart (same size, more premium/luxury) */}
-          <Card className="shadow-premium overflow-hidden">
+          <Card className="rp-card overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle>Sales per month</CardTitle>
               <CardDescription>Last 6 months (invoice totals)</CardDescription>
@@ -1048,7 +1134,6 @@ export default function Dashboard() {
           </Card>
         </div>
 
-        {/* RIGHT rail */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-foreground">Alerts</h2>
@@ -1057,58 +1142,43 @@ export default function Dashboard() {
             </Badge>
           </div>
 
-          <Card className="shadow-premium">
+          <Card className="rp-card overflow-hidden">
             <CardContent className="p-4 space-y-4">
-              <div className="flex items-start gap-3 p-3 rounded-lg bg-warning/10">
-                <Clock className="h-5 w-5 text-warning mt-0.5" />
+              <div className="flex items-start gap-3 p-3 rounded-2xl bg-amber-500/10">
+                <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">{fmt(kpis.overdueCount)} invoices overdue</p>
-                  <p className="text-xs text-muted-foreground">Total outstanding: {fmtRs(kpis.overdueTotal)}</p>
+                  <p className="text-sm font-medium text-foreground">{fmtCount(kpis.overdueCount)} invoices overdue</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">Total outstanding: {fmtRs(kpis.overdueTotal)}</p>
                   <Button asChild variant="link" className="px-0 h-auto text-sm">
                     <Link to="/invoices">View invoices</Link>
                   </Button>
                 </div>
               </div>
 
-              <div className="flex items-start gap-3 p-3 rounded-lg bg-destructive/10">
-                <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+              <div className="flex items-start gap-3 p-3 rounded-2xl bg-rose-500/10">
+                <AlertCircle className="h-5 w-5 text-rose-600 dark:text-rose-400 mt-0.5" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">Low stock alert</p>
-                  <p className="text-xs text-muted-foreground">{fmt(kpis.lowStockCount)} items below reorder level</p>
+                  <p className="text-xs text-muted-foreground">{fmtCount(kpis.lowStockCount)} items below reorder level</p>
                   <Button asChild variant="link" className="px-0 h-auto text-sm">
                     <Link to="/stock">Open stock</Link>
                   </Button>
                 </div>
               </div>
 
-              <div className="flex items-start gap-3 p-3 rounded-lg bg-primary/10">
+              <div className="flex items-start gap-3 p-3 rounded-2xl bg-primary/10">
                 <Receipt className="h-5 w-5 text-primary mt-0.5" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">AP due soon</p>
-                  <p className="text-xs text-muted-foreground">{fmtRs(kpis.apDueSoon)} due within 14 days</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">{fmtRs(kpis.apDueSoon)} due within 14 days</p>
                   <Button asChild variant="link" className="px-0 h-auto text-sm">
                     <Link to="/ap/bills">Supplier bills</Link>
                   </Button>
                 </div>
               </div>
 
-              <div className="flex items-start gap-3 p-3 rounded-lg bg-success/10">
-                <TrendingUp className="h-5 w-5 text-success mt-0.5" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">
-                    Revenue change: {kpis.revenueChange > 0 ? "+" : ""}
-                    {kpis.revenueChange.toFixed(1)}%
-                  </p>
-                  <p className="text-xs text-muted-foreground">Compared to last month</p>
-                  <Button asChild variant="link" className="px-0 h-auto text-sm">
-                    <Link to="/reports">Open reports</Link>
-                  </Button>
-                </div>
-              </div>
-
-              {/* Tiny quality indicator */}
-              <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/30">
-                <CheckCircle2 className="h-5 w-5 text-foreground/70 mt-0.5" />
+              <div className="flex items-start gap-3 p-3 rounded-2xl bg-emerald-500/10">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 mt-0.5" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">System healthy</p>
                   <p className="text-xs text-muted-foreground">Live sync from Supabase</p>
@@ -1117,7 +1187,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-premium">
+          <Card className="rp-card overflow-hidden">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Top Low Stock</CardTitle>
               <CardDescription>Action list</CardDescription>
@@ -1125,16 +1195,16 @@ export default function Dashboard() {
             <CardContent>
               <div className="space-y-2">
                 {kpis.lowStockTop.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between rounded-lg border bg-background px-3 py-2">
+                  <div key={p.id} className="flex items-center justify-between rounded-2xl border bg-background px-3 py-2">
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">
                         {p.sku} • {p.name}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        Reorder: {fmt(p.min)} • On hand: {fmt(p.onHand)}
+                        Reorder: {fmtCount(p.min)} • On hand: {fmtCount(p.onHand)}
                       </div>
                     </div>
-                    <Badge variant="secondary" className="border bg-rose-500/10 text-rose-700">
+                    <Badge variant="secondary" className="border bg-rose-500/10 text-rose-700 dark:text-rose-200 dark:border-rose-500/25">
                       Low
                     </Badge>
                   </div>
@@ -1148,8 +1218,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ✅ Recent Invoices FULL WIDTH (down) */}
-      <Card className="shadow-premium w-full">
+      <Card className="rp-card w-full overflow-hidden">
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div>
             <CardTitle>Recent Invoices</CardTitle>
@@ -1176,37 +1245,42 @@ export default function Dashboard() {
               </Button>
             </div>
           ) : (
-            <div className="overflow-auto rounded-xl border">
+            <div className="overflow-auto rounded-2xl border max-h-[520px]">
               <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20">
+                <thead className="sticky top-0 z-10 border-b bg-muted/70 backdrop-blur">
                   <tr>
-                    <th className="text-left p-3">Invoice</th>
-                    <th className="text-left p-3">Customer</th>
-                    <th className="text-left p-3">Date</th>
-                    <th className="text-left p-3">Status</th>
-                    <th className="text-right p-3">Total</th>
-                    <th className="text-right p-3">Balance</th>
+                    <th className="text-left p-3 font-extrabold text-xs tracking-wide">Invoice</th>
+                    <th className="text-left p-3 font-extrabold text-xs tracking-wide">Customer</th>
+                    <th className="text-left p-3 font-extrabold text-xs tracking-wide">Date</th>
+                    <th className="text-left p-3 font-extrabold text-xs tracking-wide">Status</th>
+                    <th className="text-right p-3 font-extrabold text-xs tracking-wide">Total</th>
+                    <th className="text-right p-3 font-extrabold text-xs tracking-wide">Balance</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {recentInvoices.map((r) => (
-                    <tr key={r.id} className="hover:bg-muted/30">
-                      <td className="p-3 font-medium">
-                        <Link to={`/invoices/${r.id}`} className="hover:underline">
-                          {r.invoice_number}
-                        </Link>
-                      </td>
-                      <td className="p-3">{r.customer}</td>
-                      <td className="p-3 text-muted-foreground">{fmtDate(r.invoice_date)}</td>
-                      <td className="p-3">
-                        <Badge variant="secondary" className="border">
-                          {r.status}
-                        </Badge>
-                      </td>
-                      <td className="p-3 text-right font-semibold">{fmtRs(r.total)}</td>
-                      <td className="p-3 text-right">{fmtRs(r.balance)}</td>
-                    </tr>
-                  ))}
+                  {recentInvoices.map((r) => {
+                    const meta = statusMeta(r.status, r.balance, r.due_date);
+                    return (
+                      <tr key={r.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="p-3 font-medium">
+                          <Link to={`/invoices/${r.id}`} className="hover:underline">
+                            {r.invoice_number}
+                          </Link>
+                        </td>
+                        <td className="p-3 max-w-[460px]">
+                          <div className="truncate">{r.customer}</div>
+                        </td>
+                        <td className="p-3 text-muted-foreground">{fmtDate(r.invoice_date)}</td>
+                        <td className="p-3">
+                          <Badge variant="secondary" className={cn("border", meta.cls)}>
+                            {meta.label}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-right font-semibold tabular-nums whitespace-nowrap">{fmtRs(r.total)}</td>
+                        <td className="p-3 text-right tabular-nums whitespace-nowrap">{fmtRs(r.balance)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1214,18 +1288,12 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      {/* ✅ Footer centered */}
       <div className="pt-2 pb-2 text-xs text-muted-foreground">
         <div className="flex flex-col items-center justify-center gap-1 text-center">
           <div>© {new Date().getFullYear()} Ram Pottery Ltd. All rights reserved.</div>
           <div>
             Built by{" "}
-            <a
-              href="https://mobiz.mu"
-              target="_blank"
-              rel="noreferrer"
-              className="font-semibold text-foreground hover:underline"
-            >
+            <a href="https://mobiz.mu" target="_blank" rel="noreferrer" className="font-semibold text-foreground hover:underline">
               mobiz.mu
             </a>
           </div>

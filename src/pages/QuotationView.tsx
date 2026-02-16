@@ -30,6 +30,12 @@ function money(v: any) {
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n(v));
 }
 
+function qtyFmt(v: any, digits = 0) {
+  const x = n(v);
+  if (!Number.isFinite(x)) return "";
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(x);
+}
+
 function fmtDate(v: any) {
   const s = String(v || "").trim();
   if (!s) return "—";
@@ -47,22 +53,65 @@ function isValidId(v: any) {
   return Number.isFinite(num) && num > 0;
 }
 
-function qStatus(s: any) {
+type QStatus = "DRAFT" | "SENT" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "CONVERTED" | "CANCELLED";
+
+function qStatus(s: any): QStatus {
   const v = String(s || "DRAFT").toUpperCase();
   if (v === "ACCEPTED") return "ACCEPTED";
   if (v === "REJECTED") return "REJECTED";
+  if (v === "EXPIRED") return "EXPIRED";
   if (v === "CANCELLED") return "CANCELLED";
   if (v === "SENT") return "SENT";
   if (v === "CONVERTED") return "CONVERTED";
   return "DRAFT";
 }
 
-function pillClass(st: string) {
+function pillClass(st: QStatus) {
   if (st === "ACCEPTED") return "bg-emerald-100 text-emerald-700 border-emerald-200";
   if (st === "SENT") return "bg-blue-100 text-blue-700 border-blue-200";
   if (st === "CONVERTED") return "bg-purple-100 text-purple-700 border-purple-200";
+  if (st === "EXPIRED") return "bg-amber-100 text-amber-800 border-amber-200";
   if (st === "REJECTED" || st === "CANCELLED") return "bg-rose-100 text-rose-700 border-rose-200";
   return "bg-slate-100 text-slate-700 border-slate-200";
+}
+
+function normalizeUom(u: any) {
+  const x = String(u || "BOX").trim().toUpperCase();
+  if (x === "PCS") return "PCS";
+  if (x === "KG") return "KG";
+  if (x === "G") return "G";
+  if (x === "GRAM" || x === "GRAMS") return "G";
+  if (x === "BAG" || x === "BAGS") return "BAG";
+  return "BOX";
+}
+
+function uomQtyDigits(uom: string) {
+  // PCS / BAG / G / BOX are integer-like in your DB
+  // KG may be decimal (12,3)
+  if (uom === "KG") return 3;
+  return 0;
+}
+
+function qtyInputByUom(it: any, uom: string) {
+  // ✅ DB mapping:
+  // BOX: box_qty
+  // PCS: pcs_qty
+  // KG : box_qty (as kg_qty)
+  // G  : grams_qty
+  // BAG: bags_qty
+  if (uom === "PCS") return n(it?.pcs_qty ?? 0);
+  if (uom === "G") return n(it?.grams_qty ?? 0);
+  if (uom === "BAG") return n(it?.bags_qty ?? 0);
+  // BOX or KG
+  return n(it?.box_qty ?? 0);
+}
+
+function unitByUom(it: any, uom: string) {
+  // ✅ Unit column:
+  // BOX: units_per_box
+  // others: —
+  if (uom === "BOX") return n(it?.units_per_box ?? 1);
+  return null;
 }
 
 /* =========================
@@ -122,7 +171,9 @@ export default function QuotationView() {
     const vat = n(qRow?.vat_amount ?? 0);
     const total = n(qRow?.total_amount ?? 0);
     const disc = n(qRow?.discount_amount ?? 0);
-    return { subtotal, vat, total, disc };
+    const vatPct = n(qRow?.vat_percent ?? 15);
+    const discPct = n(qRow?.discount_percent ?? 0);
+    return { subtotal, vat, total, disc, vatPct, discPct };
   }, [qRow]);
 
   async function updateStatus(next: string) {
@@ -158,7 +209,7 @@ export default function QuotationView() {
       customerName: qRow?.customer_name || null,
     });
 
-    // ✅ keep safe: if no phone, still open WhatsApp with a fallback
+    // ✅ safe fallback
     const phone = customerPhone?.trim() ? customerPhone : "23000000000";
     const url = waLink(phone, msg);
     window.open(url, "_blank", "noreferrer");
@@ -232,11 +283,22 @@ export default function QuotationView() {
                 </>
               ) : null}
             </div>
+
+            {(qRow.sales_rep || qRow.sales_rep_phone) && (
+              <div className="text-xs text-slate-500 mt-1">
+                {qRow.sales_rep ? <span>Sales Rep: {String(qRow.sales_rep)}</span> : null}
+                {qRow.sales_rep && qRow.sales_rep_phone ? <span> • </span> : null}
+                {qRow.sales_rep_phone ? <span>{String(qRow.sales_rep_phone)}</span> : null}
+              </div>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => window.open(`/quotations/${quotationId}/print`, "_blank", "noopener,noreferrer")}>
+          <Button
+            variant="outline"
+            onClick={() => window.open(`/quotations/${quotationId}/print`, "_blank", "noopener,noreferrer")}
+          >
             <Printer className="mr-2 h-4 w-4" />
             Print
           </Button>
@@ -260,7 +322,7 @@ export default function QuotationView() {
                 Duplicate
               </DropdownMenuItem>
 
-              <DropdownMenuItem onClick={onCopyLink}>
+              <DropdownMenuItem onClick={onCopyLink} disabled={actionBusy}>
                 <Copy className="mr-2 h-4 w-4" />
                 Copy link
               </DropdownMenuItem>
@@ -274,9 +336,9 @@ export default function QuotationView() {
 
               <DropdownMenuSeparator />
 
-              <DropdownMenuItem onClick={onConvert} disabled={converting}>
+              <DropdownMenuItem onClick={onConvert} disabled={converting || st === "CONVERTED"}>
                 <FileText className="mr-2 h-4 w-4" />
-                {converting ? "Converting…" : "Convert → Invoice"}
+                {st === "CONVERTED" ? "Already converted" : converting ? "Converting…" : "Convert → Invoice"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -296,12 +358,23 @@ export default function QuotationView() {
           <div className="text-xs text-muted-foreground">Status</div>
           <div className="mt-1">
             <span
-              className={"inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)}
+              className={
+                "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)
+              }
             >
               {st}
             </span>
           </div>
-          {qRow.sales_rep ? <div className="text-xs text-slate-500 mt-2">Sales Rep: {qRow.sales_rep}</div> : null}
+
+          <div className="text-xs text-slate-500 mt-2">
+            VAT: <b className="text-slate-700">{qtyFmt(totals.vatPct, 0)}%</b>
+            {totals.discPct > 0 ? (
+              <>
+                {" "}
+                • Discount: <b className="text-slate-700">{qtyFmt(totals.discPct, 2)}%</b>
+              </>
+            ) : null}
+          </div>
         </Card>
 
         <Card className="p-4">
@@ -333,7 +406,7 @@ export default function QuotationView() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <div className="font-semibold">Update status</div>
-            <div className="text-xs text-muted-foreground">Keep your pipeline clean: Draft → Sent → Accepted/Rejected</div>
+            <div className="text-xs text-muted-foreground">Draft → Sent → Accepted / Rejected (then Convert)</div>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -356,6 +429,16 @@ export default function QuotationView() {
               <XCircle className="mr-2 h-4 w-4" />
               {busyStatus === "REJECTED" ? "..." : "Rejected"}
             </Button>
+
+            <Button
+              variant="outline"
+              onClick={onConvert}
+              disabled={converting || st === "CONVERTED" || (st !== "ACCEPTED" && st !== "SENT" && st !== "DRAFT")}
+              title={st === "CONVERTED" ? "Already converted" : "Convert this quotation to an invoice"}
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              {converting ? "Converting…" : "Convert → Invoice"}
+            </Button>
           </div>
         </div>
       </Card>
@@ -363,18 +446,18 @@ export default function QuotationView() {
       {/* ========= Items ========= */}
       <Card className="overflow-hidden">
         <div className="overflow-auto">
-          <table className="w-full min-w-[1100px]">
+          <table className="w-full min-w-[1200px]">
             <thead className="bg-slate-50">
               <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
                 <th className="px-4 py-3 text-left">#</th>
                 <th className="px-4 py-3 text-left">Item</th>
                 <th className="px-4 py-3 text-left">Code</th>
                 <th className="px-4 py-3 text-center">UOM</th>
-                <th className="px-4 py-3 text-right">Box/PCS</th>
+                <th className="px-4 py-3 text-right">Qty</th>
                 <th className="px-4 py-3 text-right">Unit</th>
                 <th className="px-4 py-3 text-right">Total Qty</th>
                 <th className="px-4 py-3 text-right">Unit Ex</th>
-                <th className="px-4 py-3 text-right">VAT</th>
+                <th className="px-4 py-3 text-right">VAT (unit)</th>
                 <th className="px-4 py-3 text-right">Unit Inc</th>
                 <th className="px-4 py-3 text-right">Line Total</th>
               </tr>
@@ -393,23 +476,33 @@ export default function QuotationView() {
                   const code = String(it.item_code || p?.item_code || p?.sku || "—");
                   const desc = String(it.description || p?.name || "—");
 
-                  const uom = String(it.uom || "BOX").toUpperCase();
-                  const boxQty = n(it.box_qty);
-                  const upb = uom === "PCS" ? "" : n(it.units_per_box);
+                  const uom = normalizeUom(it.uom);
+                  const qty = qtyInputByUom(it, uom);
+                  const unit = unitByUom(it, uom);
+
                   const tqty = n(it.total_qty);
 
                   return (
                     <tr key={it.id || idx}>
                       <td className="px-4 py-3">{idx + 1}</td>
+
                       <td className="px-4 py-3">
                         <div className="font-semibold text-slate-900">{desc}</div>
                       </td>
-                      <td className="px-4 py-3 text-sm text-slate-700">{code}</td>
-                      <td className="px-4 py-3 text-center">{uom}</td>
 
-                      <td className="px-4 py-3 text-right">{boxQty || ""}</td>
-                      <td className="px-4 py-3 text-right">{upb || ""}</td>
-                      <td className="px-4 py-3 text-right">{tqty || ""}</td>
+                      <td className="px-4 py-3 text-sm text-slate-700">{code}</td>
+
+                      <td className="px-4 py-3 text-center">
+                        <span className="inline-flex items-center rounded-md border bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                          {uom}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3 text-right">{qty ? qtyFmt(qty, uomQtyDigits(uom)) : ""}</td>
+
+                      <td className="px-4 py-3 text-right">{unit ? qtyFmt(unit, 0) : "—"}</td>
+
+                      <td className="px-4 py-3 text-right">{tqty ? qtyFmt(tqty, 0) : ""}</td>
 
                       <td className="px-4 py-3 text-right">{money(it.unit_price_excl_vat)}</td>
                       <td className="px-4 py-3 text-right">{money(it.unit_vat)}</td>
@@ -432,4 +525,3 @@ export default function QuotationView() {
     </div>
   );
 }
-

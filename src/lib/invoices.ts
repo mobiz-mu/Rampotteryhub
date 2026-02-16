@@ -19,6 +19,20 @@ function clampPct(v: any) {
   const x = n2(v);
   return Math.max(0, Math.min(100, x));
 }
+function roundTo(v: any, dp = 3) {
+  const x = n2(v);
+  const m = Math.pow(10, dp);
+  return Math.round((x + Number.EPSILON) * m) / m;
+}
+function nonNeg(v: any) {
+  const x = n2(v);
+  return x < 0 ? 0 : x;
+}
+function normUom(u: any) {
+  const x = String(u || "BOX").toUpperCase();
+  if (x === "BOX" || x === "PCS" || x === "KG" || x === "G" || x === "BAG") return x;
+  return "BOX";
+}
 function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || "").trim());
 }
@@ -32,10 +46,7 @@ function apiBase() {
 /** Fetch public print bundle from your Express server */
 async function fetchPublicInvoicePrint(invoiceId: number, token: string) {
   const t = String(token || "").trim();
-  if (!isUuid(t)) {
-    // Keep behavior similar to server: invalid token acts like not found
-    throw new Error("Invoice not found / access denied.");
-  }
+  if (!isUuid(t)) throw new Error("Invoice not found / access denied.");
 
   const base = apiBase();
   const url = `${base}/api/public/invoice-print?id=${encodeURIComponent(String(invoiceId))}&t=${encodeURIComponent(t)}`;
@@ -43,9 +54,7 @@ async function fetchPublicInvoicePrint(invoiceId: number, token: string) {
   const res = await fetch(url, { method: "GET" });
   const json = await res.json().catch(() => null);
 
-  if (!res.ok || !json?.ok) {
-    throw new Error(json?.error || "Invoice not found / access denied.");
-  }
+  if (!res.ok || !json?.ok) throw new Error(json?.error || "Invoice not found / access denied.");
 
   return json as {
     ok: true;
@@ -55,6 +64,104 @@ async function fetchPublicInvoicePrint(invoiceId: number, token: string) {
     items: any[];
   };
 }
+
+type StockMovementType = "IN" | "OUT" | "ADJUSTMENT";
+
+function safeDateISO(d?: string | null) {
+  if (!d) return new Date().toISOString();
+  const x = new Date(d);
+  return Number.isNaN(x.getTime()) ? new Date().toISOString() : x.toISOString();
+}
+
+async function hasMovementsForInvoice(invoiceId: number) {
+  const { data, error } = await supabase
+    .from("stock_movements")
+    .select("id")
+    .eq("source_table", "invoices")
+    .eq("source_id", invoiceId)
+    .limit(1);
+
+  if (error) throw error;
+  return (data || []).length > 0;
+}
+
+async function insertInvoiceMovements(invoice: any) {
+  // Load items + product stock_unit to convert correctly
+  const { data: items, error: itErr } = await supabase
+    .from("invoice_items")
+    .select(
+      `
+      id, invoice_id, product_id, uom, box_qty, pcs_qty, units_per_box, total_qty,
+      products:product_id ( id, stock_unit, selling_price_unit )
+    `
+    )
+    .eq("invoice_id", invoice.id);
+
+  if (itErr) throw itErr;
+
+  const movement_date = safeDateISO(invoice.invoice_date || invoice.created_at);
+
+  const rows = (items || [])
+    .filter((it: any) => Number(it.product_id) > 0)
+    .map((it: any) => {
+      const uom = String(it.uom || "").toUpperCase();
+      const boxQty = n2(it.box_qty);
+      const pcsQty = n2(it.pcs_qty);
+      const upb = n2(it.units_per_box || 1);
+
+      const productStockUnit = String(it.products?.stock_unit || "PCS").toUpperCase(); // PCS / WEIGHT
+      const priceUnit = String(it.products?.selling_price_unit || "PCS").toUpperCase(); // PCS / KG / BAG (optional)
+
+      // ✅ Compute base quantity to match your products storage:
+      // - PCS items -> products.current_stock (count)
+      // - WEIGHT items -> products.current_stock_grams (grams)
+      let qtyBase = 0;
+
+      if (productStockUnit === "WEIGHT") {
+        // store grams in stock_movements.quantity (your DB trigger should apply to current_stock_grams)
+        if (uom === "KG") qtyBase = boxQty * 1000;
+        else if (uom === "G") qtyBase = boxQty; // assume box_qty holds grams
+        else {
+          // fallback: if total_qty looks like KG, convert to grams
+          const tq = n2(it.total_qty);
+          qtyBase = tq > 0 ? tq * 1000 : 0;
+        }
+      } else {
+        // PCS (includes BAG items stored as count in current_stock)
+        if (uom === "PCS") qtyBase = pcsQty;
+        else if (uom === "BOX") qtyBase = boxQty * Math.max(1, upb) + pcsQty;
+        else if (uom === "BAG" || priceUnit === "BAG") {
+          // bag items saved as count in current_stock
+          // box_qty typically holds bag count
+          qtyBase = boxQty || n2(it.total_qty);
+        } else {
+          // fallback
+          qtyBase = n2(it.total_qty);
+        }
+      }
+
+      qtyBase = Math.max(0, qtyBase);
+
+      return {
+        product_id: Number(it.product_id),
+        movement_type: "OUT" as StockMovementType,
+        quantity: qtyBase,
+        movement_date,
+        reference: String(invoice.invoice_number || `INV#${invoice.id}`),
+        source_table: "invoices",
+        source_id: invoice.id,
+        notes: `Auto from invoice ${invoice.invoice_number || invoice.id}`,
+      };
+    })
+    .filter((r: any) => r.quantity > 0);
+
+  if (!rows.length) return;
+
+  const { error } = await supabase.from("stock_movements").insert(rows);
+  if (error) throw error;
+}
+
+
 
 /* =========================
    LIST INVOICES (private / authenticated)
@@ -75,7 +182,7 @@ export async function listInvoices(params?: {
     .select(
       `
       id,invoice_number,customer_id,invoice_date,due_date,subtotal,vat_amount,total_amount,status,
-      amount_paid,previous_balance,balance_remaining,notes,created_at,updated_at,vat_percent,
+      amount_paid,credits_applied,previous_balance,balance_remaining,notes,created_at,updated_at,vat_percent,
       discount_percent,discount_amount,sales_rep_phone,sales_rep,gross_total,purchase_order_no,
       total_excl_vat,total_incl_vat,balance_due,stock_deducted_at,invoice_year,invoice_seq,
       customers:customer_id ( id,name,customer_code,phone,whatsapp )
@@ -118,7 +225,6 @@ export async function listInvoices(params?: {
 
 /* =========================
    GET (single invoice)
-   ✅ Public token uses server API (NO browser Supabase)
 ========================= */
 export async function getInvoice(id: number, opts?: { publicToken?: string }) {
   if (opts?.publicToken) {
@@ -132,15 +238,11 @@ export async function getInvoice(id: number, opts?: { publicToken?: string }) {
 }
 
 /* =========================
-   (Optional) If you ever want customer/items in one call
-   used by print pages to avoid double fetch
+   Print bundle (optional)
 ========================= */
 export async function getInvoicePrintBundle(id: number, opts?: { publicToken?: string }) {
-  if (opts?.publicToken) {
-    return fetchPublicInvoicePrint(id, opts.publicToken);
-  }
+  if (opts?.publicToken) return fetchPublicInvoicePrint(id, opts.publicToken);
 
-  // Private: build bundle from Supabase (authenticated)
   const { data: inv, error: invErr } = await supabase.from("invoices").select("*").eq("id", id).single();
   if (invErr) throw invErr;
 
@@ -205,10 +307,7 @@ export async function getInvoiceById(id: string | number) {
     item_code: r?.products?.item_code || r?.products?.sku || "",
   }));
 
-  return {
-    ...inv,
-    items: mappedItems,
-  };
+  return { ...inv, items: mappedItems };
 }
 
 /* =========================
@@ -224,15 +323,14 @@ export async function updateInvoiceHeader(id: number, patch: Partial<Invoice>) {
   if (error) throw error;
 
   const row = (data || [])[0];
-  if (!row) {
-    throw new Error("Invoice update blocked (RLS policy or trigger). No row returned from UPDATE.");
-  }
+  if (!row) throw new Error("Invoice update blocked (RLS policy or trigger). No row returned from UPDATE.");
 
   return row as Invoice;
 }
 
 /* =========================
    CREATE DRAFT INVOICE (base)
+   invoice_number is generated in DB ✅
 ========================= */
 export async function createDraftInvoice(payload: {
   customer_id: number;
@@ -286,6 +384,8 @@ export async function createDraftInvoice(payload: {
 
 /* =========================
    Backward-compatible createInvoice
+   Supports UOM: BOX / PCS / KG / G / BAG
+   Decimals allowed everywhere ✅
 ========================= */
 export async function createInvoice(payload: any) {
   const inv = await createDraftInvoice({
@@ -308,23 +408,41 @@ export async function createInvoice(payload: any) {
   const items = (payload.items || []) as any[];
   if (!items.length) return inv;
 
-  const insertRows = items.map((it) => ({
-    invoice_id: inv.id,
-    product_id: it.product_id,
-    uom: String(it.uom || "BOX").toUpperCase(),
-    box_qty: it.box_qty ?? 0,
-    pcs_qty: it.pcs_qty ?? 0,
-    units_per_box: it.units_per_box ?? 1,
-    total_qty: it.total_qty ?? 0,
+  const insertRows = items.map((it) => {
+    const uom = normUom(it.uom);
 
-    unit_price_excl_vat: it.unit_price_excl_vat ?? 0,
-    vat_rate: it.vat_rate ?? (inv as any).vat_percent ?? 15,
-    unit_vat: it.unit_vat ?? 0,
-    unit_price_incl_vat: it.unit_price_incl_vat ?? 0,
-    line_total: it.line_total ?? 0,
+    // qty fields (decimals allowed)
+    const boxQty = roundTo(nonNeg(it.box_qty ?? 0), 3);
+    const pcsQty = roundTo(nonNeg(it.pcs_qty ?? 0), 3);
 
-    description: it.description ?? null,
-  }));
+    let upb = n2(it.units_per_box ?? 1);
+    if (!Number.isFinite(upb) || upb <= 0) upb = 1;
+
+    // enforce BAG and G conversions at insert level too (DB trigger will also normalize)
+    if (uom === "BAG" && (!it.units_per_box || n2(it.units_per_box) <= 0)) upb = 25;
+    if (uom === "G") upb = 0.001;
+    if (uom === "PCS" || uom === "KG") upb = 1;
+
+    return {
+      invoice_id: inv.id,
+      product_id: it.product_id,
+      uom,
+
+      box_qty: uom === "PCS" ? 0 : boxQty,
+      pcs_qty: uom === "PCS" ? pcsQty : 0,
+
+      units_per_box: upb,
+      total_qty: n2(it.total_qty ?? 0), // trigger will correct if needed
+
+      unit_price_excl_vat: n2(it.unit_price_excl_vat ?? 0),
+      vat_rate: n2(it.vat_rate ?? (inv as any).vat_percent ?? 15),
+      unit_vat: n2(it.unit_vat ?? 0),
+      unit_price_incl_vat: n2(it.unit_price_incl_vat ?? 0),
+      line_total: n2(it.line_total ?? 0),
+
+      description: it.description ?? null,
+    };
+  });
 
   const { error: itemsErr } = await supabase.from("invoice_items").insert(insertRows);
   if (itemsErr) throw itemsErr;
@@ -376,9 +494,10 @@ export function computeInvoiceTotalsOptionA(invoice: Invoice, items: InvoiceItem
 
   const prev = n2((invoice as any).previous_balance);
   const paid = n2((invoice as any).amount_paid);
+  const credits = n2((invoice as any).credits_applied ?? 0);
 
   const grossTotal = round2(totalAmount + prev);
-  const balance = round2(grossTotal - paid);
+  const balance = round2(Math.max(0, grossTotal - paid - credits));
 
   return {
     baseSubtotalEx,
@@ -432,9 +551,10 @@ export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoi
 
   const prev = n2((invoice as any).previous_balance);
   const paid = n2((invoice as any).amount_paid);
+  const credits = n2((invoice as any).credits_applied ?? 0);
 
   const grossTotal = round2(totalAmount + prev);
-  const balance = round2(grossTotal - paid);
+  const balance = round2(Math.max(0, grossTotal - paid - credits));
 
   const patch: Partial<Invoice> = {
     subtotal: subtotalEx,
@@ -460,15 +580,16 @@ export async function setInvoicePayment(invoiceId: number, amount_paid: number) 
 
   const paid = round2(n2(amount_paid));
   const gross = round2(n2((inv as any).gross_total ?? (inv as any).total_amount));
+  const credits = round2(n2((inv as any).credits_applied ?? 0));
+
+  const bal = round2(gross - paid - credits);
 
   let status: InvoiceStatus = "ISSUED";
   const eps = 0.00001;
 
-  if (paid <= eps) status = "ISSUED";
-  else if (paid + eps >= gross) status = "PAID";
-  else status = "PARTIALLY_PAID";
-
-  const bal = round2(gross - paid);
+  if (bal <= eps) status = "PAID";
+  else if (paid > eps || credits > eps) status = "PARTIALLY_PAID";
+  else status = "ISSUED";
 
   const final = await updateInvoiceHeader(invoiceId, {
     amount_paid: paid,
@@ -486,15 +607,74 @@ export async function setInvoicePayment(invoiceId: number, amount_paid: number) 
   return (joined || final) as any;
 }
 
+export async function postInvoiceAndDeductStock(invoiceId: number) {
+  const inv = await getInvoice(invoiceId);
+
+  // ✅ Guard 1: already deducted
+  if ((inv as any).stock_deducted_at) {
+    return inv as any;
+  }
+
+  // ✅ Guard 2: movements already exist (extra safety)
+  const has = await hasMovementsForInvoice(invoiceId);
+  if (has) {
+    // mark as deducted so UI/logic stays consistent
+    return updateInvoiceHeader(invoiceId, { stock_deducted_at: new Date().toISOString() } as any);
+  }
+
+  // ✅ Must not post empty invoice
+  const { data: anyItem, error: chkErr } = await supabase
+    .from("invoice_items")
+    .select("id")
+    .eq("invoice_id", invoiceId)
+    .limit(1);
+
+  if (chkErr) throw chkErr;
+  if (!anyItem?.length) throw new Error("Cannot post invoice without items.");
+
+  // 1) Insert stock movements OUT
+  await insertInvoiceMovements(inv);
+
+  // 2) Mark invoice as posted + deducted
+  // Use your real status name if you have one. Here we use ISSUED.
+  return updateInvoiceHeader(invoiceId, {
+    status: "ISSUED",
+    stock_deducted_at: new Date().toISOString(),
+  } as any);
+}
+
+
+
+export async function listInvoicesByCustomer(customerId: number) {
+  if (!Number.isFinite(Number(customerId))) return [];
+
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id, invoice_number, invoice_date, gross_total, amount_paid, credits_applied, balance_remaining, status")
+    .eq("customer_id", customerId)
+    .neq("status", "VOID")
+    .order("invoice_date", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+  return data || [];
+}
+
 export async function markInvoicePaid(arg: any) {
   const invoiceId = typeof arg === "object" ? Number(arg?.invoiceId) : Number(arg);
   if (!Number.isFinite(invoiceId)) throw new Error("Invalid invoice id");
 
   const inv = await getInvoice(invoiceId);
+
   const gross = n2((inv as any).gross_total ?? (inv as any).total_amount);
+  const credits = n2((inv as any).credits_applied ?? 0);
+
+  // Pay only what is actually still due
+  const payNeeded = Math.max(0, gross - credits);
 
   return updateInvoiceHeader(invoiceId, {
-    amount_paid: gross,
+    amount_paid: payNeeded,
     status: "PAID",
     balance_remaining: 0,
     balance_due: 0,
@@ -516,4 +696,3 @@ export async function getInvoicePdf(invoiceId: number | string) {
   if (!Number.isFinite(id)) throw new Error("Invalid invoice id");
   return `/invoices/${id}/print`;
 }
-

@@ -8,6 +8,7 @@ import "@/styles/InvoiceCreate.css"; // ✅ reuse same theme/css as InvoiceCreat
 import { supabase } from "@/integrations/supabase/client";
 import { rpFetch } from "@/lib/rpFetch";
 import { getAuditLogs } from "@/lib/creditNotes";
+import { applyCreditNoteToInvoice, syncInvoiceCredits } from "@/lib/creditNotes"; // ✅ ensure these exist (see note below)
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,7 +33,8 @@ import {
   BadgeCheck,
   AlertTriangle,
   Link as LinkIcon,
-  Copy,
+  RotateCcw,
+  HandCoins,
 } from "lucide-react";
 
 /* =========================
@@ -78,6 +80,44 @@ function fmtWhen(v: any) {
   return String(v || "—");
 }
 
+type CN_UOM = "BOX" | "PCS" | "KG" | "G" | "BAG";
+
+function normCnUom(it: any): CN_UOM {
+  const u = String(it?.uom || "BOX").trim().toUpperCase();
+
+  if (u === "PCS") return "PCS";
+  if (u === "KG" || u === "KGS") return "KG";
+  if (u === "G" || u === "GRAM" || u === "GRAMS") return "G";
+  if (u === "BAG" || u === "BAGS") return "BAG";
+  return "BOX";
+}
+
+function cnQtyInput(it: any): number | null {
+  const u = normCnUom(it);
+
+  const pick = (v: any) => {
+    if (v === null || v === undefined || v === "") return null;
+    const x = Number(v);
+    return Number.isFinite(x) ? x : null;
+  };
+
+  if (u === "PCS") return pick(it?.pcs_qty) ?? pick(it?.total_qty);
+  if (u === "G") return pick(it?.grams_qty) ?? pick(it?.total_qty);
+  if (u === "BAG") return pick(it?.bags_qty) ?? pick(it?.total_qty);
+
+  // BOX + KG use box_qty in your system
+  return pick(it?.box_qty) ?? pick(it?.total_qty);
+}
+
+function fmtCnQty(u: CN_UOM, v: number | null) {
+  if (v === null) return "";
+  if (u === "KG") return String(Number(v.toFixed(3))); // 0.450
+  if (u === "G") return String(Math.trunc(v));         // 250
+  if (u === "BAG") return String(Math.trunc(v));       // 2
+  return String(Math.trunc(v));                        // BOX/PCS
+}
+
+
 type CnRow = any;
 type ItemRow = any;
 
@@ -110,6 +150,10 @@ export default function CreditNoteView() {
     return { subtotal, vat, total };
   }, [cn?.subtotal, cn?.vat_amount, cn?.total_amount]);
 
+  const canVoid = useMemo(() => st !== "VOID", [st]);
+  const canRefund = useMemo(() => st === "ISSUED" || st === "PENDING", [st]);
+  const canRestore = useMemo(() => st === "VOID" || st === "REFUNDED", [st]);
+
   async function load() {
     setLoading(true);
     setErr(null);
@@ -127,6 +171,7 @@ export default function CreditNoteView() {
           customer_id,
           invoice_id,
           reason,
+          reason_note,
           subtotal,
           vat_amount,
           total_amount,
@@ -150,26 +195,35 @@ export default function CreditNoteView() {
       const creditNote = cnQ.data;
 
       const itQ = await supabase
-        .from("credit_note_items")
-        .select(
-          `
-          id,
-          product_id,
-          total_qty,
-          unit_price_excl_vat,
-          unit_vat,
-          unit_price_incl_vat,
-          line_total,
-          products:product_id (
-            id,
-            name,
-            item_code,
-            sku
-          )
-        `
-        )
-        .eq("credit_note_id", creditNote.id)
-        .order("id", { ascending: true });
+  .from("credit_note_items")
+  .select(
+    `
+    id,
+    product_id,
+
+    uom,
+    box_qty,
+    pcs_qty,
+    grams_qty,
+    bags_qty,
+    units_per_box,
+
+    total_qty,
+    unit_price_excl_vat,
+    unit_vat,
+    unit_price_incl_vat,
+    line_total,
+    description,
+    products:product_id (
+      id,
+      name,
+      item_code,
+      sku
+    )
+  `
+  )
+  .eq("credit_note_id", creditNote.id)
+  .order("id", { ascending: true });
 
       if (itQ.error) throw new Error(itQ.error.message);
 
@@ -197,10 +251,26 @@ export default function CreditNoteView() {
     staleTime: 5_000,
   });
 
+  async function afterStatusChange() {
+    await load();
+    await auditQ.refetch();
+
+    // ✅ If linked invoice: recompute invoice credits+balance
+    const invoiceId = Number(cn?.invoice_id || 0);
+    if (invoiceId > 0) {
+      try {
+        await syncInvoiceCredits({ invoiceId }); // best: sums issued credit notes and updates invoice totals
+      } catch (e: any) {
+        // keep the page usable even if invoice sync fails
+        toast("Invoice sync warning", { description: e?.message || "Could not refresh invoice balance automatically." });
+      }
+    }
+  }
+
   async function onVoid() {
     if (!cn?.id) return;
-    if (st === "VOID") return;
-    if (!confirm("Void this credit note? This cannot be undone.")) return;
+    if (!canVoid) return;
+    if (!confirm("Void this credit note?")) return;
 
     try {
       setActionBusy(true);
@@ -210,9 +280,7 @@ export default function CreditNoteView() {
       if (!res.ok || json?.ok === false) throw new Error(json?.error || "Void failed");
 
       toast("Voided", { description: "Credit note status updated." });
-
-      await load();
-      await auditQ.refetch();
+      await afterStatusChange();
     } catch (e: any) {
       toast("Void failed", { description: e?.message || "Error" });
     } finally {
@@ -220,28 +288,77 @@ export default function CreditNoteView() {
     }
   }
 
-  /** ✅ INTERNAL print (no token) */
+  async function onRefund() {
+    if (!cn?.id) return;
+    if (!canRefund) return;
+    if (!confirm("Mark this credit note as REFUNDED?")) return;
+
+    try {
+      setActionBusy(true);
+
+      const res = await rpFetch(`/api/credit-notes/${cn.id}/refund`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) throw new Error(json?.error || "Refund failed");
+
+      toast("Refunded", { description: "Credit note marked as REFUNDED." });
+      await afterStatusChange();
+    } catch (e: any) {
+      toast("Refund failed", { description: e?.message || "Error" });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function onRestore() {
+    if (!cn?.id) return;
+    if (!canRestore) return;
+    if (!confirm("Restore this credit note back to ISSUED?")) return;
+
+    try {
+      setActionBusy(true);
+
+      const res = await rpFetch(`/api/credit-notes/${cn.id}/restore`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) throw new Error(json?.error || "Restore failed");
+
+      toast("Restored", { description: "Credit note restored to ISSUED." });
+
+      // ✅ If it was linked to an invoice, ensure it’s applied again (idempotent)
+      if (cn.invoice_id) {
+        try {
+          await applyCreditNoteToInvoice({
+            creditNoteId: cn.id,
+            invoiceId: Number(cn.invoice_id),
+            reason: cn.reason || null,
+            reasonNote: cn.reason_note || null,
+          });
+        } catch (e: any) {
+          toast("Restore note", { description: e?.message || "Could not re-apply invoice credit automatically." });
+        }
+      }
+
+      await afterStatusChange();
+    } catch (e: any) {
+      toast("Restore failed", { description: e?.message || "Error" });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  /** ✅ INTERNAL print */
   function onPrint() {
     if (!cn?.id) return;
     window.open(`/credit-notes/${cn.id}/print`, "_blank", "noopener,noreferrer");
   }
 
-  /**
-   * ✅ PUBLIC share link:
-   * calls backend to get/create token, then opens:
-   * /credit-notes/:id/print?t=TOKEN
-   *
-   * If your endpoint name differs, change the rpFetch URL below.
-   */
+  /** ✅ PUBLIC share link */
   async function onSharePrint() {
     if (!cn?.id) return;
 
     try {
       setActionBusy(true);
 
-      // ✅ CHANGE THIS URL ONLY if your server uses a different route:
       const res = await rpFetch(`/api/credit-notes/${cn.id}/public-link`, { method: "POST" });
-
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) throw new Error(json?.error || "Failed to generate share link");
 
@@ -251,7 +368,6 @@ export default function CreditNoteView() {
       const origin = window.location.origin || "https://rampotteryhub.com";
       const url = `${origin}/credit-notes/${cn.id}/print?t=${encodeURIComponent(token)}`;
 
-      // copy + open
       try {
         await navigator.clipboard.writeText(url);
         toast("Public link copied", { description: "Link copied to clipboard and opened in a new tab." });
@@ -306,7 +422,7 @@ export default function CreditNoteView() {
 
   return (
     <div className="space-y-5 invoiceCreate">
-      {/* Premium background hint (same as invoice screens) */}
+      {/* Premium background hint */}
       <div className="pointer-events-none fixed inset-0 -z-10 opacity-60">
         <div className="absolute -top-24 left-1/2 h-72 w-[60rem] -translate-x-1/2 rounded-full bg-white/10 blur-3xl" />
         <div className="absolute -bottom-40 right-[-10rem] h-96 w-96 rounded-full bg-white/5 blur-3xl" />
@@ -332,9 +448,7 @@ export default function CreditNoteView() {
               <div className="text-2xl font-semibold tracking-tight">
                 Credit Note <span className="text-slate-900">{cn.credit_note_number || `#${cn.id}`}</span>
               </div>
-              <span
-                className={"inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)}
-              >
+              <span className={"inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold " + pillClass(st)}>
                 {st}
               </span>
             </div>
@@ -344,9 +458,19 @@ export default function CreditNoteView() {
               {cn.invoice_id ? (
                 <>
                   {" "}
-                  • Invoice ID: <b className="text-slate-800">{cn.invoice_id}</b>
+                  • Linked invoice:{" "}
+                  <button
+                    type="button"
+                    className="underline text-slate-800 hover:text-slate-950"
+                    onClick={() => nav(`/invoices/${cn.invoice_id}`)}
+                    title="Open invoice"
+                  >
+                    #{cn.invoice_id}
+                  </button>
                 </>
-              ) : null}
+              ) : (
+                <> • <span className="text-slate-500">Standalone</span></>
+              )}
             </div>
           </div>
         </div>
@@ -370,7 +494,7 @@ export default function CreditNoteView() {
               </button>
             </DropdownMenuTrigger>
 
-            <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuContent align="end" className="w-64">
               <DropdownMenuItem onClick={onPrint}>
                 <Printer className="mr-2 h-4 w-4" />
                 Print (internal)
@@ -388,14 +512,28 @@ export default function CreditNoteView() {
                 New Credit Note
               </DropdownMenuItem>
 
-              <DropdownMenuSeparator />
-
               <DropdownMenuItem onClick={() => load()} disabled={loading || actionBusy}>
                 <RefreshCw className={"mr-2 h-4 w-4 " + (loading ? "animate-spin" : "")} />
                 Refresh
               </DropdownMenuItem>
 
-              {st !== "VOID" ? (
+              <DropdownMenuSeparator />
+
+              {canRefund ? (
+                <DropdownMenuItem onClick={onRefund} disabled={actionBusy}>
+                  <HandCoins className="mr-2 h-4 w-4" />
+                  Mark as Refunded
+                </DropdownMenuItem>
+              ) : null}
+
+              {canRestore ? (
+                <DropdownMenuItem onClick={onRestore} disabled={actionBusy}>
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Restore to Issued
+                </DropdownMenuItem>
+              ) : null}
+
+              {canVoid ? (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={onVoid} disabled={actionBusy}>
@@ -446,7 +584,13 @@ export default function CreditNoteView() {
             </span>
           </div>
 
-          {cn.reason ? <div className="text-xs text-slate-500 mt-3">Reason: {cn.reason}</div> : null}
+          {cn.reason ? <div className="text-xs text-slate-500 mt-3">Reason: <b className="text-slate-800">{cn.reason}</b></div> : null}
+          {cn.reason_note ? (
+            <div className="text-xs text-slate-500 mt-1" title={cn.reason_note}>
+              Note: <span className="text-slate-800">{cn.reason_note}</span>
+            </div>
+          ) : null}
+
           {cn.created_at ? <div className="text-xs text-slate-400 mt-2">Created: {fmtWhen(cn.created_at)}</div> : null}
         </Card>
 
@@ -501,7 +645,14 @@ export default function CreditNoteView() {
                       <div className="font-semibold text-slate-900">{it.products?.name || "—"}</div>
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-700">{code}</td>
-                    <td className="px-4 py-3 text-right">{n(it.total_qty)}</td>
+                    <td className="px-4 py-3 text-right">
+                        {(() => {
+                          const u = normCnUom(it);
+                          const q = cnQtyInput(it);
+                          const t = fmtCnQty(u, q);
+                          return t ? `${t} ${u}` : "—";
+                     })()}
+                    </td>
                     <td className="px-4 py-3 text-right">{n(it.unit_price_excl_vat).toFixed(2)}</td>
                     <td className="px-4 py-3 text-right">{n(it.unit_vat).toFixed(2)}</td>
                     <td className="px-4 py-3 text-right font-semibold">{n(it.line_total).toFixed(2)}</td>
@@ -529,12 +680,7 @@ export default function CreditNoteView() {
             <div className="text-xs text-muted-foreground">Latest actions for this credit note</div>
           </div>
 
-          <Button
-            variant="outline"
-            className="rounded-xl"
-            onClick={() => auditQ.refetch()}
-            disabled={auditQ.isFetching}
-          >
+          <Button variant="outline" className="rounded-xl" onClick={() => auditQ.refetch()} disabled={auditQ.isFetching}>
             <RefreshCw className={"mr-2 h-4 w-4 " + (auditQ.isFetching ? "animate-spin" : "")} />
             {auditQ.isFetching ? "Refreshing..." : "Refresh"}
           </Button>
@@ -586,4 +732,5 @@ export default function CreditNoteView() {
     </div>
   );
 }
+
 

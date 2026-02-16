@@ -20,19 +20,16 @@ const ALL_PERMISSION_KEYS = [
   "users.manage",
 ] as const;
 
-type PermissionKey = (typeof ALL_PERMISSION_KEYS)[number];
-
 function s(v: any) {
   return String(v ?? "").trim();
 }
 function isEmail(v: string) {
-  const x = v.trim().toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim().toLowerCase());
 }
 function isRole(v: any): v is AppRole {
-  return v === "admin" || v === "manager" || v === "accountant" || v === "sales" || v === "viewer";
+  return ["admin", "manager", "accountant", "sales", "viewer"].includes(v);
 }
-function sanitizePerms(input: Record<string, boolean> | null | undefined): Record<PermissionKey, boolean> {
+function sanitizePerms(input: Record<string, boolean> | null | undefined) {
   const src = input || {};
   const out: any = {};
   for (const k of ALL_PERMISSION_KEYS) out[k] = !!src[k];
@@ -51,7 +48,9 @@ export function adminUsersRouter(opts: {
   const { requireAdmin } = opts;
   const r = Router();
 
-  // POST /api/admin/users/create
+  /* =========================
+     CREATE USER
+  ========================= */
   r.post("/create", async (req, res) => {
     try {
       const actor = await requireAdmin(req, res);
@@ -59,15 +58,15 @@ export function adminUsersRouter(opts: {
 
       const email = s(req.body?.email).toLowerCase();
       const full_name = s(req.body?.full_name) || null;
-
-      const roleRaw = s(req.body?.role).toLowerCase();
-      const role = (roleRaw || "viewer") as AppRole;
-
+      const role = s(req.body?.role || "viewer").toLowerCase();
       const is_active = typeof req.body?.is_active === "boolean" ? req.body.is_active : true;
       const perms = sanitizePerms(req.body?.permissions);
 
-      if (!email || !isEmail(email)) return res.status(400).json({ ok: false, error: "Invalid email" });
-      if (!isRole(role)) return res.status(400).json({ ok: false, error: "Invalid role" });
+      if (!isEmail(email))
+        return res.status(400).json({ ok: false, error: "Invalid email" });
+
+      if (!isRole(role))
+        return res.status(400).json({ ok: false, error: "Invalid role" });
 
       const sb = supaAdmin();
 
@@ -75,7 +74,7 @@ export function adminUsersRouter(opts: {
       const temp_password = providedPwd ? null : generatePassword(12);
       const password = providedPwd || temp_password!;
 
-      // 1) Create auth user
+      /* 1️⃣ Create Auth User */
       const { data: created, error: aErr } = await sb.auth.admin.createUser({
         email,
         password,
@@ -84,23 +83,25 @@ export function adminUsersRouter(opts: {
       });
 
       if (aErr || !created?.user) {
-        return res.status(400).json({ ok: false, error: aErr?.message || "Failed to create auth user" });
+        return res.status(400).json({
+          ok: false,
+          error: aErr?.message || "Auth creation failed",
+        });
       }
 
       const user_id = created.user.id;
 
-      // 2) profiles
-      const { error: pErr } = await sb.from("profiles").upsert(
-        {
-          id: user_id,
-          full_name,
-          role,
-        },
-        { onConflict: "id" }
-      );
-      if (pErr) return res.status(400).json({ ok: false, error: pErr.message });
+      /* 2️⃣ Profiles */
+      const { error: pErr } = await sb.from("profiles").upsert({
+        id: user_id,
+        full_name,
+        role,
+      });
 
-      // 3) rp_users
+      if (pErr)
+        return res.status(400).json({ ok: false, error: pErr.message });
+
+      /* 3️⃣ rp_users */
       const { error: rErr } = await sb.from("rp_users").upsert(
         {
           user_id,
@@ -112,132 +113,179 @@ export function adminUsersRouter(opts: {
         },
         { onConflict: "user_id" }
       );
-      if (rErr) return res.status(400).json({ ok: false, error: rErr.message });
 
-      // 4) audit user_activity (best-effort)
+      if (rErr)
+        return res.status(400).json({ ok: false, error: rErr.message });
+
+      /* 4️⃣ Audit (non-breaking) */
       try {
         await sb.from("user_activity").insert({
-          user_id: user_id, // created user (or actor id if you prefer)
+          user_id: actor.user_id, // ✅ FIXED (UUID)
           event: "user.create",
           entity: "user",
           entity_id: user_id,
-          meta: { actor: { id: actor.id, username: actor.username, role: actor.role } },
+          meta: { created_user: email },
         });
       } catch {}
 
       return res.json({ ok: true, user_id, temp_password });
     } catch (e: any) {
-      console.error("admin users create error:", e);
+      console.error("Create error:", e);
       return res.status(500).json({ ok: false, error: e?.message || "Server error" });
     }
   });
 
-  // POST /api/admin/users/update
+  // ✅ GET /api/admin/users/list
+r.get("/list", async (req, res) => {
+  try {
+    const actor = await requireAdmin(req, res);
+    if (!actor) return;
+
+    const sb = supaAdmin();
+
+    // profiles
+    const { data: profiles, error: pErr } = await sb
+      .from("profiles")
+      .select("id, role, full_name, created_at");
+
+    if (pErr) return res.status(400).json({ ok: false, error: pErr.message });
+
+    // rp_users
+    const { data: rpUsers, error: rErr } = await sb
+      .from("rp_users")
+      .select("user_id, username, name, role, permissions, is_active, created_at");
+
+    if (rErr) return res.status(400).json({ ok: false, error: rErr.message });
+
+    const rpMap = new Map<string, any>();
+    (rpUsers || []).forEach((r: any) => {
+      if (r?.user_id) rpMap.set(r.user_id, r);
+    });
+
+    const normRole = (v: any) => {
+      const x = String(v || "").toLowerCase();
+      if (x === "admin" || x === "manager" || x === "accountant" || x === "sales" || x === "viewer") return x;
+      return "viewer";
+    };
+
+    const merged = (profiles || []).map((p: any) => {
+      const rp = rpMap.get(p.id);
+      const role = normRole(rp?.role ?? p.role);
+
+      return {
+        user_id: p.id,
+        full_name: p.full_name ?? rp?.name ?? null,
+        email: rp?.username ?? null,
+        role,
+        is_active: typeof rp?.is_active === "boolean" ? rp.is_active : true,
+        permissions: (rp?.permissions && typeof rp.permissions === "object" ? rp.permissions : {}) as Record<string, boolean>,
+        created_at: p.created_at || rp?.created_at || null,
+      };
+    });
+
+    return res.json({ ok: true, users: merged });
+  } catch (e: any) {
+    console.error("admin users list error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "Server error" });
+  }
+});
+
+
+  /* =========================
+     UPDATE USER
+  ========================= */
   r.post("/update", async (req, res) => {
     try {
       const actor = await requireAdmin(req, res);
       if (!actor) return;
 
       const user_id = s(req.body?.user_id);
-      if (!user_id) return res.status(400).json({ ok: false, error: "user_id required" });
-
-      const nextRoleRaw = s(req.body?.role).toLowerCase();
-      const nextRole = nextRoleRaw ? (nextRoleRaw as AppRole) : undefined;
-      if (typeof nextRole !== "undefined" && !isRole(nextRole)) {
-        return res.status(400).json({ ok: false, error: "Invalid role" });
-      }
-
-      const full_name = typeof req.body?.full_name === "undefined" ? undefined : s(req.body?.full_name) || null;
-      const is_active = typeof req.body?.is_active === "undefined" ? undefined : !!req.body.is_active;
-      const permissions = typeof req.body?.permissions === "undefined" ? undefined : sanitizePerms(req.body.permissions);
-
-      const resetPwd = s(req.body?.reset_password);
-      if (resetPwd && resetPwd.length < 8) {
-        return res.status(400).json({ ok: false, error: "Password too short (min 8 characters)" });
-      }
+      if (!user_id)
+        return res.status(400).json({ ok: false, error: "user_id required" });
 
       const sb = supaAdmin();
 
-      if (typeof full_name !== "undefined" || typeof nextRole !== "undefined") {
-        const patch: any = {};
-        if (typeof full_name !== "undefined") patch.full_name = full_name;
-        if (typeof nextRole !== "undefined") patch.role = nextRole;
-        const { error } = await sb.from("profiles").update(patch).eq("id", user_id);
-        if (error) return res.status(400).json({ ok: false, error: error.message });
-      }
-
       const patchRp: any = {};
-      if (typeof full_name !== "undefined") patchRp.name = full_name;
-      if (typeof nextRole !== "undefined") patchRp.role = nextRole;
-      if (typeof is_active !== "undefined") patchRp.is_active = is_active;
-      if (typeof permissions !== "undefined") patchRp.permissions = permissions;
+      if (req.body?.role) patchRp.role = req.body.role;
+      if (typeof req.body?.is_active === "boolean")
+        patchRp.is_active = req.body.is_active;
+      if (req.body?.permissions)
+        patchRp.permissions = sanitizePerms(req.body.permissions);
+      if (req.body?.full_name)
+        patchRp.name = req.body.full_name;
 
       if (Object.keys(patchRp).length) {
-        const { error } = await sb.from("rp_users").update(patchRp).eq("user_id", user_id);
-        if (error) return res.status(400).json({ ok: false, error: error.message });
+        const { error } = await sb
+          .from("rp_users")
+          .update(patchRp)
+          .eq("user_id", user_id);
+
+        if (error)
+          return res.status(400).json({ ok: false, error: error.message });
       }
 
-      if (resetPwd) {
-        const { error } = await sb.auth.admin.updateUserById(user_id, { password: resetPwd });
-        if (error) return res.status(400).json({ ok: false, error: error.message });
+      if (req.body?.reset_password) {
+        const { error } = await sb.auth.admin.updateUserById(user_id, {
+          password: req.body.reset_password,
+        });
+        if (error)
+          return res.status(400).json({ ok: false, error: error.message });
       }
 
-      // audit best-effort
       try {
         await sb.from("user_activity").insert({
-          user_id: actor.id, // actor is better here
+          user_id: actor.user_id, // ✅ FIXED
           event: "user.update",
           entity: "user",
           entity_id: user_id,
-          meta: { changed: { full_name, nextRole, is_active, permissions, resetPwd: !!resetPwd } },
         });
       } catch {}
 
       return res.json({ ok: true });
     } catch (e: any) {
-      console.error("admin users update error:", e);
+      console.error("Update error:", e);
       return res.status(500).json({ ok: false, error: e?.message || "Server error" });
     }
   });
 
-  // POST /api/admin/users/delete
+  /* =========================
+     DELETE USER
+  ========================= */
   r.post("/delete", async (req, res) => {
     try {
       const actor = await requireAdmin(req, res);
       if (!actor) return;
 
       const user_id = s(req.body?.user_id);
-      if (!user_id) return res.status(400).json({ ok: false, error: "user_id required" });
+      if (!user_id)
+        return res.status(400).json({ ok: false, error: "user_id required" });
 
       const sb = supaAdmin();
 
-      // delete auth user (also cascades user_activity via FK if user_id matches auth.users)
       const { error } = await sb.auth.admin.deleteUser(user_id);
-      if (error) return res.status(400).json({ ok: false, error: error.message });
+      if (error)
+        return res.status(400).json({ ok: false, error: error.message });
 
-      // best-effort cleanup app tables
       try {
         await sb.from("rp_users").delete().eq("user_id", user_id);
-        await sb.from("profiles").delete().eq("id", user_id);
       } catch {}
 
-      // audit best-effort
       try {
         await sb.from("user_activity").insert({
-          user_id: actor.id,
+          user_id: actor.user_id, // ✅ FIXED
           event: "user.delete",
           entity: "user",
           entity_id: user_id,
-          meta: {},
         });
       } catch {}
 
       return res.json({ ok: true });
     } catch (e: any) {
-      console.error("admin users delete error:", e);
+      console.error("Delete error:", e);
       return res.status(500).json({ ok: false, error: e?.message || "Server error" });
     }
   });
 
   return r;
 }
+

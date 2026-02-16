@@ -14,7 +14,7 @@ import { listProducts } from "@/lib/invoices";
 import { createQuotationFull, getQuotation, getQuotationItems } from "@/lib/quotations";
 
 /* =========================
-   Types (Invoice-style)
+   Types
 ========================= */
 type CustomerRow = {
   id: number;
@@ -39,10 +39,9 @@ type ProductRow = {
   selling_price: number; // VAT-exclusive
 };
 
-type Uom = "BOX" | "PCS";
+type Uom = "BOX" | "PCS" | "KG" | "G" | "BAG";
 type PrintNameMode = "CUSTOMER" | "CLIENT";
 
-/** Invoice-style row model (matches the print doc fields) */
 type QuoteLine = {
   id: string;
   product_id: number | null;
@@ -51,23 +50,29 @@ type QuoteLine = {
   description: string;
 
   uom: Uom;
-  box_qty: number; // input qty (BOX or PCS)
-  units_per_box: number; // BOX only (PCS = 1)
-  total_qty: number; // computed
 
-  vat_rate: number; // per-row (we also have default VAT that can set all)
+  // stored qty inputs (multi-uom)
+  box_qty: number;   // BOX => integer boxes, KG => decimal kg
+  pcs_qty: number;   // PCS => integer pcs
+  grams_qty: number; // G => integer grams
+  bags_qty: number;  // BAG => integer bags
 
-  base_unit_price_excl_vat: number; // product base price EX
-  unit_price_excl_vat: number; // editable EX
-  unit_vat: number; // per unit
-  unit_price_incl_vat: number; // editable INC (derived from EX on recalc)
+  units_per_box: number; // BOX only (>=1)
+  total_qty: number;     // computed: BOX => box_qty*upb, PCS => pcs_qty, KG => kg, G => grams, BAG => bags
+
+  vat_rate: number; // per row
+
+  base_unit_price_excl_vat: number;
+  unit_price_excl_vat: number;
+  unit_vat: number;
+  unit_price_incl_vat: number;
   line_total: number;
 
   price_overridden?: boolean;
 };
 
 /* =========================
-   Sales reps (same as invoice)
+   Sales reps
 ========================= */
 const SALES_REPS = [
   { name: "Mr Koushal", phone: "59193239" },
@@ -83,22 +88,24 @@ function repPhoneByName(name: string) {
 }
 
 /* =========================
-   Helpers (same style as invoice)
+   Helpers
 ========================= */
-const n2 = (v: any) => {
+function n2(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
-};
-const clampPct = (v: any) => Math.max(0, Math.min(100, n2(v)));
-
-function uid() {
-  try {
-    return crypto.randomUUID();
-  } catch {
-    return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
-  }
 }
-
+function r2(v: any) {
+  return Math.round(n2(v) * 100) / 100;
+}
+function roundTo(v: any, dp: number) {
+  const x = n2(v);
+  const m = Math.pow(10, dp);
+  return Math.round(x * m) / m;
+}
+function clampPct(v: any) {
+  const x = n2(v);
+  return Math.max(0, Math.min(100, x));
+}
 function money(v: any) {
   const x = n2(v);
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(x);
@@ -106,33 +113,71 @@ function money(v: any) {
 function intFmt(v: any) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(n2(v)));
 }
-
+function uid() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+  }
+}
 function todayISO() {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
-
 function parseNumInput(s: string) {
   const cleaned = String(s ?? "").replace(/,/g, "").trim();
-  return cleaned === "" ? 0 : n2(cleaned);
+  if (cleaned === "" || cleaned === ".") return 0;
+  return n2(cleaned);
 }
-
 function rawNum(v: any) {
   const x = n2(v);
   return x === 0 ? "" : String(x);
 }
+function safeUpb(v: any) {
+  return Math.max(1, Math.trunc(n2(v) || 1));
+}
+function roundKg(v: any) {
+  return Math.round(n2(v) * 1000) / 1000; // 3dp
+}
 
-/** Recalc like invoice: keep numbers stable, update totals */
+/* =========================
+   Recalc (multi-UOM)
+========================= */
 function recalc(row: QuoteLine): QuoteLine {
-  const qtyInput = Math.max(0, Math.trunc(n2(row.box_qty)));
+  const uom: Uom =
+    row.uom === "PCS" ? "PCS" :
+    row.uom === "KG" ? "KG" :
+    row.uom === "G" ? "G" :
+    row.uom === "BAG" ? "BAG" :
+    "BOX";
 
-  const uom: Uom = row.uom === "PCS" ? "PCS" : "BOX";
-  const upb = uom === "PCS" ? 1 : Math.max(1, Math.trunc(n2(row.units_per_box) || 1));
-  const totalQty = uom === "PCS" ? qtyInput : qtyInput * upb;
-
+  const upb = uom === "BOX" ? safeUpb(row.units_per_box) : 1;
   const rate = clampPct(row.vat_rate);
+
+  let box_qty = 0;
+  let pcs_qty = 0;
+  let grams_qty = 0;
+  let bags_qty = 0;
+  let total_qty = 0;
+
+  if (uom === "BOX") {
+    box_qty = Math.max(0, Math.trunc(n2(row.box_qty)));
+    total_qty = box_qty * upb;
+  } else if (uom === "PCS") {
+    pcs_qty = Math.max(0, Math.trunc(n2(row.pcs_qty)));
+    total_qty = pcs_qty;
+  } else if (uom === "KG") {
+    box_qty = Math.max(0, roundKg(row.box_qty)); // reuse box_qty as KG
+    total_qty = box_qty;
+  } else if (uom === "G") {
+    grams_qty = Math.max(0, Math.trunc(n2(row.grams_qty)));
+    total_qty = grams_qty;
+  } else {
+    bags_qty = Math.max(0, Math.trunc(n2(row.bags_qty)));
+    total_qty = bags_qty;
+  }
 
   const unitEx = Math.max(0, n2(row.unit_price_excl_vat));
   const unitVat = unitEx * (rate / 100);
@@ -141,13 +186,18 @@ function recalc(row: QuoteLine): QuoteLine {
   return {
     ...row,
     uom,
-    box_qty: qtyInput,
     units_per_box: upb,
-    total_qty: totalQty,
     vat_rate: rate,
-    unit_vat: unitVat,
-    unit_price_incl_vat: unitInc,
-    line_total: totalQty * unitInc,
+
+    box_qty,
+    pcs_qty,
+    grams_qty,
+    bags_qty,
+    total_qty,
+
+    unit_vat: roundTo(unitVat, 3),
+    unit_price_incl_vat: roundTo(unitInc, 3),
+    line_total: r2(total_qty * unitInc),
   };
 }
 
@@ -159,6 +209,9 @@ function blankLine(defaultVat: number): QuoteLine {
     description: "",
     uom: "BOX",
     box_qty: 0,
+    pcs_qty: 0,
+    grams_qty: 0,
+    bags_qty: 0,
     units_per_box: 1,
     total_qty: 0,
     vat_rate: clampPct(defaultVat),
@@ -171,15 +224,16 @@ function blankLine(defaultVat: number): QuoteLine {
   });
 }
 
-function pickProductLabel(p?: ProductRow | null) {
-  if (!p) return "";
-  const code = p.item_code || p.sku || "";
-  const name = p.name || "";
-  return `${name}${code ? ` • ${code}` : ""}`;
+function isQtyValid(l: QuoteLine) {
+  if (l.uom === "BOX") return Math.trunc(n2(l.box_qty)) > 0;
+  if (l.uom === "PCS") return Math.trunc(n2(l.pcs_qty)) > 0;
+  if (l.uom === "KG") return n2(l.box_qty) > 0;
+  if (l.uom === "G") return Math.trunc(n2(l.grams_qty)) > 0;
+  return Math.trunc(n2(l.bags_qty)) > 0; // BAG
 }
 
 /* =========================
-   Page (InvoiceCreate look + behavior)
+   Page
 ========================= */
 export default function QuotationCreate() {
   const nav = useNavigate();
@@ -189,7 +243,6 @@ export default function QuotationCreate() {
   const [busy, setBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
 
-  // header fields (same pattern)
   const [printNameMode, setPrintNameMode] = useState<PrintNameMode>("CUSTOMER");
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [clientName, setClientName] = useState<string>("");
@@ -197,7 +250,6 @@ export default function QuotationCreate() {
   const [quotationDate, setQuotationDate] = useState<string>(todayISO());
   const [validUntil, setValidUntil] = useState<string>("");
 
-  // invoice-like global VAT/Discount inputs (editable)
   const [vatPercentText, setVatPercentText] = useState<string>("15");
   const [discountPercentText, setDiscountPercentText] = useState<string>("");
   const [discountTouched, setDiscountTouched] = useState(false);
@@ -208,15 +260,12 @@ export default function QuotationCreate() {
   const [quotationNumber, setQuotationNumber] = useState<string>("(Auto when saved)");
   const [lines, setLines] = useState<QuoteLine[]>([blankLine(15)]);
 
-  // row focus (Enter => next)
   const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  // decimal-safe buffers (same as invoice/credit note)
   const [editingEx, setEditingEx] = useState<Record<string, string>>({});
   const [editingVat, setEditingVat] = useState<Record<string, string>>({});
   const [editingInc, setEditingInc] = useState<Record<string, string>>({});
 
-  /* ===== Search modals (InvoiceCreate style) ===== */
   const [custOpen, setCustOpen] = useState(false);
   const [custSearch, setCustSearch] = useState("");
 
@@ -224,26 +273,22 @@ export default function QuotationCreate() {
   const [prodSearch, setProdSearch] = useState("");
   const [prodPickRowId, setProdPickRowId] = useState<string | null>(null);
 
-  /* ===== Sales reps dropdown (premium multi-select) ===== */
   const repBoxRef = useRef<HTMLDivElement | null>(null);
   const [repOpen, setRepOpen] = useState(false);
   const [salesReps, setSalesReps] = useState<SalesRepName[]>([]);
 
   useEffect(() => {
     if (!repOpen) return;
-
     const onDown = (e: PointerEvent) => {
       const box = repBoxRef.current;
       if (!box) return;
       if (box.contains(e.target as Node)) return;
       setRepOpen(false);
     };
-
     document.addEventListener("pointerdown", onDown, true);
     return () => document.removeEventListener("pointerdown", onDown, true);
   }, [repOpen]);
 
-  /* ===== Data ===== */
   const customersQ = useQuery({
     queryKey: ["customers"],
     queryFn: () => listCustomers({ limit: 5000 } as any),
@@ -268,7 +313,6 @@ export default function QuotationCreate() {
     return cn || cl;
   }, [printNameMode, customer?.name, clientName]);
 
-  // auto discount from customer
   useEffect(() => {
     if (!customerId || !customer) return;
 
@@ -282,13 +326,13 @@ export default function QuotationCreate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  // VAT applies to all rows (like your current page) but keep per-row editable too
+  // Default VAT updates all rows (still editable per row)
   useEffect(() => {
     const v = clampPct(vatPercentText);
-    setLines((prev) => prev.map((r) => recalc({ ...r, vat_rate: v })));
+    setLines((prev) => prev.map((r) => recalc({ ...r, vat_rate: v } as QuoteLine)));
   }, [vatPercentText]);
 
-  // Discount recalculates unit_ex from base (but do not override manually edited prices)
+  // Discount: updates unit_ex from base unless price_overridden
   useEffect(() => {
     const dp = clampPct(discountPercentText);
     setLines((prev) =>
@@ -296,13 +340,13 @@ export default function QuotationCreate() {
         if (!r.product_id) return r;
         if (r.price_overridden) return r;
         const base = n2(r.base_unit_price_excl_vat);
-        const discounted = base * (1 - dp / 100);
-        return recalc({ ...r, unit_price_excl_vat: discounted });
+        const discounted = roundTo(base * (1 - dp / 100), 6);
+        return recalc({ ...r, unit_price_excl_vat: discounted } as QuoteLine);
       })
     );
   }, [discountPercentText]);
 
-  /* ===== Duplicate ===== */
+  /* ===== Duplicate quotation ===== */
   useEffect(() => {
     if (!duplicateId) return;
 
@@ -333,10 +377,16 @@ export default function QuotationCreate() {
             product_id: it.product_id ?? null,
             item_code: String(it.item_code || it.product?.item_code || it.product?.sku || ""),
             description: String(it.description || it.product?.name || ""),
-            uom: String(it.uom || "BOX").toUpperCase() === "PCS" ? "PCS" : "BOX",
+            uom: (String(it.uom || "BOX").toUpperCase() as any) as Uom,
+
             box_qty: n2(it.box_qty || 0),
+            pcs_qty: n2(it.pcs_qty || 0),
+            grams_qty: n2(it.grams_qty || 0),
+            bags_qty: n2(it.bags_qty || 0),
+
             units_per_box: Math.max(1, Math.trunc(n2(it.units_per_box || 1))),
-            total_qty: Math.trunc(n2(it.total_qty || 0)),
+            total_qty: n2(it.total_qty || 0),
+
             vat_rate: clampPct((it.vat_rate ?? vat) as any),
             base_unit_price_excl_vat: n2(it.base_unit_price_excl_vat ?? it.unit_price_excl_vat ?? 0),
             unit_price_excl_vat: n2(it.unit_price_excl_vat ?? 0),
@@ -344,7 +394,7 @@ export default function QuotationCreate() {
             unit_price_incl_vat: n2(it.unit_price_incl_vat || 0),
             line_total: n2(it.line_total || 0),
             price_overridden: !!it.price_overridden,
-          })
+          } as QuoteLine)
         );
 
         setLines(cloned.length ? cloned : [blankLine(15)]);
@@ -357,21 +407,21 @@ export default function QuotationCreate() {
   const realLines = useMemo(() => lines.filter((l) => !!l.product_id), [lines]);
 
   const subtotalEx = useMemo(
-    () => realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_price_excl_vat), 0),
+    () => r2(realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_price_excl_vat), 0)),
     [realLines]
   );
 
-  const vatAmount = useMemo(
-    () =>
+  const vatAmount = useMemo(() => {
+    return r2(
       realLines.reduce((sum, r) => {
         const rate = clampPct(r.vat_rate);
         const ex = n2(r.unit_price_excl_vat);
         return sum + n2(r.total_qty) * (ex * (rate / 100));
-      }, 0),
-    [realLines]
-  );
+      }, 0)
+    );
+  }, [realLines]);
 
-  const totalAfterDiscount = useMemo(() => subtotalEx + vatAmount, [subtotalEx, vatAmount]);
+  const totalAfterDiscount = useMemo(() => r2(subtotalEx + vatAmount), [subtotalEx, vatAmount]);
 
   const discountAmount = useMemo(() => {
     const dp = clampPct(discountPercentText);
@@ -385,7 +435,7 @@ export default function QuotationCreate() {
     }, 0);
 
     const baseTotal = baseSub + baseVat;
-    return Math.max(0, baseTotal - totalAfterDiscount);
+    return Math.max(0, r2(baseTotal - totalAfterDiscount));
   }, [realLines, discountPercentText, totalAfterDiscount]);
 
   /* ===== Row helpers ===== */
@@ -395,10 +445,7 @@ export default function QuotationCreate() {
 
   function setLinePriceEx(id: string, unitEx: number) {
     setLines((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        return recalc({ ...r, unit_price_excl_vat: Math.max(0, n2(unitEx)), price_overridden: true } as QuoteLine);
-      })
+      prev.map((r) => (r.id === id ? recalc({ ...r, unit_price_excl_vat: Math.max(0, n2(unitEx)), price_overridden: true } as QuoteLine) : r))
     );
   }
 
@@ -439,31 +486,46 @@ export default function QuotationCreate() {
             product_id: null,
             item_code: "",
             description: "",
+            uom: "BOX",
+            box_qty: 0,
+            pcs_qty: 0,
+            grams_qty: 0,
+            bags_qty: 0,
             units_per_box: 1,
             base_unit_price_excl_vat: 0,
             unit_price_excl_vat: 0,
             vat_rate: clampPct(vatPercent),
-            uom: "BOX",
-            box_qty: 0,
             price_overridden: false,
           } as QuoteLine);
         }
 
         const dp = clampPct(discountPercentText);
         const baseEx = n2((product as any).selling_price || 0);
-        const discountedEx = baseEx * (1 - dp / 100);
+        const discountedEx = roundTo(baseEx * (1 - dp / 100), 6);
+        const upb = Math.max(1, Math.trunc(n2(product.units_per_box || 1)));
+
+        // keep existing uom choice but default BOX
+        const nextUom: Uom = r.uom || "BOX";
 
         return recalc({
           ...r,
           product_id: product.id,
           item_code: String(product.item_code || product.sku || ""),
           description: String(product.description || product.name || "").trim(),
-          units_per_box: Math.max(1, Math.trunc(n2(product.units_per_box || 1))),
+
+          uom: nextUom,
+          units_per_box: upb,
+
           base_unit_price_excl_vat: baseEx,
           unit_price_excl_vat: discountedEx,
-          vat_rate: clampPct(vatPercent),
-          uom: "BOX",
-          box_qty: Math.max(1, Math.trunc(n2(r.box_qty || 1))),
+          vat_rate: clampPct(r.vat_rate || vatPercent),
+
+          // set a sensible initial qty
+          box_qty: nextUom === "KG" ? Math.max(0, roundKg(r.box_qty || 0)) : Math.max(1, Math.trunc(n2(r.box_qty || 1))),
+          pcs_qty: nextUom === "PCS" ? Math.max(1, Math.trunc(n2(r.pcs_qty || 1))) : 0,
+          grams_qty: nextUom === "G" ? Math.max(1, Math.trunc(n2(r.grams_qty || 1))) : 0,
+          bags_qty: nextUom === "BAG" ? Math.max(1, Math.trunc(n2(r.bags_qty || 1))) : 0,
+
           price_overridden: false,
         } as QuoteLine);
       })
@@ -516,7 +578,7 @@ export default function QuotationCreate() {
     setProdOpen(true);
   }
 
-  /* ===== Keyboard shortcuts (same pro feel) ===== */
+  /* ===== Keyboard shortcuts ===== */
   const saveBtnRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -544,7 +606,7 @@ export default function QuotationCreate() {
     if (!quotationDate) return toast.error("Please select quotation date.");
     if (!salesReps.length) return toast.error("Please select at least one sales rep.");
     if (realLines.length === 0) return toast.error("Please add at least one item.");
-    if (realLines.some((l) => Math.trunc(n2(l.box_qty)) <= 0)) return toast.error("Qty must be at least 1.");
+    if (realLines.some((l) => !isQtyValid(l))) return toast.error("Qty must be greater than 0.");
 
     if (printNameMode === "CLIENT" && !clientName.trim()) {
       return toast.error("Please enter a Client Name (or switch to Customer Name).");
@@ -570,15 +632,36 @@ export default function QuotationCreate() {
         discount_amount: n2(discountAmount),
 
         items: realLines.map((l) => {
-          const qtyInput = Math.trunc(n2(l.box_qty));
-          const uom: Uom = l.uom === "PCS" ? "PCS" : "BOX";
-          const upb = uom === "PCS" ? 1 : Math.max(1, Math.trunc(n2(l.units_per_box) || 1));
-          const totalQty = uom === "PCS" ? qtyInput : qtyInput * upb;
+          const uom: Uom =
+            l.uom === "PCS" ? "PCS" :
+            l.uom === "KG" ? "KG" :
+            l.uom === "G" ? "G" :
+            l.uom === "BAG" ? "BAG" :
+            "BOX";
+
+          const upb = uom === "BOX" ? safeUpb(l.units_per_box) : 1;
+
+          const box_qty =
+            uom === "BOX" ? Math.max(0, Math.trunc(n2(l.box_qty))) :
+            uom === "KG" ? Math.max(0, roundKg(l.box_qty)) :
+            0;
+
+          const pcs_qty = uom === "PCS" ? Math.max(0, Math.trunc(n2(l.pcs_qty))) : 0;
+          const grams_qty = uom === "G" ? Math.max(0, Math.trunc(n2(l.grams_qty))) : 0;
+          const bags_qty = uom === "BAG" ? Math.max(0, Math.trunc(n2(l.bags_qty))) : 0;
+
+          const total_qty =
+            uom === "BOX" ? box_qty * upb :
+            uom === "PCS" ? pcs_qty :
+            uom === "KG" ? box_qty :
+            uom === "G" ? grams_qty :
+            bags_qty;
 
           const rate = clampPct(l.vat_rate);
-          const unitEx = n2(l.unit_price_excl_vat);
-          const unitVat = unitEx * (rate / 100);
-          const unitInc = unitEx + unitVat;
+          const unitEx = Math.max(0, n2(l.unit_price_excl_vat));
+          const unitVat = roundTo(unitEx * (rate / 100), 3);
+          const unitInc = roundTo(unitEx + unitVat, 3);
+          const lineTotal = r2(total_qty * unitInc);
 
           return {
             product_id: l.product_id,
@@ -586,16 +669,18 @@ export default function QuotationCreate() {
             description: l.description || null,
 
             uom,
-            box_qty: qtyInput,
+            box_qty,
+            pcs_qty,
+            grams_qty,
+            bags_qty,
             units_per_box: upb,
-            total_qty: totalQty,
+            total_qty,
 
             unit_price_excl_vat: unitEx,
             unit_vat: unitVat,
             unit_price_incl_vat: unitInc,
-            line_total: totalQty * unitInc,
+            line_total: lineTotal,
 
-            // optional extras if your backend stores them:
             base_unit_price_excl_vat: n2(l.base_unit_price_excl_vat),
             vat_rate: rate,
             price_overridden: !!l.price_overridden,
@@ -627,9 +712,17 @@ export default function QuotationCreate() {
 
   const DocAny: any = RamPotteryDoc;
 
+  // Qty input display depends on UOM
+  function qtyDisplayFor(r: QuoteLine) {
+    if (r.uom === "PCS") return rawNum(r.pcs_qty);
+    if (r.uom === "KG") return rawNum(r.box_qty);
+    if (r.uom === "G") return rawNum(r.grams_qty);
+    if (r.uom === "BAG") return rawNum(r.bags_qty);
+    return rawNum(r.box_qty); // BOX
+  }
+
   return (
     <div className="inv-page">
-      {/* TOP ACTIONS (same as InvoiceCreate) */}
       <div className="inv-actions inv-screen inv-actions--tight">
         <Button variant="outline" onClick={() => nav(-1)}>
           ← Back
@@ -657,7 +750,6 @@ export default function QuotationCreate() {
         </div>
       </div>
 
-      {/* FORM (same shell) */}
       <div className="inv-screen inv-form-shell inv-form-shell--tight">
         <div className="inv-form-card">
           <div className="inv-form-head inv-form-head--tight">
@@ -684,9 +776,7 @@ export default function QuotationCreate() {
             </div>
           </div>
 
-          {/* 2 STRAIGHT ROWS (same as InvoiceCreate) */}
           <div className="inv-form-2rows">
-            {/* ROW 1 */}
             <div className="inv-form-row inv-form-row--top inv-row-red">
               <div className="inv-field inv-field--printblock">
                 <label>Print Name</label>
@@ -766,9 +856,7 @@ export default function QuotationCreate() {
               </div>
             </div>
 
-            {/* ROW 2 */}
             <div className="inv-form-row inv-form-row--bottom inv-row-red">
-              {/* Sales reps (same premium multi select) */}
               <div className="inv-field inv-field--salesrep">
                 <label>Sales Rep(s)</label>
 
@@ -865,12 +953,11 @@ export default function QuotationCreate() {
             </div>
           </div>
 
-          {/* ITEMS (same invoice columns + same row behaviors) */}
           <div className="inv-items">
             <div className="inv-items-head">
               <div>
                 <div className="inv-items-title">Items</div>
-                <div className="inv-items-sub">Enter qty then press Enter to jump to next row (adds one automatically).</div>
+                <div className="inv-items-sub">UOM supports BOX / PCS / KG / Grams / Bags. Press Enter in Qty to go next (adds row).</div>
               </div>
 
               <div className="inv-items-actions">
@@ -918,7 +1005,6 @@ export default function QuotationCreate() {
                       <tr key={r.id} className="inv-tr-red">
                         <td className="inv-td inv-center">{idx + 1}</td>
 
-                        {/* PRODUCT */}
                         <td className="inv-td">
                           <select
                             className="inv-input inv-input--prod"
@@ -938,7 +1024,6 @@ export default function QuotationCreate() {
                           </select>
                         </td>
 
-                        {/* SEARCH */}
                         <td className="inv-td inv-center">
                           <button type="button" className="inv-iconBtn inv-iconBtn--table inv-prodSearchBtn" onClick={() => openProductSearch(r.id)} title="Search product">
                             🔍
@@ -951,13 +1036,23 @@ export default function QuotationCreate() {
                             <select className="inv-input inv-input--uom" value={r.uom} onChange={(e) => setLine(r.id, { uom: e.target.value as any })} disabled={!isReal}>
                               <option value="BOX">BOX</option>
                               <option value="PCS">PCS</option>
+                              <option value="KG">Kg</option>
+                              <option value="G">Grams</option>
+                              <option value="BAG">Bags</option>
                             </select>
 
                             <input
                               ref={(el) => (qtyRefs.current[r.id] = el)}
                               className="inv-input inv-input--qty inv-center"
-                              value={rawNum(r.box_qty)}
-                              onChange={(e) => setLine(r.id, { box_qty: parseNumInput(e.target.value) })}
+                              value={qtyDisplayFor(r)}
+                              onChange={(e) => {
+                                const v = parseNumInput(e.target.value);
+                                if (r.uom === "PCS") setLine(r.id, { pcs_qty: v });
+                                else if (r.uom === "KG") setLine(r.id, { box_qty: v });
+                                else if (r.uom === "G") setLine(r.id, { grams_qty: v });
+                                else if (r.uom === "BAG") setLine(r.id, { bags_qty: v });
+                                else setLine(r.id, { box_qty: v }); // BOX
+                              }}
                               onFocus={(e) => e.currentTarget.select()}
                               onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
                               onKeyDown={(e) => {
@@ -969,12 +1064,12 @@ export default function QuotationCreate() {
                               disabled={!isReal}
                               inputMode="decimal"
                               step="any"
-                              placeholder="0"
+                              placeholder={r.uom === "KG" ? "0.000" : "0"}
                             />
                           </div>
                         </td>
 
-                        {/* UNIT (UPB) */}
+                        {/* UNIT / UPB */}
                         <td className="inv-td inv-center">
                           {r.uom === "BOX" ? (
                             <input
@@ -988,7 +1083,7 @@ export default function QuotationCreate() {
                               step="any"
                             />
                           ) : (
-                            <input className="inv-input inv-center" value="—" readOnly />
+                            <input className="inv-input inv-center" value={r.uom === "KG" ? "Kg" : "—"} readOnly />
                           )}
                         </td>
 
@@ -997,7 +1092,7 @@ export default function QuotationCreate() {
                           <input className="inv-input inv-center" value={rawNum(r.total_qty)} readOnly />
                         </td>
 
-                        {/* UNIT EX (editable, decimal-safe) */}
+                        {/* UNIT EX */}
                         <td className="inv-td inv-right">
                           <input
                             className="inv-input inv-input--right"
@@ -1032,20 +1127,20 @@ export default function QuotationCreate() {
                           />
                         </td>
 
-                        {/* VAT % (editable) */}
+                        {/* VAT % */}
                         <td className="inv-td inv-right">
                           <input
                             className="inv-input inv-input--right"
                             inputMode="decimal"
                             placeholder="15"
-                            value={editingVat?.[r.id] !== undefined ? editingVat[r.id] : rawNum(r.vat_rate) || ""}
+                            value={editingVat[r.id] !== undefined ? editingVat[r.id] : rawNum(r.vat_rate) || ""}
                             onChange={(e) => {
                               const v = e.target.value.replace(/,/g, "");
                               if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
                               setEditingVat((prev) => ({ ...prev, [r.id]: v }));
                             }}
                             onBlur={() => {
-                              const v = editingVat?.[r.id];
+                              const v = editingVat[r.id];
                               const commit = v === undefined ? rawNum(r.vat_rate) : v;
                               setLine(r.id, { vat_rate: parseNumInput(commit === "." || commit === "" ? "0" : commit) });
                               setEditingVat((prev) => {
@@ -1069,20 +1164,20 @@ export default function QuotationCreate() {
                           />
                         </td>
 
-                        {/* UNIT INC (editable, decimal-safe) */}
+                        {/* UNIT INC */}
                         <td className="inv-td inv-right">
                           <input
                             className="inv-input inv-input--right"
                             inputMode="decimal"
                             placeholder="0.0000"
-                            value={editingInc?.[r.id] !== undefined ? editingInc[r.id] : rawNum(r.unit_price_incl_vat) || ""}
+                            value={editingInc[r.id] !== undefined ? editingInc[r.id] : rawNum(r.unit_price_incl_vat) || ""}
                             onChange={(e) => {
                               const v = e.target.value.replace(/,/g, "");
                               if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
                               setEditingInc((prev) => ({ ...prev, [r.id]: v }));
                             }}
                             onBlur={() => {
-                              const v = editingInc?.[r.id];
+                              const v = editingInc[r.id];
                               const commit = v === undefined ? rawNum(r.unit_price_incl_vat) : v;
                               setLinePriceInc(r.id, parseNumInput(commit === "." || commit === "" ? "0" : commit));
                               setEditingInc((prev) => {
@@ -1124,7 +1219,6 @@ export default function QuotationCreate() {
               </table>
             </div>
 
-            {/* Bottom action row — OUTSIDE table (same look) */}
             <div className="inv-bottomRow">
               <div className="inv-bottomLeft">
                 <button type="button" className="inv-addrows" onClick={addRowAndFocus}>
@@ -1153,7 +1247,6 @@ export default function QuotationCreate() {
               </div>
             </div>
 
-            {/* bottom buttons */}
             <div className="inv-form-footer inv-form-footer--tight">
               <Button variant="outline" onClick={() => nav("/quotations")}>
                 Cancel
@@ -1166,9 +1259,7 @@ export default function QuotationCreate() {
         </div>
       </div>
 
-      {/* =========================
-          Customer Search (same invoice modal)
-      ========================= */}
+      {/* Customer Search Modal */}
       {custOpen ? (
         <div className="inv-modal-backdrop" onMouseDown={() => setCustOpen(false)}>
           <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
@@ -1213,9 +1304,7 @@ export default function QuotationCreate() {
         </div>
       ) : null}
 
-      {/* =========================
-          Product Search (same invoice modal)
-      ========================= */}
+      {/* Product Search Modal */}
       {prodOpen ? (
         <div className="inv-modal-backdrop" onMouseDown={() => setProdOpen(false)}>
           <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
@@ -1244,9 +1333,7 @@ export default function QuotationCreate() {
                     <div className="inv-modal-item-title">
                       <b>{p.item_code || p.sku || "—"}</b> — {p.name || "—"}
                     </div>
-                    <div className="inv-modal-item-sub">
-                      UPB {intFmt(p.units_per_box ?? 1)} · Unit Ex {money(p.selling_price ?? 0)}
-                    </div>
+                    <div className="inv-modal-item-sub">UPB {intFmt(p.units_per_box ?? 1)} · Unit Ex {money(p.selling_price ?? 0)}</div>
                   </button>
                 ))}
 
@@ -1288,9 +1375,15 @@ export default function QuotationCreate() {
             sn: i + 1,
             item_code: r.item_code,
             uom: r.uom,
-            box_qty: Math.trunc(n2(r.box_qty)),
-            units_per_box: Math.trunc(n2(r.units_per_box)),
-            total_qty: Math.trunc(n2(r.total_qty)),
+
+            box_qty: r.uom === "BOX" || r.uom === "KG" ? n2(r.box_qty) : 0,
+            pcs_qty: r.uom === "PCS" ? Math.trunc(n2(r.pcs_qty)) : 0,
+            grams_qty: r.uom === "G" ? Math.trunc(n2(r.grams_qty)) : 0,
+            bags_qty: r.uom === "BAG" ? Math.trunc(n2(r.bags_qty)) : 0,
+
+            units_per_box: r.uom === "BOX" ? Math.trunc(n2(r.units_per_box)) : 1,
+            total_qty: n2(r.total_qty),
+
             description: r.description,
             unit_price_excl_vat: n2(r.unit_price_excl_vat),
             unit_vat: n2(r.unit_vat),
@@ -1316,6 +1409,3 @@ export default function QuotationCreate() {
     </div>
   );
 }
-
-
-

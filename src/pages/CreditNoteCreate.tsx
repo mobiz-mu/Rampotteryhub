@@ -9,9 +9,17 @@ import RamPotteryDoc from "@/components/print/RamPotteryDoc";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-/* ============================
-   Types (match InvoiceCreate)
-============================= */
+/* =========================================================
+   CreditNoteCreate — CLEAN REWORK (no duplicates)
+   ✅ Links invoice correctly (dropdown per customer)
+   ✅ Writes reason + reason_note to credit_notes
+   ✅ Correct qty handling for BOX / PCS / KG / G / BAG
+   ✅ DB triggers handle stock + invoice credits (no manual stock_movements)
+========================================================= */
+
+/* =========================
+   Types
+========================= */
 type CustomerRow = {
   id: number;
   name: string;
@@ -35,7 +43,20 @@ type ProductRow = {
   selling_price: number; // VAT-exclusive
 };
 
-type Uom = "BOX" | "PCS" | "KG";
+type InvoiceLite = {
+  id: number;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  status: string | null;
+  gross_total: number | null;
+  total_amount: number | null;
+  amount_paid: number | null;
+  credits_applied: number | null;
+  balance_remaining: number | null;
+};
+
+type Uom = "BOX" | "PCS" | "KG" | "G" | "BAG";
+type CreditReason = "DAMAGED" | "RETURN" | "OTHERS";
 
 type CreditLine = {
   id: string;
@@ -46,16 +67,21 @@ type CreditLine = {
 
   uom: Uom;
 
-  box_qty: number; // qty input (BOX/PCS integer, KG decimal)
-  units_per_box: number; // BOX only (editable)
-  total_qty: number; // computed
+  // stored qty fields
+  box_qty: number; // BOX integer; KG decimal stored here
+  pcs_qty: number; // PCS numeric(12,3) but we treat as integer in UI
+  grams_qty: number; // G numeric(12,3) but UI uses integer
+  bags_qty: number; // BAG numeric(12,3) but UI uses integer
 
-  vat_rate: number; // per-row editable
+  units_per_box: number; // BOX only
+  total_qty: number; // computed by recalc
 
-  base_unit_price_excl_vat: number; // product base ex (used for discount calc)
-  unit_price_excl_vat: number; // editable (ex)
+  vat_rate: number;
+
+  base_unit_price_excl_vat: number;
+  unit_price_excl_vat: number;
   unit_vat: number;
-  unit_price_incl_vat: number; // editable (inc)
+  unit_price_incl_vat: number;
   line_total: number;
 
   price_overridden?: boolean;
@@ -63,9 +89,9 @@ type CreditLine = {
 
 type PrintNameMode = "CUSTOMER" | "CLIENT";
 
-/* ============================
+/* =========================
    Sales reps (same as InvoiceCreate)
-============================= */
+========================= */
 const SALES_REPS = [
   { name: "Mr Koushal", phone: "59193239" },
   { name: "Mr Akash", phone: "59194918" },
@@ -80,26 +106,27 @@ function repPhoneByName(name: string) {
   return r?.phone || "";
 }
 
-/* ============================
-   Helpers (same logic style)
-============================= */
+/* =========================
+   Helpers
+========================= */
 function n2(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
 }
+function r2(v: any) {
+  return Math.round(n2(v) * 100) / 100;
+}
+function roundTo(v: any, dp: number) {
+  const x = n2(v);
+  const m = Math.pow(10, dp);
+  return Math.round(x * m) / m;
+}
+function round3(v: any) {
+  return Math.round(n2(v) * 1000) / 1000;
+}
 function clampPct(v: any) {
   const x = n2(v);
   return Math.max(0, Math.min(100, x));
-}
-function uid() {
-  try {
-    return crypto.randomUUID();
-  } catch {
-    return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
-  }
-}
-function r2(v: any) {
-  return Math.round(n2(v) * 100) / 100;
 }
 function money(v: any) {
   const x = n2(v);
@@ -108,113 +135,135 @@ function money(v: any) {
 function intFmt(v: any) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(n2(v)));
 }
-function roundKg(v: number) {
-  return Math.round(n2(v) * 1000) / 1000;
+function uid() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+  }
 }
 function safeUpb(v: any) {
   return Math.max(1, Math.trunc(n2(v) || 1));
 }
-function roundTo(v: any, dp: number) {
-  const x = n2(v);
-  const m = Math.pow(10, dp);
-  return Math.round(x * m) / m;
+function roundKg(v: any) {
+  return Math.round(n2(v) * 1000) / 1000; // KG: 3dp
 }
-
 function parseNumInput(s: string) {
-  // allow "1,200.50" or "1200.50" while typing
   const cleaned = String(s ?? "").replace(/,/g, "").trim();
-  return cleaned === "" ? 0 : n2(cleaned);
+  if (cleaned === "" || cleaned === ".") return 0;
+  return n2(cleaned);
 }
-
 function rawNum(v: any) {
-  // plain text for inputs, no commas, allow decimals, keep 0 as ""
   const x = n2(v);
   return x === 0 ? "" : String(x);
 }
+function formatDateDMY(v: any) {
+  const s = String(v ?? "").slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s || "—";
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+function normUomDb(u: any): Uom {
+  const x = String(u || "BOX").trim().toUpperCase();
+  if (x === "PCS") return "PCS";
+  if (x === "KG" || x === "KGS") return "KG";
+  if (x === "G" || x === "GRAM" || x === "GRAMS") return "G";
+  if (x === "BAG" || x === "BAGS") return "BAG";
+  return "BOX";
+}
 
+/* =========================
+   Qty + totals recalc
+========================= */
 function recalc(row: CreditLine): CreditLine {
-  const uom: Uom =
-    row.uom === "PCS" ? "PCS" :
-    row.uom === "KG" ? "KG" :
-    "BOX";
-
-  const raw = n2(row.box_qty);
+  const uom: Uom = normUomDb(row.uom);
 
   const upb = uom === "BOX" ? safeUpb(row.units_per_box) : 1;
+  const rate = clampPct(row.vat_rate);
 
   let box_qty = 0;
   let pcs_qty = 0;
+  let grams_qty = 0;
+  let bags_qty = 0;
   let total_qty = 0;
 
   if (uom === "BOX") {
-    box_qty = Math.max(0, Math.trunc(raw));
+    box_qty = Math.max(0, Math.trunc(n2(row.box_qty)));
     total_qty = box_qty * upb;
-  } 
-  else if (uom === "PCS") {
-    pcs_qty = Math.max(0, Math.trunc(raw));
+  } else if (uom === "PCS") {
+    pcs_qty = Math.max(0, Math.trunc(n2(row.pcs_qty)));
     total_qty = pcs_qty;
-  } 
-  else if (uom === "KG") {
-    box_qty = Math.max(0, roundKg(raw));
+  } else if (uom === "KG") {
+    box_qty = Math.max(0, roundKg(row.box_qty)); // store KG in box_qty
     total_qty = box_qty;
+  } else if (uom === "G") {
+    grams_qty = Math.max(0, Math.trunc(n2(row.grams_qty)));
+    total_qty = grams_qty;
+  } else {
+    bags_qty = Math.max(0, Math.trunc(n2(row.bags_qty)));
+    total_qty = bags_qty;
   }
 
-  const rate = clampPct(row.vat_rate);
-
   const unitEx = Math.max(0, n2(row.unit_price_excl_vat));
-  const unitVatRaw = unitEx * (rate / 100);
-  const unitIncRaw = unitEx + unitVatRaw;
+  const unitVat = unitEx * (rate / 100);
+  const unitInc = unitEx + unitVat;
 
   return {
     ...row,
     uom,
+    units_per_box: upb,
+    vat_rate: rate,
+
     box_qty,
     pcs_qty,
-    units_per_box: upb,
+    grams_qty,
+    bags_qty,
     total_qty,
 
-    vat_rate: rate,
-    unit_vat: roundTo(unitVatRaw, 3),
-    unit_price_incl_vat: roundTo(unitIncRaw, 3),
-    line_total: r2(total_qty * unitIncRaw),
+    unit_vat: roundTo(unitVat, 3),
+    unit_price_incl_vat: roundTo(unitInc, 3),
+    line_total: r2(total_qty * unitInc),
   };
 }
-
 
 function blankLine(defaultVat: number): CreditLine {
   return recalc({
     id: uid(),
     product_id: null,
+
     item_code: "",
     description: "",
+
     uom: "BOX",
     box_qty: 0,
+    pcs_qty: 0,
+    grams_qty: 0,
+    bags_qty: 0,
+
     units_per_box: 1,
     total_qty: 0,
+
     vat_rate: clampPct(defaultVat),
+
     base_unit_price_excl_vat: 0,
     unit_price_excl_vat: 0,
     unit_vat: 0,
     unit_price_incl_vat: 0,
     line_total: 0,
+
     price_overridden: false,
   });
 }
 
-/* ============================
-   Credit Note numbering (CN-0001…)
-============================= */
+/* =========================
+   CN numbering (CN-0001…)
+========================= */
 function pad4(x: number) {
   return String(x).padStart(4, "0");
 }
 
 async function nextCreditNoteNumber(): Promise<string> {
-  const { data, error } = await supabase
-    .from("credit_notes")
-    .select("credit_note_number, id")
-    .order("id", { ascending: false })
-    .limit(1);
-
+  const { data, error } = await supabase.from("credit_notes").select("credit_note_number, id").order("id", { ascending: false }).limit(1);
   if (error) throw new Error(error.message);
 
   const last = data?.[0]?.credit_note_number || "";
@@ -224,25 +273,52 @@ async function nextCreditNoteNumber(): Promise<string> {
   return `CN-${pad4(next)}`;
 }
 
-/* ============================
+/* =========================
+   Invoices by customer (dropdown)
+========================= */
+async function listInvoicesByCustomer(customerId: number): Promise<InvoiceLite[]> {
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id,invoice_number,invoice_date,status,gross_total,total_amount,amount_paid,credits_applied,balance_remaining")
+    .eq("customer_id", customerId)
+    .neq("status", "VOID")
+    .order("invoice_date", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(500);
+
+  if (error) throw new Error(error.message);
+  return (data || []) as any;
+}
+
+/* =========================
    Page
-============================= */
+========================= */
 export default function CreditNoteCreate() {
   const nav = useNavigate();
   const [params] = useSearchParams();
-  const duplicateId = params.get("duplicate"); // optional future use
+  const duplicateId = params.get("duplicate"); // reserved for future
 
   const [saving, setSaving] = useState(false);
   const [printing, setPrinting] = useState(false);
 
-  // ✅ SAME FIELDS as InvoiceCreate
+  // header fields
   const [printNameMode, setPrintNameMode] = useState<PrintNameMode>("CUSTOMER");
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [clientName, setClientName] = useState<string>("");
 
+  // invoice dropdown
+  const [invoiceId, setInvoiceId] = useState<number | null>(null);
+  const [invoicesForCustomer, setInvoicesForCustomer] = useState<InvoiceLite[]>([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
+
+  // reason
+  const [reason, setReason] = useState<CreditReason>("RETURN");
+  const [reasonNote, setReasonNote] = useState<string>("");
+
   const [creditNoteDate, setCreditNoteDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [purchaseOrderNo, setPurchaseOrderNo] = useState<string>("");
 
+  // optional UX knobs
   const [vatPercentText, setVatPercentText] = useState<string>("15");
   const [discountPercentText, setDiscountPercentText] = useState<string>("");
   const [discountTouched, setDiscountTouched] = useState(false);
@@ -255,26 +331,7 @@ export default function CreditNoteCreate() {
 
   const [creditNoteNumber, setCreditNoteNumber] = useState<string>("(Auto when saved)");
 
-  const vatDefault = clampPct(vatPercentText);
-  const discountPercent = clampPct(discountPercentText);
-
-  const [lines, setLines] = useState<CreditLine[]>([blankLine(15)]);
-  const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
-
-  // decimal-safe edit buffers (like your InvoiceCreate)
-  const [editingEx, setEditingEx] = useState<Record<string, string>>({});
-  const [editingVat, setEditingVat] = useState<Record<string, string>>({});
-  const [editingInc, setEditingInc] = useState<Record<string, string>>({});
-
-  // search modals (same UX as InvoiceCreate)
-  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
-  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
-
-  const [productSearchOpen, setProductSearchOpen] = useState(false);
-  const [productSearchRowId, setProductSearchRowId] = useState<string | null>(null);
-  const [productSearchTerm, setProductSearchTerm] = useState("");
-
-  // sales reps (same)
+  // sales reps
   const [repOpen, setRepOpen] = useState(false);
   const [salesReps, setSalesReps] = useState<SalesRepName[]>([]);
 
@@ -282,7 +339,32 @@ export default function CreditNoteCreate() {
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [products, setProducts] = useState<ProductRow[]>([]);
 
+  // rows
+  const vatDefault = clampPct(vatPercentText);
+  const discountPercent = clampPct(discountPercentText);
+
+  const [lines, setLines] = useState<CreditLine[]>([blankLine(15)]);
+  const qtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // decimal-safe edit buffers
+  const [editingEx, setEditingEx] = useState<Record<string, string>>({});
+  const [editingVat, setEditingVat] = useState<Record<string, string>>({});
+  const [editingInc, setEditingInc] = useState<Record<string, string>>({});
+
+  // search modals
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+
+  const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [productSearchRowId, setProductSearchRowId] = useState<string | null>(null);
+  const [productSearchTerm, setProductSearchTerm] = useState("");
+
   const customer = useMemo(() => customers.find((c) => c.id === customerId) || null, [customers, customerId]);
+
+  const selectedInvoice = useMemo(() => {
+    if (!invoiceId) return null;
+    return invoicesForCustomer.find((x) => x.id === invoiceId) || null;
+  }, [invoiceId, invoicesForCustomer]);
 
   const filteredCustomers = useMemo(() => {
     const t = customerSearchTerm.trim().toLowerCase();
@@ -308,7 +390,7 @@ export default function CreditNoteCreate() {
     });
   }, [products, productSearchTerm]);
 
-  // name printed (same logic)
+  // printed name
   const printedName = useMemo(() => {
     const cn = (customer?.name || "").trim();
     const cl = clientName.trim();
@@ -326,9 +408,9 @@ export default function CreditNoteCreate() {
     return () => window.removeEventListener("mousedown", close);
   }, [repOpen]);
 
-  /* ============================
-     Load options + CN number
-============================= */
+  /* =========================
+     Load options + next CN
+  ========================= */
   async function loadOptions() {
     try {
       const [cnNo, custQ, prodQ] = await Promise.all([
@@ -338,11 +420,7 @@ export default function CreditNoteCreate() {
           .select("id,name,address,phone,whatsapp,brn,vat_no,customer_code,opening_balance,discount_percent")
           .order("name", { ascending: true })
           .limit(5000),
-        supabase
-          .from("products")
-          .select("id,item_code,sku,name,description,units_per_box,selling_price")
-          .order("name", { ascending: true })
-          .limit(5000),
+        supabase.from("products").select("id,item_code,sku,name,description,units_per_box,selling_price").order("name", { ascending: true }).limit(5000),
       ]);
 
       if (custQ.error) throw new Error(custQ.error.message);
@@ -351,6 +429,9 @@ export default function CreditNoteCreate() {
       setCreditNoteNumber(cnNo);
       setCustomers((custQ.data || []) as any);
       setProducts((prodQ.data || []) as any);
+
+      // reserved: if you later implement duplicate
+      void duplicateId;
     } catch (e: any) {
       toast.error(e?.message || "Failed to load customers/products");
     }
@@ -358,18 +439,21 @@ export default function CreditNoteCreate() {
 
   useEffect(() => {
     void loadOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ============================
-     Customer change (same behavior)
-============================= */
+  /* =========================
+     Customer change
+========================= */
   useEffect(() => {
     if (!customerId || !customer) return;
 
+    // opening balance
     const ob = customer.opening_balance ?? null;
     if (ob !== null && ob !== undefined && String(ob) !== "0") setPreviousBalanceText(String(ob));
     else setPreviousBalanceText("");
 
+    // discount default
     if (!discountTouched) {
       const dp = customer.discount_percent ?? null;
       if (dp !== null && dp !== undefined && String(dp) !== "0") setDiscountPercentText(String(dp));
@@ -377,12 +461,34 @@ export default function CreditNoteCreate() {
     }
 
     if (!clientName.trim()) setClientName(customer.name || "");
+
+    // invoices dropdown
+    setInvoiceId(null);
+    setInvoicesForCustomer([]);
+    setLoadingInvoices(true);
+
+    (async () => {
+      try {
+        const list = await listInvoicesByCustomer(customerId);
+        setInvoicesForCustomer(list);
+
+        const firstOpen = (list || []).find((x) => n2(x.balance_remaining) > 0);
+        setInvoiceId(firstOpen?.id ?? (list?.[0]?.id ?? null));
+      } catch (e: any) {
+        toast.error(e?.message || "Failed to load customer invoices");
+        setInvoicesForCustomer([]);
+        setInvoiceId(null);
+      } finally {
+        setLoadingInvoices(false);
+      }
+    })();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  /* ============================
+  /* =========================
      Discount recalculates unit_ex from base
-============================= */
+========================= */
   useEffect(() => {
     const dp = clampPct(discountPercentText);
     setLines((prev) =>
@@ -396,20 +502,15 @@ export default function CreditNoteCreate() {
     );
   }, [discountPercentText]);
 
-  /* ============================
-     Row helpers (same)
-============================= */
+  /* =========================
+     Row helpers
+========================= */
   function setLine(id: string, patch: Partial<CreditLine>) {
     setLines((prev) => prev.map((r) => (r.id === id ? recalc({ ...r, ...patch } as CreditLine) : r)));
   }
 
   function setLinePriceEx(id: string, unitEx: number) {
-    setLines((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        return recalc({ ...r, unit_price_excl_vat: Math.max(0, n2(unitEx)), price_overridden: true } as CreditLine);
-      })
-    );
+    setLines((prev) => prev.map((r) => (r.id === id ? recalc({ ...r, unit_price_excl_vat: Math.max(0, n2(unitEx)), price_overridden: true } as CreditLine) : r)));
   }
 
   function setLinePriceInc(id: string, unitInc: number) {
@@ -429,15 +530,32 @@ export default function CreditNoteCreate() {
     setLines((prev) =>
       prev.map((r) => {
         if (r.id !== id) return r;
-        const tq = Math.max(0, r.uom === "KG" ? roundKg(totalQty) : Math.trunc(totalQty));
 
         if (r.uom === "BOX") {
           const upb = safeUpb(r.units_per_box);
+          const tq = Math.max(0, Math.trunc(n2(totalQty)));
           const bq = upb > 0 ? tq / upb : 0;
-          return recalc({ ...r, box_qty: bq, total_qty: tq } as CreditLine);
+          return recalc({ ...r, box_qty: bq } as CreditLine);
         }
 
-        return recalc({ ...r, box_qty: tq, total_qty: tq } as CreditLine);
+        if (r.uom === "PCS") {
+          const tq = Math.max(0, Math.trunc(n2(totalQty)));
+          return recalc({ ...r, pcs_qty: tq } as CreditLine);
+        }
+
+        if (r.uom === "G") {
+          const g = Math.max(0, Math.trunc(n2(totalQty)));
+          return recalc({ ...r, grams_qty: g } as CreditLine);
+        }
+
+        if (r.uom === "BAG") {
+          const b = Math.max(0, Math.trunc(n2(totalQty)));
+          return recalc({ ...r, bags_qty: b } as CreditLine);
+        }
+
+        // KG
+        const kg = Math.max(0, roundKg(totalQty));
+        return recalc({ ...r, box_qty: kg } as CreditLine);
       })
     );
   }
@@ -466,34 +584,49 @@ export default function CreditNoteCreate() {
             product_id: null,
             item_code: "",
             description: "",
+            uom: "BOX",
+            box_qty: 0,
+            pcs_qty: 0,
+            grams_qty: 0,
+            bags_qty: 0,
             units_per_box: 1,
+            total_qty: 0,
             base_unit_price_excl_vat: 0,
             unit_price_excl_vat: 0,
             vat_rate: vatDefault,
-            uom: "BOX",
-            box_qty: 0,
             price_overridden: false,
           } as CreditLine);
         }
 
         const dp = clampPct(discountPercentText);
-        const baseEx = n2((product as any).selling_price || 0);
+        const baseEx = n2(product.selling_price || 0);
         const discountedEx = roundTo(baseEx * (1 - dp / 100), 6);
 
-        const nextUom: Uom = r.uom === "KG" ? "KG" : r.uom === "PCS" ? "PCS" : "BOX";
+        const upb = Math.max(1, Math.trunc(n2(product.units_per_box || 1)));
+        const nextUom = normUomDb(r.uom || "BOX");
+
+        // pick sane initial qty per uom
+        const next: Partial<CreditLine> = {};
+        if (nextUom === "KG") next.box_qty = Math.max(0, roundKg(r.box_qty || 0));
+        else if (nextUom === "PCS") next.pcs_qty = Math.max(1, Math.trunc(n2(r.pcs_qty || 1)));
+        else if (nextUom === "G") next.grams_qty = Math.max(1, Math.trunc(n2(r.grams_qty || 1)));
+        else if (nextUom === "BAG") next.bags_qty = Math.max(1, Math.trunc(n2(r.bags_qty || 1)));
+        else next.box_qty = Math.max(1, Math.trunc(n2(r.box_qty || 1)));
 
         return recalc({
           ...r,
           product_id: product.id,
-          item_code: String(product.item_code || product.sku || ""),
+          item_code: String(product.item_code || product.sku || "").trim(),
           description: String(product.description || product.name || "").trim(),
-          units_per_box: Math.max(1, Math.trunc(n2(product.units_per_box || 1))),
+          uom: nextUom,
+          units_per_box: upb,
+
           base_unit_price_excl_vat: baseEx,
           unit_price_excl_vat: discountedEx,
           vat_rate: clampPct(r.vat_rate || vatDefault),
-          uom: nextUom,
-          box_qty: nextUom === "KG" ? Math.max(0, roundKg(n2(r.box_qty || 0))) : Math.max(1, Math.trunc(n2(r.box_qty || 1))),
+
           price_overridden: false,
+          ...next,
         } as CreditLine);
       })
     );
@@ -507,7 +640,6 @@ export default function CreditNoteCreate() {
   function focusNextQty(currentRowId: string) {
     const idx = lines.findIndex((x) => x.id === currentRowId);
     if (idx < 0) return;
-
     const next = lines[idx + 1];
     if (next) {
       qtyRefs.current[next.id]?.focus?.();
@@ -517,9 +649,9 @@ export default function CreditNoteCreate() {
     addRowAndFocus();
   }
 
-  /* ============================
+  /* =========================
      Search modals
-============================= */
+========================= */
   function openCustomerSearch() {
     setCustomerSearchTerm("");
     setCustomerSearchOpen(true);
@@ -548,14 +680,12 @@ export default function CreditNoteCreate() {
     setProductSearchTerm("");
   }
 
-  /* ============================
-     Totals (same as InvoiceCreate)
-============================= */
+  /* =========================
+     Totals
+========================= */
   const realLines = useMemo(() => lines.filter((l) => !!l.product_id), [lines]);
 
-  const subtotalEx = useMemo(() => {
-    return r2(realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_price_excl_vat), 0));
-  }, [realLines]);
+  const subtotalEx = useMemo(() => r2(realLines.reduce((sum, r) => sum + n2(r.total_qty) * n2(r.unit_price_excl_vat), 0)), [realLines]);
 
   const vatAmount = useMemo(() => {
     return r2(
@@ -579,7 +709,6 @@ export default function CreditNoteCreate() {
   const amountPaid = useMemo(() => n2(amountPaidText), [amountPaidText]);
 
   const grossTotal = useMemo(() => r2(totalAmount + previousBalance), [totalAmount, previousBalance]);
-
   const balanceAuto = useMemo(() => Math.max(0, r2(grossTotal - amountPaid)), [grossTotal, amountPaid]);
 
   const balanceRemaining = useMemo(() => {
@@ -596,15 +725,17 @@ export default function CreditNoteCreate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [balanceManualText, balanceTouched, grossTotal]);
 
-  /* ============================
+  /* =========================
      Save / Print
-============================= */
+========================= */
   function isQtyValid(l: CreditLine) {
-  if (l.uom === "PCS") return n2(l.pcs_qty) > 0;
-  if (l.uom === "KG") return n2(l.box_qty) > 0;
-  return Math.trunc(n2(l.box_qty)) > 0; // BOX
-}
-
+    const u = normUomDb(l.uom);
+    if (u === "BOX") return Math.trunc(n2(l.box_qty)) > 0;
+    if (u === "PCS") return Math.trunc(n2(l.pcs_qty)) > 0;
+    if (u === "KG") return n2(l.box_qty) > 0;
+    if (u === "G") return Math.trunc(n2(l.grams_qty)) > 0;
+    return Math.trunc(n2(l.bags_qty)) > 0; // BAG
+  }
 
   async function onSave() {
     if (!customerId) return toast.error("Please select a customer.");
@@ -619,113 +750,84 @@ export default function CreditNoteCreate() {
 
     setSaving(true);
     try {
-      // ✅ prefer same payload shape as InvoiceCreate (but we must be safe with DB columns)
-      const payloadFull: any = {
+      const headerPayload: any = {
         credit_note_number: creditNoteNumber,
         credit_note_date: creditNoteDate,
         customer_id: customerId,
-
-        client_name: printNameMode === "CLIENT" ? clientName.trim() : null,
-        print_name_mode: printNameMode,
-        purchase_order_no: purchaseOrderNo || null,
-
-        vat_percent: vatDefault,
-        discount_percent: discountPercent,
-
-        previous_balance: previousBalance,
-        amount_paid: amountPaid,
-        balance_remaining: balanceRemaining,
-
-        sales_rep: salesReps.join(", "),
-        sales_rep_phone: salesReps.map(repPhoneByName).filter(Boolean).join(", "),
-
+        invoice_id: invoiceId ?? null,
+        reason: reason ?? null,
+        reason_note: reasonNote?.trim() ? reasonNote.trim() : null,
         subtotal: subtotalEx,
         vat_amount: vatAmount,
         total_amount: totalAmount,
-        gross_total: grossTotal,
-        discount_amount: discountAmount,
-
         status: "ISSUED",
       };
 
-      // Insert credit note (try full, fallback to minimal if table is strict)
-      let cnId: number | null = null;
+      const cnIns = await supabase.from("credit_notes").insert(headerPayload).select("id, credit_note_number").single();
+      if (cnIns.error) throw new Error(cnIns.error.message);
 
-      const tryInsertFull = await supabase.from("credit_notes").insert(payloadFull).select("id, credit_note_number").single();
-
-      if (!tryInsertFull.error && tryInsertFull.data?.id) {
-        cnId = tryInsertFull.data.id as number;
-        if (tryInsertFull.data.credit_note_number) setCreditNoteNumber(String(tryInsertFull.data.credit_note_number));
-      } else {
-        const msg = tryInsertFull.error?.message || "Failed to create credit note";
-        // fallback: minimal columns (matches your current CN create table usage)
-        const payloadMin: any = {
-          credit_note_number: creditNoteNumber,
-          credit_note_date: creditNoteDate,
-          customer_id: customerId,
-          subtotal: subtotalEx,
-          vat_amount: vatAmount,
-          total_amount: totalAmount,
-          status: "ISSUED",
-        };
-        const tryInsertMin = await supabase.from("credit_notes").insert(payloadMin).select("id, credit_note_number").single();
-        if (tryInsertMin.error) throw new Error(msg);
-        cnId = tryInsertMin.data?.id ?? null;
-        toast.warning("Saved with minimal fields", { description: "Some extra fields may not exist in credit_notes table yet." });
-      }
-
+      const cnId = cnIns.data?.id as number;
       if (!cnId) throw new Error("Failed to create credit note");
 
-      // Items insert: full attempt (includes uom/qty breakdown), fallback to minimal known columns
-      const itemsFull = realLines.map((l) => {
-        const uom: Uom = l.uom === "PCS" ? "PCS" : l.uom === "KG" ? "KG" : "BOX";
+      const savedNo = String(cnIns.data?.credit_note_number || creditNoteNumber);
+      setCreditNoteNumber(savedNo);
 
-        const qtyInput = uom === "KG" ? Math.max(0, roundKg(n2(l.box_qty))) : Math.max(0, Math.trunc(n2(l.box_qty)));
-        const upb = uom === "BOX" ? safeUpb(l.units_per_box) : 1;
-        const totalQty = uom === "BOX" ? qtyInput * upb : qtyInput;
+      // ✅ Insert items (align to credit_note_items DDL precision + normalized uom)
+      const itemsPayload = realLines.map((l) => {
+        const uom = normUomDb(l.uom);
+        const upb = uom === "BOX" ? round3(Math.max(1, n2(l.units_per_box || 1))) : round3(1);
+
+        const box_qty =
+          uom === "BOX" ? Math.max(0, Math.trunc(n2(l.box_qty))) :
+          uom === "KG" ? Math.max(0, round3(l.box_qty)) :
+          0;
+
+        const pcs_qty = uom === "PCS" ? Math.max(0, round3(l.pcs_qty)) : 0;
+        const grams_qty = uom === "G" ? Math.max(0, round3(l.grams_qty)) : 0;
+        const bags_qty = uom === "BAG" ? Math.max(0, round3(l.bags_qty)) : 0;
+
+        const total_qty =
+          uom === "BOX" ? round3(box_qty * upb) :
+          uom === "PCS" ? round3(pcs_qty) :
+          uom === "KG" ? round3(box_qty) :
+          uom === "G" ? round3(grams_qty) :
+          round3(bags_qty);
 
         const rate = clampPct(l.vat_rate);
         const unitEx = Math.max(0, n2(l.unit_price_excl_vat));
-        const unitVat = r2(unitEx * (rate / 100));
-        const unitInc = r2(unitEx + unitVat);
+        const unitVat = round3(unitEx * (rate / 100));
+        const unitInc = round3(unitEx + unitVat);
+        const lineTotal = r2(total_qty * unitInc);
 
         return {
           credit_note_id: cnId,
           product_id: l.product_id,
-          item_code: l.item_code || null,
-          description: l.description || null,
+
           uom,
-          box_qty: uom === "BOX" || uom === "KG" ? n2(l.box_qty) : 0,
-          pcs_qty: uom === "PCS" ? n2(l.pcs_qty) : 0,
+          box_qty,
+          pcs_qty,
+          grams_qty,
+          bags_qty,
           units_per_box: upb,
-          total_qty: totalQty,
+          total_qty,
+
           unit_price_excl_vat: unitEx,
-          vat_rate: rate,
           unit_vat: unitVat,
           unit_price_incl_vat: unitInc,
-          line_total: r2(totalQty * unitInc),
+          line_total: lineTotal,
+
+          description: l.description?.trim() ? l.description.trim() : null,
+          vat_rate: rate,
+
           price_overridden: !!l.price_overridden,
           base_unit_price_excl_vat: n2(l.base_unit_price_excl_vat),
         };
       });
 
-      const insFull = await supabase.from("credit_note_items").insert(itemsFull as any);
-      if (insFull.error) {
-        const itemsMin = realLines.map((l) => ({
-          credit_note_id: cnId,
-          product_id: l.product_id,
-          total_qty: n2(l.total_qty),
-          unit_price_excl_vat: n2(l.unit_price_excl_vat),
-          unit_vat: n2(l.unit_vat),
-          unit_price_incl_vat: n2(l.unit_price_incl_vat),
-          line_total: n2(l.line_total),
-        }));
-        const insMin = await supabase.from("credit_note_items").insert(itemsMin as any);
-        if (insMin.error) throw new Error(insFull.error.message);
-        toast.warning("Items saved (minimal)", { description: "Some item fields may not exist in credit_note_items table yet." });
-      }
+      const itIns = await supabase.from("credit_note_items").insert(itemsPayload as any);
+      if (itIns.error) throw new Error(itIns.error.message);
 
-      toast.success(`Credit note saved: ${creditNoteNumber}`);
+      toast.success(invoiceId ? `Credit note saved & applied: ${savedNo}` : `Credit note saved: ${savedNo}`);
       nav(`/credit-notes/${cnId}`, { replace: true });
     } catch (e: any) {
       toast.error(e?.message || "Failed to save credit note");
@@ -746,7 +848,7 @@ export default function CreditNoteCreate() {
 
   return (
     <div className="inv-page">
-      {/* TOP ACTIONS (same as InvoiceCreate) */}
+      {/* TOP ACTIONS */}
       <div className="inv-actions inv-screen inv-actions--tight">
         <Button variant="outline" onClick={() => nav(-1)}>
           ← Back
@@ -763,7 +865,7 @@ export default function CreditNoteCreate() {
         </div>
       </div>
 
-      {/* FORM (same shell) */}
+      {/* FORM */}
       <div className="inv-screen inv-form-shell inv-form-shell--tight">
         <div className="inv-form-card">
           <div className="inv-form-head inv-form-head--tight">
@@ -784,7 +886,7 @@ export default function CreditNoteCreate() {
             </div>
           </div>
 
-          {/* 2 STRAIGHT ROWS (same) */}
+          {/* 2 STRAIGHT ROWS */}
           <div className="inv-form-2rows">
             {/* ROW 1 */}
             <div className="inv-form-row inv-form-row--top inv-row-red">
@@ -855,6 +957,53 @@ export default function CreditNoteCreate() {
                 </div>
               </div>
 
+              {/* Invoice dropdown */}
+              <div className="inv-field">
+                <label>Apply to Invoice</label>
+                <select
+                  className="inv-input"
+                  value={invoiceId ?? ""}
+                  onChange={(e) => setInvoiceId(e.target.value ? Number(e.target.value) : null)}
+                  disabled={!customerId || loadingInvoices}
+                >
+                  <option value="">
+                    {!customerId ? "Select customer first" : loadingInvoices ? "Loading invoices…" : "None (Standalone credit note)"}
+                  </option>
+                  {invoicesForCustomer.map((inv) => (
+                    <option key={inv.id} value={inv.id}>
+                      {(inv.invoice_number || `#${inv.id}`) +
+                        " • " +
+                        formatDateDMY(inv.invoice_date) +
+                        " • Bal: Rs " +
+                        money(inv.balance_remaining ?? 0) +
+                        " • " +
+                        String(inv.status || "")}
+                    </option>
+                  ))}
+                </select>
+                <div className="inv-help">
+                  If you select an invoice, the DB trigger will update invoice <b>credits_applied</b> and <b>balance/status</b>.
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div className="inv-field">
+                <label>Reason</label>
+                <select className="inv-input" value={reason} onChange={(e) => setReason(e.target.value as any)}>
+                  <option value="DAMAGED">Damaged</option>
+                  <option value="RETURN">Return</option>
+                  <option value="OTHERS">Others</option>
+                </select>
+
+                <input
+                  className="inv-input"
+                  value={reasonNote}
+                  onChange={(e) => setReasonNote(e.target.value)}
+                  placeholder={reason === "OTHERS" ? "Type your reason..." : "Optional details"}
+                  style={{ marginTop: 6 }}
+                />
+              </div>
+
               <div className="inv-field">
                 <label>Credit Note Date</label>
                 <input className="inv-input" type="date" value={creditNoteDate} onChange={(e) => setCreditNoteDate(e.target.value)} />
@@ -923,7 +1072,7 @@ export default function CreditNoteCreate() {
                   ) : null}
                 </div>
 
-                <div className="inv-help">This prints on the credit note + is saved to the record.</div>
+                <div className="inv-help">This prints on the credit note + is saved to the record (if you store it later).</div>
               </div>
 
               <div className="inv-field">
@@ -981,12 +1130,20 @@ export default function CreditNoteCreate() {
             </div>
           </div>
 
-          {/* ITEMS (same table structure as InvoiceCreate) */}
+          {/* invoice preview */}
+          {selectedInvoice ? (
+            <div className="inv-help" style={{ marginTop: 10 }}>
+              <b>Selected Invoice:</b> {selectedInvoice.invoice_number || `#${selectedInvoice.id}`} • Date: {formatDateDMY(selectedInvoice.invoice_date)} • Balance: Rs{" "}
+              {money(selectedInvoice.balance_remaining ?? 0)}
+            </div>
+          ) : null}
+
+          {/* ITEMS */}
           <div className="inv-items">
             <div className="inv-items-head">
               <div>
                 <div className="inv-items-title">Items</div>
-                <div className="inv-items-sub">All fields editable. Row VAT does not affect other rows.</div>
+                <div className="inv-items-sub">Row VAT is editable. BOX/PCS/KG/G/BAG qty is correct and stored in DB.</div>
               </div>
 
               <div className="inv-items-actions">
@@ -1030,6 +1187,13 @@ export default function CreditNoteCreate() {
                   {lines.map((r, idx) => {
                     const isReal = !!r.product_id;
 
+                    const qtyDisplay =
+                      r.uom === "PCS" ? rawNum(r.pcs_qty) :
+                      r.uom === "KG" ? rawNum(r.box_qty) :
+                      r.uom === "G" ? rawNum(r.grams_qty) :
+                      r.uom === "BAG" ? rawNum(r.bags_qty) :
+                      rawNum(r.box_qty); // BOX
+
                     return (
                       <tr key={r.id} className="inv-tr-red">
                         <td className="inv-td inv-center">{idx + 1}</td>
@@ -1059,19 +1223,34 @@ export default function CreditNoteCreate() {
                           </button>
                         </td>
 
+                        {/* Qty input (UOM + qty) */}
                         <td className="inv-td inv-center">
                           <div className="inv-boxcell inv-boxcell--oneRow">
-                            <select className="inv-input inv-input--uom" value={r.uom} onChange={(e) => setLine(r.id, { uom: e.target.value as any })} disabled={!isReal}>
+                            <select
+                              className="inv-input inv-input--uom"
+                              value={r.uom}
+                              onChange={(e) => setLine(r.id, { uom: e.target.value as any })}
+                              disabled={!isReal}
+                            >
                               <option value="BOX">BOX</option>
                               <option value="PCS">PCS</option>
                               <option value="KG">Kg</option>
+                              <option value="G">Grams</option>
+                              <option value="BAG">Bags</option>
                             </select>
 
                             <input
                               ref={(el) => (qtyRefs.current[r.id] = el)}
                               className="inv-input inv-input--qty inv-center"
-                              value={rawNum(r.box_qty)}
-                              onChange={(e) => setLine(r.id, { box_qty: parseNumInput(e.target.value) })}
+                              value={qtyDisplay}
+                              onChange={(e) => {
+                                const v = parseNumInput(e.target.value);
+                                if (r.uom === "PCS") setLine(r.id, { pcs_qty: v });
+                                else if (r.uom === "KG") setLine(r.id, { box_qty: v });
+                                else if (r.uom === "G") setLine(r.id, { grams_qty: v });
+                                else if (r.uom === "BAG") setLine(r.id, { bags_qty: v });
+                                else setLine(r.id, { box_qty: v }); // BOX
+                              }}
                               onFocus={(e) => e.currentTarget.select()}
                               onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
                               onKeyDown={(e) => {
@@ -1088,6 +1267,7 @@ export default function CreditNoteCreate() {
                           </div>
                         </td>
 
+                        {/* UNIT / UPB */}
                         <td className="inv-td inv-center">
                           {r.uom === "BOX" ? (
                             <input
@@ -1105,6 +1285,7 @@ export default function CreditNoteCreate() {
                           )}
                         </td>
 
+                        {/* TOTAL QTY */}
                         <td className="inv-td inv-center">
                           <input
                             className="inv-input inv-center"
@@ -1118,7 +1299,7 @@ export default function CreditNoteCreate() {
                           />
                         </td>
 
-                        {/* UNIT EX (decimal-safe) */}
+                        {/* UNIT EX */}
                         <td className="inv-td inv-right">
                           <input
                             className="inv-input inv-input--right"
@@ -1133,7 +1314,7 @@ export default function CreditNoteCreate() {
                             onBlur={() => {
                               const v = editingEx[r.id];
                               const commit = v === undefined ? rawNum(r.unit_price_excl_vat) : v;
-                              setLinePriceEx(r.id, parseNumInput(commit === "." || commit === "" ? "0" : commit));
+                              setLinePriceEx(r.id, parseNumInput(commit));
                               setEditingEx((prev) => {
                                 const { [r.id]: _, ...rest } = prev;
                                 return rest;
@@ -1153,22 +1334,22 @@ export default function CreditNoteCreate() {
                           />
                         </td>
 
-                        {/* VAT % (decimal-safe) */}
+                        {/* VAT % */}
                         <td className="inv-td inv-right">
                           <input
                             className="inv-input inv-input--right"
                             inputMode="decimal"
                             placeholder="15"
-                            value={editingVat?.[r.id] !== undefined ? editingVat[r.id] : rawNum(r.vat_rate) || ""}
+                            value={editingVat[r.id] !== undefined ? editingVat[r.id] : rawNum(r.vat_rate) || ""}
                             onChange={(e) => {
                               const v = e.target.value.replace(/,/g, "");
                               if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
                               setEditingVat((prev) => ({ ...prev, [r.id]: v }));
                             }}
                             onBlur={() => {
-                              const v = editingVat?.[r.id];
+                              const v = editingVat[r.id];
                               const commit = v === undefined ? rawNum(r.vat_rate) : v;
-                              setLine(r.id, { vat_rate: parseNumInput(commit === "." || commit === "" ? "0" : commit) });
+                              setLine(r.id, { vat_rate: parseNumInput(commit) });
                               setEditingVat((prev) => {
                                 const copy = { ...prev };
                                 delete copy[r.id];
@@ -1190,22 +1371,22 @@ export default function CreditNoteCreate() {
                           />
                         </td>
 
-                        {/* UNIT INC (decimal-safe) */}
+                        {/* UNIT INC */}
                         <td className="inv-td inv-right">
                           <input
                             className="inv-input inv-input--right"
                             inputMode="decimal"
                             placeholder="0.0000"
-                            value={editingInc?.[r.id] !== undefined ? editingInc[r.id] : rawNum(r.unit_price_incl_vat) || ""}
+                            value={editingInc[r.id] !== undefined ? editingInc[r.id] : rawNum(r.unit_price_incl_vat) || ""}
                             onChange={(e) => {
                               const v = e.target.value.replace(/,/g, "");
                               if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
                               setEditingInc((prev) => ({ ...prev, [r.id]: v }));
                             }}
                             onBlur={() => {
-                              const v = editingInc?.[r.id];
+                              const v = editingInc[r.id];
                               const commit = v === undefined ? rawNum(r.unit_price_incl_vat) : v;
-                              setLinePriceInc(r.id, parseNumInput(commit === "." || commit === "" ? "0" : commit));
+                              setLinePriceInc(r.id, parseNumInput(commit));
                               setEditingInc((prev) => {
                                 const copy = { ...prev };
                                 delete copy[r.id];
@@ -1227,7 +1408,7 @@ export default function CreditNoteCreate() {
                           />
                         </td>
 
-                        {/* TOTAL (read-only) */}
+                        {/* TOTAL */}
                         <td className="inv-td inv-right inv-td-total">
                           <input className="inv-input inv-input--right inv-input--total" value={money(r.line_total)} readOnly />
                         </td>
@@ -1245,7 +1426,7 @@ export default function CreditNoteCreate() {
               </table>
             </div>
 
-            {/* Bottom action row — OUTSIDE table (same) */}
+            {/* Bottom action row */}
             <div className="inv-bottomRow">
               <div className="inv-bottomLeft">
                 <button type="button" className="inv-addrows" onClick={addRowAndFocus}>
@@ -1287,7 +1468,7 @@ export default function CreditNoteCreate() {
         </div>
       </div>
 
-      {/* Customer Search Modal (same IDs/classes so CSS matches) */}
+      {/* Customer Search Modal */}
       {customerSearchOpen ? (
         <div className="inv-modal-backdrop" onMouseDown={closeCustomerSearch}>
           <div className="inv-modal inv-modal--sm" onMouseDown={(e) => e.stopPropagation()}>
@@ -1299,7 +1480,13 @@ export default function CreditNoteCreate() {
             </div>
 
             <div className="inv-modal-body">
-              <input id="invCustomerSearchInput" className="inv-input" value={customerSearchTerm} onChange={(e) => setCustomerSearchTerm(e.target.value)} placeholder="Search by name, phone, code, address…" />
+              <input
+                id="invCustomerSearchInput"
+                className="inv-input"
+                value={customerSearchTerm}
+                onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                placeholder="Search by name, phone, code, address…"
+              />
 
               <div className="inv-modal-list">
                 {filteredCustomers.slice(0, 250).map((c) => (
@@ -1336,7 +1523,13 @@ export default function CreditNoteCreate() {
             </div>
 
             <div className="inv-modal-body">
-              <input id="invProductSearchInput" className="inv-input" value={productSearchTerm} onChange={(e) => setProductSearchTerm(e.target.value)} placeholder="Search by code, sku, name, description…" />
+              <input
+                id="invProductSearchInput"
+                className="inv-input"
+                value={productSearchTerm}
+                onChange={(e) => setProductSearchTerm(e.target.value)}
+                placeholder="Search by code, sku, name, description…"
+              />
 
               <div className="inv-modal-list">
                 {filteredProducts.slice(0, 250).map((p) => (
@@ -1353,7 +1546,9 @@ export default function CreditNoteCreate() {
                     <div className="inv-modal-item-title">
                       <b>{p.item_code || p.sku}</b> — {p.name}
                     </div>
-                    <div className="inv-modal-item-sub">UNIT: {intFmt(p.units_per_box ?? 1)} · Unit Ex: {money((p as any).selling_price ?? 0)}</div>
+                    <div className="inv-modal-item-sub">
+                      UNIT/BOX: {intFmt(p.units_per_box ?? 1)} · Unit Ex: {money((p as any).selling_price ?? 0)}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -1362,7 +1557,7 @@ export default function CreditNoteCreate() {
         </div>
       ) : null}
 
-      {/* PRINT ONLY (same integration as InvoiceCreate, but CREDIT NOTE) */}
+      {/* PRINT ONLY */}
       <div className="inv-printonly">
         <DocAny
           variant="CREDIT_NOTE"
@@ -1387,16 +1582,20 @@ export default function CreditNoteCreate() {
             sn: i + 1,
             item_code: r.item_code,
             uom: r.uom,
+
             box_qty: r.uom === "BOX" || r.uom === "KG" ? n2(r.box_qty) : 0,
             pcs_qty: r.uom === "PCS" ? Math.trunc(n2(r.pcs_qty)) : 0,
+            grams_qty: r.uom === "G" ? Math.trunc(n2(r.grams_qty)) : 0,
+            bags_qty: r.uom === "BAG" ? Math.trunc(n2(r.bags_qty)) : 0,
+
             units_per_box: r.uom === "BOX" ? Math.trunc(n2(r.units_per_box)) : 1,
             total_qty: n2(r.total_qty),
+
             description: r.description,
             unit_price_excl_vat: n2(r.unit_price_excl_vat),
             unit_vat: n2(r.unit_vat),
             unit_price_incl_vat: n2(r.unit_price_incl_vat),
             line_total: n2(r.line_total),
-            vat_rate: n2(r.vat_rate),
           }))}
           totals={{
             subtotal: subtotalEx,
@@ -1416,5 +1615,4 @@ export default function CreditNoteCreate() {
     </div>
   );
 }
-
 

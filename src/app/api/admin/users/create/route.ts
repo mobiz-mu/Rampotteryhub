@@ -5,6 +5,10 @@ import { supabaseAdmin } from "@/src/lib/supabaseAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/* =====================================================
+   Types
+===================================================== */
+
 type AppRole = "admin" | "manager" | "accountant" | "sales" | "viewer";
 
 type Body = {
@@ -16,6 +20,18 @@ type Body = {
   permissions?: Record<string, boolean>;
 };
 
+const VALID_ROLES: AppRole[] = [
+  "admin",
+  "manager",
+  "accountant",
+  "sales",
+  "viewer",
+];
+
+/* =====================================================
+   Helpers
+===================================================== */
+
 function s(v: any) {
   return String(v ?? "").trim();
 }
@@ -25,63 +41,88 @@ function isEmail(v: string) {
 }
 
 function genTempPassword() {
-  // 14-18 chars, includes upper/lower/num/symbol
-  const base = Math.random().toString(36).slice(2);
-  const extra = Math.random().toString(36).slice(2);
-  return (base + extra).slice(0, 14) + "A!9";
-}
-
-function sanitizePermissions(input: any) {
-  // Prevent weird JSON types / prototypes. Store a plain object of booleans only.
-  const src = input && typeof input === "object" ? input : {};
-  const out: Record<string, boolean> = {};
-  for (const [k, v] of Object.entries(src)) {
-    // only accept simple keys, and coerce to boolean
-    if (typeof k === "string" && k.length <= 64) out[k] = !!v;
+  const chars =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  let out = "";
+  for (let i = 0; i < 16; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
   }
   return out;
 }
 
-function jsonError(status: number, error: string, extra?: Record<string, any>) {
-  return NextResponse.json({ ok: false, error, ...(extra || {}) }, { status });
+function sanitizePermissions(input: any) {
+  if (!input || typeof input !== "object") return {};
+
+  const out: Record<string, boolean> = {};
+
+  for (const [k, v] of Object.entries(input)) {
+    if (
+      typeof k === "string" &&
+      k.length <= 64 &&
+      /^[a-zA-Z0-9._-]+$/.test(k)
+    ) {
+      out[k] = !!v;
+    }
+  }
+
+  return out;
 }
 
+function jsonError(status: number, error: string) {
+  return NextResponse.json({ ok: false, error }, { status });
+}
+
+/* =====================================================
+   Route
+===================================================== */
+
 export async function POST(req: NextRequest) {
-  // Always return JSON — never allow “empty 500”
   let sb: ReturnType<typeof supabaseAdmin>;
+
   try {
     sb = supabaseAdmin();
   } catch (e: any) {
-    console.error("supabaseAdmin misconfigured:", e);
-    return jsonError(500, e?.message || "Supabase admin client misconfigured");
+    console.error("Supabase admin init failed:", e);
+    return jsonError(500, "Supabase admin client misconfigured");
   }
 
-  // Parse body safely
   let body: Body;
+
   try {
     body = (await req.json()) as Body;
   } catch {
     return jsonError(400, "Invalid JSON body");
   }
 
-  // Validate inputs
+  /* =========================
+     Validate Inputs
+  ========================= */
+
   const email = s(body.email).toLowerCase();
   if (!email) return jsonError(400, "Email is required");
   if (!isEmail(email)) return jsonError(400, "Invalid email address");
 
-  const role: AppRole = (body.role || "viewer") as AppRole;
+  const role: AppRole = VALID_ROLES.includes(body.role as AppRole)
+    ? (body.role as AppRole)
+    : "viewer";
+
   const full_name = s(body.full_name) || null;
-  const is_active = typeof body.is_active === "boolean" ? body.is_active : true;
+  const is_active =
+    typeof body.is_active === "boolean" ? body.is_active : true;
+
   const permissions = sanitizePermissions(body.permissions);
 
-  // Password policy (client can pass password, else generate)
   const providedPassword = s(body.password);
-  if (providedPassword && providedPassword.length < 8) {
-    return jsonError(400, "Password must be at least 8 characters (or leave blank to auto-generate)");
-  }
-  const password = providedPassword ? providedPassword : genTempPassword();
 
-  // Useful request context for audit
+  if (providedPassword && providedPassword.length < 8) {
+    return jsonError(
+      400,
+      "Password must be at least 8 characters (or leave blank to auto-generate)"
+    );
+  }
+
+  const password = providedPassword || genTempPassword();
+
   const userAgent = req.headers.get("user-agent") || "";
   const ip =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
@@ -90,17 +131,39 @@ export async function POST(req: NextRequest) {
 
   try {
     /* =========================
-       1) CREATE AUTH USER
+       Prevent duplicate email
     ========================= */
-    const { data: created, error: createErr } = await sb.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: { full_name },
+
+    const { data: existing } = await sb.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
     });
 
+    const alreadyExists = existing?.users?.some(
+      (u) => u.email?.toLowerCase() === email
+    );
+
+    if (alreadyExists) {
+      return jsonError(400, "User with this email already exists");
+    }
+
+    /* =========================
+       1) CREATE AUTH USER
+    ========================= */
+
+    const { data: created, error: createErr } =
+      await sb.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { full_name },
+      });
+
     if (createErr || !created?.user?.id) {
-      return jsonError(400, createErr?.message || "Auth user creation failed");
+      return jsonError(
+        400,
+        createErr?.message || "Auth user creation failed"
+      );
     }
 
     const userId = created.user.id;
@@ -108,6 +171,7 @@ export async function POST(req: NextRequest) {
     /* =========================
        2) PROFILES
     ========================= */
+
     const { error: pErr } = await sb.from("profiles").upsert({
       id: userId,
       role,
@@ -115,7 +179,6 @@ export async function POST(req: NextRequest) {
     });
 
     if (pErr) {
-      // rollback auth user to avoid orphan records
       await sb.auth.admin.deleteUser(userId).catch(() => {});
       return jsonError(400, `profiles upsert failed: ${pErr.message}`);
     }
@@ -123,43 +186,32 @@ export async function POST(req: NextRequest) {
     /* =========================
        3) RP USERS
     ========================= */
+
     const { error: rpErr } = await sb
       .from("rp_users")
-      .upsert(
-        {
-          user_id: userId,
-          username: email,
-          name: full_name,
-          role,
-          permissions,
-          is_active,
-        },
-        { onConflict: "user_id" }
-      );
+      .insert({
+        user_id: userId,
+        username: email,
+        name: full_name,
+        role,
+        permissions,
+        is_active,
+      });
 
     if (rpErr) {
-      // rollback auth user + profile to avoid half-created users
       await sb.from("profiles").delete().eq("id", userId).catch(() => {});
       await sb.auth.admin.deleteUser(userId).catch(() => {});
-      return jsonError(400, `rp_users upsert failed: ${rpErr.message}`);
+      return jsonError(400, `rp_users insert failed: ${rpErr.message}`);
     }
 
     /* =========================
-       4) AUDIT LOG (ADMIN ACTION)
-       - Do NOT break user creation if audit fails
-       - Determine adminId from a trusted source
+       4) AUDIT LOG (optional)
     ========================= */
-    let adminId: string | null = null;
 
-    // Preferred: the middleware forwards admin id
-    const hdrAdminId = req.headers.get("x-user-id");
-    if (hdrAdminId && s(hdrAdminId)) adminId = s(hdrAdminId);
-
-    // Fallback: if you later add a server session, replace this with your verified auth user id.
-    // (Leaving as-is; audit is optional and must never crash this route.)
+    const adminId = req.headers.get("x-user-id");
 
     if (adminId) {
-      const { error: aErr } = await sb.from("user_activity").insert({
+      await sb.from("user_activity").insert({
         user_id: adminId,
         event: "user.create",
         entity: "user",
@@ -167,12 +219,12 @@ export async function POST(req: NextRequest) {
         meta: { email, role, is_active },
         ip,
         user_agent: userAgent,
-      });
-
-      if (aErr) {
-        console.warn("user_activity insert failed (ignored):", aErr.message);
-      }
+      }).catch(() => {});
     }
+
+    /* =========================
+       SUCCESS
+    ========================= */
 
     return NextResponse.json({
       ok: true,
@@ -181,8 +233,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: any) {
     console.error("Create user route error:", e);
-    // Always return JSON
-    return jsonError(500, e?.message || "Failed");
+    return jsonError(500, "Failed to create user");
   }
 }
 

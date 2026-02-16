@@ -9,16 +9,29 @@ const n = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const clampPct = (v: any) => Math.max(0, Math.min(100, n(v)));
 const up = (s: any) => String(s || "").trim().toUpperCase();
 
+function roundTo(v: any, dp: number) {
+  const x = n(v);
+  const m = Math.pow(10, dp);
+  return Math.round(x * m) / m;
+}
+
+function normUom(u: any): "BOX" | "PCS" | "KG" | "G" | "BAG" {
+  const x = up(u);
+  if (x === "PCS") return "PCS";
+  if (x === "KG") return "KG";
+  if (x === "G" || x === "GRAM" || x === "GRAMS") return "G";
+  if (x === "BAG" || x === "BAGS") return "BAG";
+  return "BOX";
+}
+
 function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || "").trim());
 }
 
-/** Public API base (optional). If empty -> same origin. */
 function apiBase() {
   return (import.meta as any)?.env?.VITE_API_URL?.trim?.() || "";
 }
 
-/** Safe JSON parse */
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
@@ -29,7 +42,6 @@ async function safeJson(res: Response) {
   }
 }
 
-/** Fetch PUBLIC print bundle from Express server */
 async function fetchPublicQuotationPrint(quotationId: number, token: string) {
   const t = String(token || "").trim();
   if (!isUuid(t)) throw new Error("Quotation not found / invalid link");
@@ -81,7 +93,6 @@ export async function listQuotations(args: { q?: string; status?: QuotationStatu
   return (data || []) as QuotationRow[];
 }
 
-/** GET single quotation (publicToken uses server API; internal uses Supabase) */
 export async function getQuotation(id: number, opts?: { publicToken?: string }) {
   if (opts?.publicToken) {
     const bundle = await fetchPublicQuotationPrint(id, opts.publicToken);
@@ -94,18 +105,11 @@ export async function getQuotation(id: number, opts?: { publicToken?: string }) 
   return data as QuotationRow;
 }
 
-/**
- * GET print bundle
- * - PUBLIC: server endpoint /api/public/quotation-print?id=..&t=TOKEN
- * - INTERNAL: Supabase joins
- */
 export async function getQuotationPrintBundle(id: number, opts?: { publicToken?: string }) {
-  // PUBLIC MODE (token)
   if (opts?.publicToken) {
     return fetchPublicQuotationPrint(id, opts.publicToken);
   }
 
-  // INTERNAL MODE (authenticated)
   const { data: quotation, error: qErr } = await supabase.from("quotations").select("*").eq("id", id).maybeSingle();
   if (qErr) throw new Error(qErr.message);
   if (!quotation) throw new Error("Quotation not found");
@@ -114,7 +118,9 @@ export async function getQuotationPrintBundle(id: number, opts?: { publicToken?:
     .from("quotation_items")
     .select(
       `
-      id,quotation_id,product_id,description,uom,box_qty,units_per_box,total_qty,
+      id,quotation_id,product_id,description,uom,
+      box_qty,pcs_qty,grams_qty,bags_qty,units_per_box,total_qty,
+      base_unit_price_excl_vat,vat_rate,price_overridden,
       unit_price_excl_vat,unit_vat,unit_price_incl_vat,line_total,created_at,
       products:product_id ( id,item_code,sku,name,units_per_box,selling_price )
     `
@@ -186,8 +192,8 @@ export async function setQuotationStatus(id: number, status: QuotationStatus) {
 function computeTotalsInvoiceStyle(args: {
   items: Array<{ total_qty: any; unit_price_excl_vat: any; unit_vat: any }>;
   discount_percent: number;
-  discount_amount: number; // manual override optional
-  vat_percent: number; // informational only
+  discount_amount: number;
+  vat_percent: number;
 }) {
   const subtotal = args.items.reduce((s, it) => s + n(it.total_qty) * n(it.unit_price_excl_vat), 0);
   const vat_amount = args.items.reduce((s, it) => s + n(it.total_qty) * n(it.unit_vat), 0);
@@ -255,7 +261,7 @@ export async function applyQuotationDiscount(params: { quotationId: number; disc
     .from("quotations")
     .update({
       discount_percent: clampPct(discount_percent),
-      discount_amount: 0, // recompute from percent
+      discount_amount: 0,
     })
     .eq("id", quotationId)
     .select("*")
@@ -268,43 +274,73 @@ export async function applyQuotationDiscount(params: { quotationId: number; disc
 }
 
 /* =========================================================
-   Create (Invoice-style)
+   Create (Multi-UOM)
 ========================================================= */
 export type QuotationCreateItem = {
   product_id?: number | null;
   description?: string | null;
 
-  uom?: string; // BOX / PCS
-  box_qty?: number;
-  units_per_box?: number;
-  total_qty?: number;
+  uom?: string; // BOX / PCS / KG / G / BAG
 
+  // qty inputs:
+  box_qty?: number;   // BOX qty OR KG qty when uom=KG
+  pcs_qty?: number;
+  grams_qty?: number;
+  bags_qty?: number;
+
+  units_per_box?: number; // BOX only
+  total_qty?: number;     // if missing -> computed
+
+  // pricing
   unit_price_excl_vat?: number;
-  unit_vat?: number; // per unit
+  unit_vat?: number;
   unit_price_incl_vat?: number;
-
   line_total?: number;
+
+  // optional metadata (your UI uses these)
+  base_unit_price_excl_vat?: number;
+  vat_rate?: number;
+  price_overridden?: boolean;
 };
 
 function normalizeItem(it: QuotationCreateItem) {
-  const uom = up(it.uom) === "PCS" ? "PCS" : "BOX";
+  const uom = normUom(it.uom);
 
-  const box_qty = Math.max(0, Math.trunc(n(it.box_qty)));
-  const units_per_box = uom === "PCS" ? 1 : Math.max(1, Math.trunc(n(it.units_per_box) || 1));
+  // units per box only matters for BOX
+  const units_per_box = uom === "BOX" ? Math.max(1, Math.trunc(n(it.units_per_box) || 1)) : 1;
+
+  // qty columns (stored)
+  let box_qty = 0;
+  let pcs_qty = 0;
+  let grams_qty = 0;
+  let bags_qty = 0;
+
+  if (uom === "BOX") box_qty = Math.max(0, Math.trunc(n(it.box_qty)));
+  if (uom === "PCS") pcs_qty = Math.max(0, Math.trunc(n(it.pcs_qty)));
+  if (uom === "KG") box_qty = Math.max(0, roundTo(it.box_qty, 3)); // KG stored in box_qty
+  if (uom === "G") grams_qty = Math.max(0, Math.trunc(n(it.grams_qty)));
+  if (uom === "BAG") bags_qty = Math.max(0, Math.trunc(n(it.bags_qty)));
+
+  const computed_total_qty =
+    uom === "BOX"
+      ? box_qty * units_per_box
+      : uom === "PCS"
+      ? pcs_qty
+      : uom === "KG"
+      ? box_qty
+      : uom === "G"
+      ? grams_qty
+      : bags_qty;
 
   const total_qty =
-    Number.isFinite(Number(it.total_qty)) && n(it.total_qty) > 0
-      ? Math.trunc(n(it.total_qty))
-      : uom === "PCS"
-      ? box_qty
-      : box_qty * units_per_box;
+    Number.isFinite(Number(it.total_qty)) && n(it.total_qty) > 0 ? n(it.total_qty) : computed_total_qty;
 
   const unit_price_excl_vat = Math.max(0, n(it.unit_price_excl_vat));
   const unit_vat = Math.max(0, n(it.unit_vat));
   const unit_price_incl_vat = Math.max(0, n(it.unit_price_incl_vat));
 
   const line_total =
-    Number.isFinite(Number(it.line_total)) && n(it.line_total) > 0 ? n(it.line_total) : total_qty * unit_price_incl_vat;
+    Number.isFinite(Number(it.line_total)) && n(it.line_total) > 0 ? n(it.line_total) : n(total_qty) * unit_price_incl_vat;
 
   return {
     product_id: it.product_id ?? null,
@@ -312,19 +348,26 @@ function normalizeItem(it: QuotationCreateItem) {
 
     uom,
     box_qty,
+    pcs_qty,
+    grams_qty,
+    bags_qty,
     units_per_box,
     total_qty,
 
     unit_price_excl_vat,
     unit_vat,
     unit_price_incl_vat,
-
     line_total,
+
+    // optional meta
+    base_unit_price_excl_vat: Math.max(0, n(it.base_unit_price_excl_vat)),
+    vat_rate: Number.isFinite(Number(it.vat_rate)) ? clampPct(it.vat_rate) : null,
+    price_overridden: !!it.price_overridden,
   };
 }
 
 export async function createQuotationFull(payload: {
-  quotation_date: string; // YYYY-MM-DD
+  quotation_date: string;
   valid_until?: string | null;
 
   customer_id?: number | null;
@@ -386,13 +429,19 @@ export async function createQuotationFull(payload: {
 
     uom: it.uom,
     box_qty: it.box_qty,
+    pcs_qty: it.pcs_qty,
+    grams_qty: it.grams_qty,
+    bags_qty: it.bags_qty,
     units_per_box: it.units_per_box,
     total_qty: it.total_qty,
+
+    base_unit_price_excl_vat: it.base_unit_price_excl_vat,
+    vat_rate: it.vat_rate,
+    price_overridden: it.price_overridden,
 
     unit_price_excl_vat: it.unit_price_excl_vat,
     unit_vat: it.unit_vat,
     unit_price_incl_vat: it.unit_price_incl_vat,
-
     line_total: it.line_total,
   }));
 

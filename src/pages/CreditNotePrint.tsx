@@ -69,7 +69,6 @@ const n2 = (v: any) => {
 };
 
 export default function CreditNotePrint() {
-  // ✅ hooks always at top
   const { id } = useParams();
   const creditNoteId = Number(id);
   const nav = useNavigate();
@@ -195,11 +194,21 @@ export default function CreditNotePrint() {
           id,
           credit_note_id,
           product_id,
+
+          uom,
+          box_qty,
+          pcs_qty,
+          grams_qty,
+          bags_qty,
+          units_per_box,
+          description,
+
           total_qty,
           unit_price_excl_vat,
           unit_vat,
           unit_price_incl_vat,
           line_total,
+
           products:product_id ( id, name, item_code, sku, units_per_box )
         `
         )
@@ -240,17 +249,23 @@ export default function CreditNotePrint() {
     return (items || []).map((it: any, idx: number) => {
       const p = it.product || it.products || null;
 
-      // credit notes usually PCS; we’ll keep BOX default but safe
-      const uom = "PCS";
-      const upb = 1;
-
       return {
         sn: idx + 1,
         item_code: p?.item_code || p?.sku || "",
-        uom,
-        units_per_box: upb,
-        total_qty: Math.trunc(n2(it.total_qty ?? 0)),
-        description: String(p?.name || "").trim() || `Item #${it.id}`,
+        uom: String(it.uom || "").toUpperCase() || "PCS",
+
+        // ✅ feed qty fields so RamPotteryDoc can show BOX/PCS/KG/G/BAG correctly
+        box_qty: it.box_qty ?? null,
+        pcs_qty: it.pcs_qty ?? null,
+        grams_qty: it.grams_qty ?? null,
+        bags_qty: it.bags_qty ?? null,
+        units_per_box: it.units_per_box ?? p?.units_per_box ?? 1,
+
+        total_qty: it.total_qty ?? "",
+
+        // ✅ prefer item.description saved on credit_note_items
+        description: String(it.description || p?.name || "").trim() || `Item #${it.id}`,
+
         unit_price_excl_vat: n2(it.unit_price_excl_vat ?? 0),
         unit_vat: n2(it.unit_vat ?? 0),
         unit_price_incl_vat: n2(it.unit_price_incl_vat ?? 0),
@@ -346,7 +361,6 @@ export default function CreditNotePrint() {
   const Doc = (
     <RamPotteryDoc
       variant="CREDIT_NOTE"
-      showFooterBar={false}
       docNoLabel="CREDIT NOTE NO:"
       docNoValue={cnNo}
       dateLabel="DATE:"
@@ -373,13 +387,9 @@ export default function CreditNotePrint() {
         vatPercentLabel: `VAT 15%`,
         vat_amount: n2(cn.vat_amount || 0),
         total_amount: n2(cn.total_amount || 0),
-
         previous_balance: 0,
         amount_paid: 0,
         balance_remaining: 0,
-
-        discount_percent: 0,
-        discount_amount: 0,
       }}
       preparedBy={""}
       deliveredBy={""}
@@ -418,6 +428,3 @@ export default function CreditNotePrint() {
     </div>
   );
 }
-
-
-

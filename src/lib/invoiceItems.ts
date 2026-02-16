@@ -13,6 +13,7 @@ const SELECT_JOIN = `
 function normalizeRow(r: any) {
   return {
     ...r,
+    // keep both naming styles safe
     product: r.products ?? r.product ?? null,
   };
 }
@@ -38,7 +39,6 @@ export async function listInvoiceItems(invoiceId: number, opts?: { publicToken?:
 
     if (!res.ok || !json?.ok) throw new Error(json?.error || "Invoice not found / access denied.");
 
-    // server already returns items with `product`
     return (json.items || []).map((it: any) => ({
       ...it,
       product: it.product ?? null,

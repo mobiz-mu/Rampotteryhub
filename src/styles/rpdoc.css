@@ -62,7 +62,7 @@ html, body{
 .rpdoc-pageNumber{
   position:absolute;
   right:8mm;
-  bottom:4mm;
+  bottom:2mm;
   font-size:10px;
   font-weight:700;
   color:#111;
@@ -101,13 +101,13 @@ html, body{
 
 .rpdoc-logoCol{
   display:flex;
+  margin-top: -6mm !important;
   align-items:flex-start;
   justify-content:flex-start;
 }
 
 .rpdoc-logoImg{
   width:56mm;
-  height:auto;
   object-fit:contain;
   display:block;
   background:transparent;
@@ -132,6 +132,7 @@ html, body{
   letter-spacing:.6px;
   line-height:1.02;
   margin:0;
+  margin-top: -1mm !important;
   white-space:nowrap; /* keep on 1 line */
 }
 
@@ -164,9 +165,9 @@ html, body{
 /* VAT INVOICE spacing controlled */
 .rpdoc-title{
   margin-top:3mm;      /* slightly down as you asked */
-  margin-bottom:1mm;   /* removes big empty space */
+  margin-bottom:0mm;   /* removes big empty space */
   font-family:"Times New Roman", Times, serif;
-  font-size:32px;
+  font-size:24px;
   font-weight:900;
   color:#c40000;
   letter-spacing:1.3px;
@@ -181,7 +182,7 @@ html, body{
   display:grid;
   grid-template-columns: 1fr 1fr;
   gap:6mm;
-  margin-top:2mm;      /* close to VAT INVOICE */
+  margin-top:0mm;      /* close to VAT INVOICE */
 }
 
 .rpdoc-box{
@@ -523,13 +524,13 @@ html, body{
 /* VAT INVOICE spacing */
 .rpdoc-title{
   margin-top: 2mm !important;     /* adjust (2mm–4mm) */
-  margin-bottom: 1mm !important;
-  line-height: 1.05 !important;
+  margin-bottom: 0mm !important;
+  line-height: 1.0 !important;
 }
 
 /* Pull boxes closer */
 .rpdoc-boxes{
-  margin-top: 1.5mm !important;
+  margin-top: 0mm !important;
 }
 
 /* Pull table closer */
@@ -705,4 +706,74 @@ html, body{
     margin:0 !important;
     box-shadow:none !important;
   }
+}
+
+
+/* ✅ PRINT SAFE: never split the items table across pages */
+@media print{
+  .rpdoc-tableWrap,
+  .rpdoc-table{
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .rpdoc-table thead{
+    display: table-header-group; /* keeps header correct if browser forces split */
+  }
+
+  .rpdoc-table tr,
+  .rpdoc-table th,
+  .rpdoc-table td{
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+}
+
+/* Page 2 footer: signatures immediately after notes+totals */
+.rpdoc-footerInline .rpdoc-signaturesWrap{
+  margin-top: 4mm !important;
+}
+.rpdoc-footerInline .rpdoc-signatures{
+  margin-top: 1 !important;
+  padding-top: 4mm !important;
+}
+
+
+@media print{
+  /* Keep whole table block together where possible */
+  .rpdoc-tableWrap,
+  .rpdoc-table{
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* Prevent row splitting */
+  .rpdoc-table tr,
+  .rpdoc-table td,
+  .rpdoc-table th,
+  .rpdoc-table thead,
+  .rpdoc-table tbody{
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* Ensure header behaves correctly in print */
+  .rpdoc-table thead{ display: table-header-group !important; }
+  .rpdoc-table tbody{ display: table-row-group !important; }
+}
+
+
+/* Reduce gap under VAT INVOICE */
+.rpdoc-title{
+  margin-bottom: 0.5mm !important;
+}
+
+/* Pull boxes closer */
+.rpdoc-boxes{
+  margin-top: 1mm !important;
+}
+
+/* Move logo a bit up */
+.rpdoc-logoImg{
+  margin-top: -2mm !important;
 }

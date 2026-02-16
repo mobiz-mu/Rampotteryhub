@@ -115,16 +115,14 @@ export default function InvoicePrint() {
   }, [isPublicMode]);
 
   /* =========================
-     Load invoice
+     Load invoice (HOOK MUST ALWAYS RUN)
   ========================= */
   const invoiceQ = useQuery({
     queryKey: ["invoice_print_bundle", invoiceId, publicToken],
     enabled: isValidId(invoiceId) && (isPublicMode ? true : authChecked),
     queryFn: async () => {
       if (isPublicMode) {
-        const res = await fetch(
-          `/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`
-        );
+        const res = await fetch(`/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`);
         const json = await safeJson(res);
         if (!json?.ok) throw new Error(json?.error || "Failed to load");
         return json as { ok: true; invoice: any; items: any[]; customer?: any };
@@ -136,6 +134,7 @@ export default function InvoicePrint() {
     staleTime: 15_000,
   });
 
+  // ✅ derive payload safely (NO early returns before hooks below)
   const isLoading = invoiceQ.isLoading;
   const payload = invoiceQ.data as any;
   const inv = payload?.invoice ?? null;
@@ -143,43 +142,42 @@ export default function InvoicePrint() {
   const customer = payload?.customer || inv?.customers || inv?.customer || null;
 
   /* =========================
-     ✅ BUILD DOC ITEMS (FIXED)
-     - this is where it/idx/p MUST live (inside map)
+     ✅ BUILD DOC ITEMS
   ========================= */
   const docItems: RamPotteryDocItem[] = useMemo(() => {
-  return (items || []).map((it: any, idx: number) => {
-    const p = it.product || it.products || null;
+    return (items || []).map((it: any, idx: number) => {
+      const p = it.product || it.products || null;
 
-    const rawUom = String(it.uom || it.unit || "BOX").trim().toUpperCase();
-    const uom: "BOX" | "PCS" | "KG" =
-      rawUom === "PCS" ? "PCS" : rawUom === "KG" || rawUom === "KGS" ? "KG" : "BOX";
+      const rawUom = String(it.uom || it.unit || "BOX").trim().toUpperCase();
+      const uom: "BOX" | "PCS" | "KG" =
+        rawUom === "PCS" ? "PCS" : rawUom === "KG" || rawUom === "KGS" ? "KG" : "BOX";
 
-    return {
-      sn: idx + 1,
-      item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
+      return {
+        sn: idx + 1,
+        item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
 
-      uom,
-      units_per_box: Number(it.units_per_box ?? it.unit_per_box ?? p?.units_per_box ?? 1),
+        uom,
+        units_per_box: Number(it.units_per_box ?? it.unit_per_box ?? p?.units_per_box ?? 1),
 
-      // ✅ try multiple possible names (some APIs alias fields)
-      box_qty: Number(it.box_qty ?? it.boxQty ?? it.qty_box ?? it.qty ?? 0),
-      pcs_qty: Number(it.pcs_qty ?? it.pcsQty ?? it.qty_pcs ?? 0),
-      total_qty: Number(it.total_qty ?? it.totalQty ?? 0),
+        box_qty: Number(it.box_qty ?? it.boxQty ?? it.qty_box ?? it.qty ?? 0),
+        pcs_qty: Number(it.pcs_qty ?? it.pcsQty ?? it.qty_pcs ?? 0),
+        total_qty: Number(it.total_qty ?? it.totalQty ?? 0),
 
-      description: it.description || p?.name || "",
-      unit_price_excl_vat: Number(it.unit_price_excl_vat ?? 0),
-      unit_vat: Number(it.unit_vat ?? 0),
-      unit_price_incl_vat: Number(it.unit_price_incl_vat ?? 0),
-      line_total: Number(it.line_total ?? 0),
-    } as any;
-  });
-}, [items]);
-
+        description: it.description || p?.name || "",
+        unit_price_excl_vat: Number(it.unit_price_excl_vat ?? 0),
+        unit_vat: Number(it.unit_vat ?? 0),
+        unit_price_incl_vat: Number(it.unit_price_incl_vat ?? 0),
+        line_total: Number(it.line_total ?? 0),
+      } as any;
+    });
+  }, [items]);
 
   /* =========================
      WhatsApp link (ONLY public)
   ========================= */
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
+
   const viewUrl = isPublicMode
     ? `${origin}/invoices/${invoiceId}/print?t=${encodeURIComponent(publicToken)}`
     : `${origin}/invoices/${invoiceId}/print`;
@@ -279,7 +277,7 @@ export default function InvoicePrint() {
   }
 
   /* =========================
-     Safe returns AFTER hooks
+     ✅ ALL RETURNS DOWN HERE (AFTER ALL HOOKS)
   ========================= */
   if (!isValidId(invoiceId)) {
     return <div className="p-6 text-sm text-muted-foreground">Invalid invoice id.</div>;
@@ -359,31 +357,28 @@ export default function InvoicePrint() {
               vat_no: customer?.vat_no || "",
               customer_code: customer?.customer_code || "",
             }}
-            company={{
-              brn: "C17144377",
-            }}
+            company={{ brn: "C17144377", vat_no: "27490894" }}
             docNoLabel="INVOICE NO:"
             docNoValue={inv.invoice_number || `#${inv.id}`}
             dateLabel="DATE:"
             dateValue={fmtDDMMYYYY(inv.invoice_date)}
-            purchaseOrderLabel="PURCHASE ORDER NO:"
+            purchaseOrderLabel="PO. No :"
             purchaseOrderValue={inv.purchase_order_no || ""}
             salesRepName={inv.sales_rep || ""}
             salesRepPhone={inv.sales_rep_phone || ""}
             items={docItems}
             totals={{
-             subtotal: Number(inv.subtotal || 0),
-             vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
-             vat_amount: Number(inv.vat_amount || 0),
-             total_amount: Number(inv.total_amount || 0),
+              subtotal: Number(inv.subtotal || 0),
+              vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
+              vat_amount: Number(inv.vat_amount || 0),
+              total_amount: Number(inv.total_amount || 0),
 
-            previous_balance: Number(inv.previous_balance || 0),
+              previous_balance: Number(inv.previous_balance || 0),
 
-          // ✅ always show row, but blank when zero
-            amount_paid: n(inv.amount_paid) > 0 ? Number(inv.amount_paid) : null,
-            balance_remaining: n(inv.balance_remaining) > 0 ? Number(inv.balance_remaining) : null,
-         }}
-
+               /* ✅ ALWAYS BLANK */
+              amount_paid: null,
+              balance_remaining: null,
+            }}
             preparedBy={"Manish"}
             deliveredBy={""}
           />

@@ -13,6 +13,8 @@ type Party = {
 
 type DocCompany = {
   brn?: string | null;
+  vat_no?: string | null;
+
   addressLines?: string[] | null;
   phonesLine?: string | null;
   email?: string | null;
@@ -25,22 +27,22 @@ export type DocVariant = "INVOICE" | "CREDIT_NOTE" | "QUOTATION";
 
 export type RamPotteryDocItem = {
   sn: number;
-
   item_code?: string;
 
-  // ✅ unit
-  box?: string; // old: BOX/PCS
-  uom?: string; // new: BOX/PCS/KG
+  // UOM
+  uom?: string;
+  box?: string; // legacy
 
-  // ✅ qty input (NEW)
-  box_qty?: number | string | null; // for BOX and KG
-  pcs_qty?: number | string | null; // for PCS
+  // qty fields
+  box_qty?: number | string | null;   // BOX (int), KG (decimal kg)
+  pcs_qty?: number | string | null;   // PCS (int)
+  grams_qty?: number | string | null; // G (int)
+  bags_qty?: number | string | null;  // BAG (int)
 
-  // ✅ unit per box
-  unit_per_box?: string | number; // old
-  units_per_box?: string | number; // new
+  unit_per_box?: string | number;
+  units_per_box?: string | number;
 
-  total_qty?: string | number;
+  total_qty?: string | number; // stored in DB (for printing in TOTAL QTY col)
   description?: string;
 
   unit_price_excl_vat?: number;
@@ -51,16 +53,15 @@ export type RamPotteryDocItem = {
 
 type Totals = {
   subtotal?: number | null;
-  vatLabel?: string; // "VAT 15%"
+  vatLabel?: string;
   vatPercentLabel?: string;
+
   vat_amount?: number | null;
   total_amount?: number | null;
   previous_balance?: number | null;
+
   amount_paid?: number | null;
   balance_remaining?: number | null;
-
-  discount_percent?: number | null;
-  discount_amount?: number | null;
 };
 
 export type RamPotteryDocProps = {
@@ -91,6 +92,7 @@ export type RamPotteryDocProps = {
   preparedBy?: string | null;
   deliveredBy?: string | null;
 
+  /** optional: keep compatibility with your callers */
   showFooterBar?: boolean;
 };
 
@@ -103,32 +105,24 @@ function money(v: any) {
   if (!Number.isFinite(x)) return "";
   return x.toLocaleString("en-MU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
-function moneyBlankZero(v: any) {
-  // ✅ blank when null/undefined/"" OR numeric 0
-  if (v === null || v === undefined || v === "") return "";
-  const x = Number(v);
-  if (!Number.isFinite(x) || x === 0) return "";
-  return x.toLocaleString("en-MU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 function txt(v: any) {
   return String(v ?? "").trim();
 }
 
-/** normalize uom to BOX/PCS/KG */
-function normUom(it: RamPotteryDocItem): "BOX" | "PCS" | "KG" {
-  const u = String(it.uom || it.box || "BOX").trim().toUpperCase();
-  if (u === "PCS") return "PCS";
-  if (u === "KG" || u === "KGS") return "KG";
+/** normalize uom to BOX/PCS/KG/G/BAG */
+function normUom(it: RamPotteryDocItem): "BOX" | "PCS" | "KG" | "G" | "BAG" {
+  const raw = String(it.uom || it.box || "BOX").trim().toUpperCase();
+  if (raw === "PCS") return "PCS";
+  if (raw === "KG" || raw === "KGS") return "KG";
+  if (raw === "G" || raw === "GRAM" || raw === "GRAMS") return "G";
+  if (raw === "BAG" || raw === "BAGS") return "BAG";
   return "BOX";
 }
 
-/** qty input: for BOX/KG use box_qty; for PCS use pcs_qty; fallback to total_qty if legacy */
+/** qty input: BOX/KG => box_qty, PCS => pcs_qty, G => grams_qty, BAG => bags_qty; fallback => total_qty */
 function qtyInput(it: RamPotteryDocItem): number | null {
   const u = normUom(it);
 
-  // helper: fallback to total_qty if qty fields missing
   const fallbackTotal = () => {
     const legacy = it.total_qty;
     if (legacy === null || legacy === undefined || legacy === "") return null;
@@ -137,16 +131,26 @@ function qtyInput(it: RamPotteryDocItem): number | null {
 
   if (u === "PCS") {
     const v = it.pcs_qty;
-    if (v === null || v === undefined || v === "") return fallbackTotal(); // ✅ fallback added
+    if (v === null || v === undefined || v === "") return fallbackTotal();
     return n2(v);
   }
 
-  // BOX or KG
-  const v = it.box_qty;
-  if (v === null || v === undefined || v === "") return fallbackTotal(); // ✅ keep fallback
+  if (u === "G") {
+    const v = (it as any).grams_qty;
+    if (v === null || v === undefined || v === "") return fallbackTotal();
+    return n2(v);
+  }
+
+  if (u === "BAG") {
+    const v = (it as any).bags_qty;
+    if (v === null || v === undefined || v === "") return fallbackTotal();
+    return n2(v);
+  }
+
+  const v = it.box_qty; // BOX or KG
+  if (v === null || v === undefined || v === "") return fallbackTotal();
   return n2(v);
 }
-
 
 /** units per box: only for BOX */
 function upb(it: RamPotteryDocItem): number | null {
@@ -154,19 +158,14 @@ function upb(it: RamPotteryDocItem): number | null {
   if (u !== "BOX") return null;
   const v = it.units_per_box ?? it.unit_per_box;
   if (v === null || v === undefined || v === "") return null;
-  const x = Math.max(1, Math.trunc(n2(v)));
-  return x;
+  return Math.max(1, Math.trunc(n2(v)));
 }
 
 /** display qty nicely */
-function fmtQty(uom: "BOX" | "PCS" | "KG", v: number | null) {
+function fmtQty(uom: "BOX" | "PCS" | "KG" | "G" | "BAG", v: number | null) {
   if (v === null) return "";
-  if (uom === "KG") {
-    // show up to 3dp, no trailing zeros
-    const s = String(Number(v.toFixed(3)));
-    return s;
-  }
-  // integer for BOX/PCS
+  if (uom === "KG") return String(Number(v.toFixed(3))); // trims zeros
+  // BOX / PCS / G / BAG are integers
   return String(Math.trunc(v));
 }
 
@@ -180,8 +179,7 @@ function TableHeader() {
           <br />
           CODE
         </th>
-        {/* IMPORTANT: this column in your PNG is actually "Qty (BOX/PCS/KG)" */}
-        <th>BOX</th>
+        <th>QTY</th>
         <th>
           UNIT
           <br />
@@ -232,10 +230,10 @@ function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
       <colgroup>
         <col style={{ width: "5.2%" }} />
         <col style={{ width: "8.5%" }} />
-        <col style={{ width: "6.5%" }} />
+        <col style={{ width: "8.0%" }} />
         <col style={{ width: "9.0%" }} />
         <col style={{ width: "8.5%" }} />
-        <col style={{ width: "23.0%" }} />
+        <col style={{ width: "21.5%" }} />
         <col style={{ width: "9.2%" }} />
         <col style={{ width: "6.8%" }} />
         <col style={{ width: "9.2%" }} />
@@ -246,39 +244,41 @@ function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
 
       <tbody>
         {(items || []).map((it, idx) => {
-  const u = normUom(it);
-  const q = qtyInput(it);
-  const qtyText = fmtQty(u, q);
+          const u = normUom(it);
+          const q = qtyInput(it);
+          const qtyText = fmtQty(u, q);
 
-  const unitPerBox = upb(it);
-  const unitPerBoxText = unitPerBox ? String(unitPerBox) : "";
+          const unitPerBox = upb(it);
+          const unitPerBoxText = unitPerBox ? String(unitPerBox) : "";
 
-  return (
-    <tr key={idx}>
-      <td>{it.sn}</td>
-      <td>{txt(it.item_code)}</td>
+          return (
+            <tr key={idx}>
+              <td>{it.sn}</td>
+              <td>{txt(it.item_code)}</td>
 
-      {/* BOX column now shows "2 BOX" / "12 PCS" / "0.450 KG" */}
-      <td>{qtyText ? `${qtyText} ${u}` : ""}</td>
+              {/* ✅ shows "10 PCS" / "2 BOX" / "1.25 KG" / "500 G" / "3 BAG" */}
+              <td>{qtyText ? `${qtyText} ${u}` : ""}</td>
 
-      {/* UPB only for BOX */}
-      <td>{u === "BOX" ? unitPerBoxText : ""}</td>
+              <td>{u === "BOX" ? unitPerBoxText : ""}</td>
 
-      <td>{txt(it.total_qty)}</td>
-      <td className="rpdoc-desc">{txt(it.description)}</td>
-      <td>{money(it.unit_price_excl_vat)}</td>
-      <td>{money(it.unit_vat)}</td>
-      <td>{money(it.unit_price_incl_vat)}</td>
-      <td>{money(it.line_total)}</td>
-    </tr>
-  );
-})}
+              {/* ✅ TOTAL QTY from DB (already correct based on your CN create logic) */}
+              <td>{txt(it.total_qty)}</td>
+
+              <td className="rpdoc-desc">{txt(it.description)}</td>
+
+              <td>{money(it.unit_price_excl_vat)}</td>
+              <td>{money(it.unit_vat)}</td>
+              <td>{money(it.unit_price_incl_vat)}</td>
+              <td>{money(it.line_total)}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
 }
 
-function NotesTotals({ totals, balanceRemaining }: { totals: Totals; balanceRemaining: number }) {
+function NotesTotals({ totals }: { totals: Totals }) {
   return (
     <div className="rpdoc-footerGrid">
       <div className="rpdoc-notesBox">
@@ -288,6 +288,8 @@ function NotesTotals({ totals, balanceRemaining }: { totals: Totals; balanceRema
           <li>For any manufacturing defects, this invoice must be produced for refund or exchange.</li>
           <li>Customer must verify that quantity conforms with invoice, not responsible after delivery.</li>
           <li>Interest of 1% above bank rate will be charged if not settled within 30 days.</li>
+          <li>The customer must verify the amount.</li>
+          <li>Delivery will be done at the ground floor only.</li>
           <li>
             All cheques to be issued on <span className="rpdoc-redStrong">RAM POTTERY LTD.</span>
           </li>
@@ -302,33 +304,38 @@ function NotesTotals({ totals, balanceRemaining }: { totals: Totals; balanceRema
           <span>SUB TOTAL</span>
           <span>{money(totals?.subtotal)}</span>
         </div>
+
         <div className="rpdoc-totalRow">
           <span>{txt(totals?.vatLabel || totals?.vatPercentLabel) || "VAT 15%"}</span>
           <span>{money(totals?.vat_amount)}</span>
         </div>
+
         <div className="rpdoc-totalRow rpdoc-totalRowBig">
           <span>TOTAL AMOUNT</span>
           <span>{money(totals?.total_amount)}</span>
         </div>
+
         <div className="rpdoc-totalRow">
           <span>PREVIOUS BALANCE</span>
           <span>{money(totals?.previous_balance)}</span>
         </div>
+
         <div className="rpdoc-totalRow">
           <span>GROSS TOTAL</span>
           <span>{money(n2(totals?.total_amount) + n2(totals?.previous_balance))}</span>
         </div>
-       <div className="rpdoc-totalRow">
-        <span>AMOUNT PAID</span>
-        <span>{moneyBlankZero(totals?.amount_paid)}</span>
-      </div>
 
-      <div className="rpdoc-totalRow">
-      <span>BALANCE REMAINING</span>
-      <span></span>
-     </div>
+        {/* ✅ ALWAYS BLANK */}
+        <div className="rpdoc-totalRow">
+          <span>AMOUNT PAID</span>
+          <span></span>
+        </div>
+        <div className="rpdoc-totalRow">
+          <span>BALANCE REMAINING</span>
+          <span></span>
+        </div>
+      </div>
     </div>
-   </div>
   );
 }
 
@@ -373,7 +380,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
     dateLabel = "DATE:",
     dateValue = "",
 
-    purchaseOrderLabel = variant === "QUOTATION" ? "VALID UNTIL:" : "PO NO.:",
+    purchaseOrderLabel,
     purchaseOrderValue = "",
 
     salesRepName = "",
@@ -402,19 +409,29 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
 
   const docItems = useMemo(() => (items || []).map((x, i) => ({ ...x, sn: x?.sn ?? i + 1 })), [items]);
 
-  const balanceRemaining = useMemo(() => {
-  const gross = n2(totals?.total_amount) + n2(totals?.previous_balance);
+  // ✅ Pagination rules:
+  // <=7  : page1 items + footer
+  // 8-14 : page1 items only, page2 footer only
+  // >=15 : page1 first 15, page2 remaining + footer
+  const count = docItems.length;
 
-  if (totals?.balance_remaining !== null && totals?.balance_remaining !== undefined) {
-    return Math.max(0, n2(totals.balance_remaining));
-  }
+  const page1Items = useMemo(() => {
+    if (count <= 14) return docItems;
+    return docItems.slice(0, 15);
+  }, [count, docItems]);
 
-  return Math.max(0, gross - n2(totals?.amount_paid));
-}, [totals?.total_amount, totals?.previous_balance, totals?.amount_paid, totals?.balance_remaining]);
+  const page2Items = useMemo(() => {
+    if (count <= 14) return [];
+    return docItems.slice(15);
+  }, [count, docItems]);
 
+  const hasPage2 = count >= 8;
+  const totalPages = hasPage2 ? 2 : 1;
 
-  const splitFooterToSecondPage = docItems.length >= 7;
-  const totalPages = splitFooterToSecondPage ? 2 : 1;
+  const poLabel =
+    variant === "QUOTATION"
+      ? txt(purchaseOrderLabel) || "VALID UNTIL:"
+      : "PO. No :";
 
   const HeaderBlock = (
     <div className="rpdoc-header">
@@ -494,7 +511,11 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
       </div>
 
       <div className="rpdoc-box">
-        <div className="rpdoc-boxHead">BRN: {txt(company?.brn) || "-"}</div>
+        <div className="rpdoc-boxHead">
+          BRN: {txt(company?.brn) || "-"}
+          <span className="rpdoc-dot">•</span>
+          VAT NO: {txt(company?.vat_no) || "-"}
+        </div>
         <div className="rpdoc-boxBody">
           <div className="rpdoc-kv">
             <div className="k">{docNoLabel}</div>
@@ -505,10 +526,11 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
             <div className="v">{txt(dateValue)}</div>
           </div>
           <div className="rpdoc-kv">
-            <div className="k">{purchaseOrderLabel}</div>
+            <div className="k">{poLabel}</div>
             <div className="v">{txt(purchaseOrderValue)}</div>
           </div>
 
+          {/* ✅ Sales rep MUST show */}
           <div className="rpdoc-kv">
             <div className="k">Sales Rep :</div>
             <div className="v">{txt(salesRepName)}</div>
@@ -522,14 +544,25 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
     </div>
   );
 
-  const FooterBlock = (
+  // Page 1 footer only when <=7
+  const Page1Footer = count <= 7 ? (
     <div className="rpdoc-footerRegion">
-      <NotesTotals totals={totals} balanceRemaining={balanceRemaining} />
+      <NotesTotals totals={totals} />
       <div className="rpdoc-signaturesWrap">
         <Signatures preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
       </div>
     </div>
-  );
+  ) : null;
+
+  // Page 2 footer always when page2 exists
+  const Page2Footer = hasPage2 ? (
+    <div className="rpdoc-footerRegion rpdoc-footerInline">
+      <NotesTotals totals={totals} />
+      <div className="rpdoc-signaturesWrap">
+        <Signatures preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+      </div>
+    </div>
+  ) : null;
 
   const Page1 = (
     <section className="rpdoc-page">
@@ -540,18 +573,32 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
         {BoxesBlock}
 
         <div className="rpdoc-tableWrap">
-          <ItemsTable items={docItems} />
+          <ItemsTable items={page1Items} />
         </div>
 
-        {!splitFooterToSecondPage ? FooterBlock : null}
+        {Page1Footer}
       </div>
     </section>
   );
 
-  const Page2 = splitFooterToSecondPage ? (
+  const Page2 = hasPage2 ? (
     <section className="rpdoc-page">
       <div className="rpdoc-pageNumber">Page 2 / {totalPages}</div>
-      <div className="rpdoc-frame">{FooterBlock}</div>
+
+      <div className="rpdoc-frame">
+        {/* 8-14: footer only */}
+        {count <= 14 ? (
+          Page2Footer
+        ) : (
+          <>
+            {/* >=15: remaining items + footer */}
+            <div className="rpdoc-tableWrap">
+              <ItemsTable items={page2Items} />
+            </div>
+            {Page2Footer}
+          </>
+        )}
+      </div>
     </section>
   ) : null;
 
@@ -562,5 +609,4 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
     </div>
   );
 }
-
 

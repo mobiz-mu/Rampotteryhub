@@ -17,21 +17,53 @@ import publicQuotationPrint from "./routes/publicQuotationPrint";
 /* =========================
    Types
 ========================= */
-type RpUserHeader = { id?: number; username?: string; role?: string; name?: string };
-type RpUserDb = { id: number; username: string; role: string; is_active: boolean; permissions: any };
+type RpUserHeader = {
+  id?: number | string;
+  user_id?: string;
+  username?: string;
+  role?: string;
+  name?: string;
+};
+
+type RpUserDb = {
+  id: number;
+  user_id: string | null;
+  username: string;
+  role: string;
+  is_active: boolean;
+  permissions: any;
+};
+
 
 /* =========================
    Auth (REAL) — validate rp_users
 ========================= */
+
+function looksLikeUuid(v: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
 function parseUserHeader(raw: string | null): RpUserHeader | null {
   if (!raw) return null;
-  try {
-    const obj = JSON.parse(raw);
-    if (!obj) return null;
-    return obj;
-  } catch {
-    return null;
+  const txt = String(raw).trim();
+  if (!txt) return null;
+
+  // JSON header
+  if (txt.startsWith("{") && txt.endsWith("}")) {
+    try {
+      return JSON.parse(txt);
+    } catch {
+      return null;
+    }
   }
+
+  // plain UUID
+  if (looksLikeUuid(txt)) {
+    return { user_id: txt };
+  }
+
+  // plain username
+  return { username: txt };
 }
 
 async function resolveUser(req: express.Request): Promise<RpUserDb | null> {
@@ -40,11 +72,11 @@ async function resolveUser(req: express.Request): Promise<RpUserDb | null> {
 
   const supabase = supaAdmin();
 
-  // Prefer numeric id (recommended)
+  // 1) Prefer numeric id (rp_users.id)
   if (header.id && Number.isFinite(Number(header.id))) {
     const { data, error } = await supabase
       .from("rp_users")
-      .select("id, username, role, is_active, permissions")
+      .select("id,user_id,username,role,is_active,permissions")
       .eq("id", Number(header.id))
       .eq("is_active", true)
       .single();
@@ -53,11 +85,24 @@ async function resolveUser(req: express.Request): Promise<RpUserDb | null> {
     return data as RpUserDb;
   }
 
-  // Fallback: username
+  // 2) Prefer UUID user_id (auth.users.id)
+  if (header.user_id) {
+    const { data, error } = await supabase
+      .from("rp_users")
+      .select("id,user_id,username,role,is_active,permissions")
+      .eq("user_id", String(header.user_id))
+      .eq("is_active", true)
+      .single();
+
+    if (error || !data) return null;
+    return data as RpUserDb;
+  }
+
+  // 3) Fallback username
   if (header.username) {
     const { data, error } = await supabase
       .from("rp_users")
-      .select("id, username, role, is_active, permissions")
+      .select("id,user_id,username,role,is_active,permissions")
       .eq("username", String(header.username))
       .eq("is_active", true)
       .single();
@@ -69,28 +114,44 @@ async function resolveUser(req: express.Request): Promise<RpUserDb | null> {
   return null;
 }
 
+
 function isAdmin(user: RpUserDb | null) {
   return String(user?.role || "").toLowerCase() === "admin";
 }
 
 async function requireUser(req: express.Request, res: express.Response) {
   const user = await resolveUser(req);
+
   if (!user) {
-    res.status(401).json({ ok: false, error: "Unauthorized" });
-    return null;
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized - missing or invalid x-rp-user header",
+    });
   }
+
   return user;
 }
 
 async function requireAdmin(req: express.Request, res: express.Response) {
-  const user = await requireUser(req, res);
-  if (!user) return null;
-  if (!isAdmin(user)) {
-    res.status(403).json({ ok: false, error: "Forbidden" });
-    return null;
+  const user = await resolveUser(req);
+
+  if (!user) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized - missing or invalid x-rp-user header",
+    });
   }
+
+  if (!isAdmin(user)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Forbidden - admin only",
+    });
+  }
+
   return user;
 }
+
 
 /* =========================
    Helpers

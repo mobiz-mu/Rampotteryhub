@@ -200,3 +200,11 @@
 }
 
 
+/* Radix Dialog: ensure overlay is behind content */
+[data-radix-dialog-overlay] { z-index: 50 !important; }
+[data-radix-dialog-content] { z-index: 60 !important; }
+
+
+main { -webkit-overflow-scrolling: touch; }
+
+
