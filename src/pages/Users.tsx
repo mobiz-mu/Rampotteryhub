@@ -22,14 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -245,19 +238,29 @@ async function safeJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+/** ✅ Always hit Express (avoid Vite returning index.html) */
+const API_BASE =
+  ((import.meta as any).env?.VITE_API_BASE ? String((import.meta as any).env.VITE_API_BASE) : "").trim() || "";
+
+function apiUrl(path: string) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  if (!API_BASE) return p; // if you use Vite proxy, this works
+  return API_BASE.replace(/\/$/, "") + p;
+}
+
 async function safeGetJson<T>(url: string, rpUserHeader?: string): Promise<T> {
   const rp = s(rpUserHeader) || s(getRpUserHeaderFromStorage());
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetch(apiUrl(url), {
       method: "GET",
       headers: {
         ...(rp ? { "x-rp-user": rp } : {}),
       },
     });
   } catch {
-    throw new ApiError("API not reachable. Start backend: `npm run dev:server` (and keep Vite running).", 0);
+    throw new ApiError("API not reachable. Start backend: `npm run dev:server`.", 0);
   }
 
   return safeJson<T>(res);
@@ -268,7 +271,7 @@ async function safePostJson<T>(url: string, payload: any, rpUserHeader?: string)
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetch(apiUrl(url), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -277,7 +280,7 @@ async function safePostJson<T>(url: string, payload: any, rpUserHeader?: string)
       body: JSON.stringify(payload),
     });
   } catch {
-    throw new ApiError("API not reachable. Start backend: `npm run dev:server` (and keep Vite running).", 0);
+    throw new ApiError("API not reachable. Start backend: `npm run dev:server`.", 0);
   }
 
   return safeJson<T>(res);
@@ -299,13 +302,11 @@ async function apiListUsers(rpUserHeader?: string): Promise<UserRow[]> {
       role,
       is_active: typeof u.is_active === "boolean" ? u.is_active : true,
       permissions: sanitizePerms(u.permissions || presetForRole(role)),
-      created_at: String(u.created_at || new Date().toISOString()),
+      created_at: String(u.created_at || ""),
     } as UserRow;
   });
 
-  // stable ordering
   users.sort((a, b) => (a.full_name || a.email || "").localeCompare(b.full_name || b.email || ""));
-
   return users;
 }
 
@@ -418,9 +419,6 @@ function PermissionMatrix({
   );
 }
 
-/* =========================
-   Role change confirmation dialog
-========================= */
 function RoleResetConfirmDialog({
   open,
   onOpenChange,
@@ -480,7 +478,12 @@ export default function Users() {
   const myUserId: string = auth?.user?.id || "";
 
   // ✅ must be UUID for Express validation
-  const rpHeader = auth?.user?.id || "";
+  const rpHeader =
+    auth?.user?.id ||
+    localStorage.getItem("x-rp-user") ||
+    localStorage.getItem("rp_user") ||
+    localStorage.getItem("rp-user") ||
+    "";
 
   // filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -518,13 +521,10 @@ export default function Users() {
   const [confirmCtx, setConfirmCtx] = useState<"create" | "edit">("create");
   const [pendingRole, setPendingRole] = useState<AppRole>("viewer");
 
-  /* =========================
-     DATA
-  ========================= */
   const usersQ = useQuery({
     queryKey: ["admin_users_list"],
     queryFn: () => apiListUsers(rpHeader),
-    enabled: isAdmin,
+    enabled: isAdmin && !!s(rpHeader),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
   });
@@ -579,9 +579,6 @@ export default function Users() {
     await usersQ.refetch();
   };
 
-  /* =========================
-     KPIs + filtering
-  ========================= */
   const kpis = useMemo(() => {
     const byRole = (r: AppRole) => rows.filter((u) => u.role === r).length;
     const active = rows.filter((u) => u.is_active).length;
@@ -608,9 +605,6 @@ export default function Users() {
       });
   }, [rows, searchQuery, roleFilter]);
 
-  /* =========================
-     Dialog open helpers
-  ========================= */
   const openCreateDialog = () => {
     if (!isAdmin) return;
     setTempPwd("");
@@ -640,9 +634,6 @@ export default function Users() {
     setOpenDelete(true);
   };
 
-  /* =========================
-     Role change confirm
-  ========================= */
   const requestRoleChange = (ctx: "create" | "edit", next: AppRole) => {
     const current = ctx === "create" ? cRole : eRole;
     if (next === current) return;
@@ -662,9 +653,6 @@ export default function Users() {
     }
   };
 
-  /* =========================
-     Actions
-  ========================= */
   const handleCreate = async () => {
     if (!isAdmin) return toast({ title: "Forbidden", description: "Admin only", variant: "destructive" });
 
@@ -736,9 +724,6 @@ export default function Users() {
     deleteM.mutate(deleteTarget.user_id);
   };
 
-  /* =========================
-     SECURE UI GUARD
-  ========================= */
   if (!isAdmin) {
     return (
       <div className="space-y-6">
@@ -777,7 +762,6 @@ export default function Users() {
         onConfirm={applyRoleChange}
       />
 
-      {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="min-w-0">
           <div className="text-3xl font-bold text-foreground tracking-tight">Users & Permissions</div>
@@ -797,7 +781,6 @@ export default function Users() {
         </div>
       </div>
 
-      {/* KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Card className="shadow-premium">
           <CardContent className="p-4">
@@ -819,7 +802,6 @@ export default function Users() {
         ))}
       </div>
 
-      {/* Register */}
       <Card className="shadow-premium overflow-hidden">
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -864,8 +846,8 @@ export default function Users() {
                 {(usersQ.error as any)?.message || "Unknown error"}
               </div>
               <div className="mt-3 text-xs text-muted-foreground">
-                This page now loads from <b>/api/admin/users/list</b>. If it fails: check <b>npm run dev:server</b> and the
-                <b> x-rp-user</b> header exists in localStorage.
+                If it fails, confirm <b>VITE_API_BASE</b> points to Express (http://localhost:3001) and header exists in{" "}
+                <b>localStorage.x-rp-user</b>.
               </div>
             </div>
           ) : loading ? (
@@ -997,8 +979,7 @@ export default function Users() {
           )}
 
           <div className="mt-4 text-xs text-muted-foreground">
-            Admin mutations go through <b>/api/admin/users/*</b>. If you see “API not reachable”, start{" "}
-            <b>npm run dev:server</b>.
+            Admin mutations go through <b>/api/admin/users/*</b>. Backend must be running: <b>npm run dev:server</b>.
           </div>
         </CardContent>
       </Card>
@@ -1133,11 +1114,7 @@ export default function Users() {
             <Button variant="outline" onClick={() => setOpenCreate(false)} disabled={createM.isPending}>
               Cancel
             </Button>
-            <Button
-              className="bg-red-600 text-white hover:bg-red-700"
-              onClick={handleCreate}
-              disabled={createM.isPending}
-            >
+            <Button className="bg-red-600 text-white hover:bg-red-700" onClick={handleCreate} disabled={createM.isPending}>
               {createM.isPending ? "Creating..." : "Create User"}
             </Button>
           </DialogFooter>
