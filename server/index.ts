@@ -254,9 +254,13 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: ["http://localhost:8080"],
-    credentials: true,
-  })
+  origin: [
+    "http://localhost:8080",
+    "https://rampotteryhub.com",
+    "https://www.rampotteryhub.com"
+  ],
+  credentials: true,
+})
 );
 
 app.use((req, _res, next) => {
