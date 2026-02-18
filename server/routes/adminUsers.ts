@@ -1,4 +1,3 @@
-
 // server/routes/adminUsers.ts
 import { Router } from "express";
 import { supaAdmin } from "../supabaseAdmin";
@@ -107,8 +106,10 @@ export function adminUsersRouter(opts: {
         .upsert({ id: user_id, full_name, role }, { onConflict: "id" });
 
       if (pErr) {
-        // rollback auth user to avoid orphans
-        await sb.auth.admin.deleteUser(user_id).catch(() => {});
+        // rollback auth user to avoid orphans (best-effort)
+        try {
+          await sb.auth.admin.deleteUser(user_id);
+        } catch {}
         return res.status(400).json({ ok: false, error: pErr.message });
       }
 
@@ -126,9 +127,13 @@ export function adminUsersRouter(opts: {
       );
 
       if (rErr) {
-        // rollback profile + auth to avoid half-created users
-        await sb.from("profiles").delete().eq("id", user_id).catch(() => {});
-        await sb.auth.admin.deleteUser(user_id).catch(() => {});
+        // rollback profile + auth to avoid half-created users (best-effort)
+        try {
+          await sb.from("profiles").delete().eq("id", user_id);
+        } catch {}
+        try {
+          await sb.auth.admin.deleteUser(user_id);
+        } catch {}
         return res.status(400).json({ ok: false, error: rErr.message });
       }
 
@@ -162,23 +167,19 @@ export function adminUsersRouter(opts: {
 
       const sb = supaAdmin();
 
-      const { data: profiles, error: pErr } = await sb
-        .from("profiles")
-        .select("id, role, full_name, created_at");
-
+      const { data: profiles, error: pErr } = await sb.from("profiles").select("id, role, full_name, created_at");
       if (pErr) return res.status(400).json({ ok: false, error: pErr.message });
 
       const { data: rpUsers, error: rErr } = await sb
         .from("rp_users")
         .select("user_id, username, name, role, permissions, is_active, created_at");
-
       if (rErr) return res.status(400).json({ ok: false, error: rErr.message });
 
       const pMap = new Map<string, any>();
       (profiles || []).forEach((p: any) => p?.id && pMap.set(p.id, p));
 
       const rpMap = new Map<string, any>();
-      (rpUsers || []).forEach((r: any) => r?.user_id && rpMap.set(r.user_id, r));
+      (rpUsers || []).forEach((u: any) => u?.user_id && rpMap.set(u.user_id, u));
 
       // union of ids (profiles.id + rp_users.user_id)
       const ids = new Set<string>();
@@ -238,11 +239,9 @@ export function adminUsersRouter(opts: {
         return res.status(400).json({ ok: false, error: "Invalid role" });
       }
 
-      const nextName =
-        typeof req.body?.full_name === "undefined" ? undefined : (s(req.body.full_name) || null);
+      const nextName = typeof req.body?.full_name === "undefined" ? undefined : (s(req.body.full_name) || null);
 
-      const nextActive =
-        typeof req.body?.is_active === "undefined" ? undefined : !!req.body.is_active;
+      const nextActive = typeof req.body?.is_active === "undefined" ? undefined : !!req.body.is_active;
 
       const nextPerms =
         typeof req.body?.permissions === "undefined" ? undefined : sanitizePerms(req.body.permissions);
@@ -252,6 +251,7 @@ export function adminUsersRouter(opts: {
         const patchP: any = {};
         if (typeof nextRole !== "undefined") patchP.role = nextRole;
         if (typeof nextName !== "undefined") patchP.full_name = nextName;
+
         const { error } = await sb.from("profiles").update(patchP).eq("id", user_id);
         // profiles row may not exist: don't hard-fail; just warn
         if (error) console.warn("profiles update warning:", error.message);
@@ -286,7 +286,14 @@ export function adminUsersRouter(opts: {
           event: "user.update",
           entity: "user",
           entity_id: user_id,
-          meta: { changed: { role: nextRole, full_name: nextName, is_active: nextActive, reset_password: !!resetPwd } },
+          meta: {
+            changed: {
+              role: nextRole,
+              full_name: nextName,
+              is_active: nextActive,
+              reset_password: !!resetPwd,
+            },
+          },
         });
       } catch {}
 
@@ -337,3 +344,4 @@ export function adminUsersRouter(opts: {
 
   return r;
 }
+
