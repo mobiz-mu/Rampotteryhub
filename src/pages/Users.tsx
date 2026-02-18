@@ -135,9 +135,11 @@ function normalizeRole(v: any): AppRole {
   if (x === "admin" || x === "manager" || x === "accountant" || x === "sales" || x === "viewer") return x as AppRole;
   return "viewer";
 }
+
 function s(v: any) {
   return String(v ?? "").trim();
 }
+
 function isEmail(v: string) {
   const x = v.trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
@@ -206,6 +208,8 @@ function presetForRole(role: AppRole): Record<string, boolean> {
 
 /* =========================
    Hardened fetch helper
+   ✅ Use Vite proxy (recommended): /api -> http://localhost:3001
+   ✅ Avoid mixing proxy + VITE_API_BASE
 ========================= */
 function getRpUserHeaderFromStorage() {
   return localStorage.getItem("x-rp-user") || localStorage.getItem("rp_user") || localStorage.getItem("rp-user") || "";
@@ -238,14 +242,9 @@ async function safeJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-/** ✅ Always hit Express (avoid Vite returning index.html) */
-const API_BASE =
-  ((import.meta as any).env?.VITE_API_BASE ? String((import.meta as any).env.VITE_API_BASE) : "").trim() || "";
-
 function apiUrl(path: string) {
-  const p = path.startsWith("/") ? path : `/${path}`;
-  if (!API_BASE) return p; // if you use Vite proxy, this works
-  return API_BASE.replace(/\/$/, "") + p;
+  // Always relative so Vite proxy can forward /api to Express
+  return path.startsWith("/") ? path : `/${path}`;
 }
 
 async function safeGetJson<T>(url: string, rpUserHeader?: string): Promise<T> {
@@ -259,9 +258,9 @@ async function safeGetJson<T>(url: string, rpUserHeader?: string): Promise<T> {
         ...(rp ? { "x-rp-user": rp } : {}),
       },
     });
-  } catch {
-    throw new ApiError("API not reachable. Start backend: `npm run dev:server`.", 0);
-  }
+  } catch (err: any) {
+  throw new ApiError(`API not reachable (network). URL: ${apiUrl(url)}. ${err?.message || ""}`.trim(), 0);
+}
 
   return safeJson<T>(res);
 }
@@ -477,13 +476,8 @@ export default function Users() {
   const isAdmin = !!auth?.isAdmin;
   const myUserId: string = auth?.user?.id || "";
 
-  // ✅ must be UUID for Express validation
-  const rpHeader =
-    auth?.user?.id ||
-    localStorage.getItem("x-rp-user") ||
-    localStorage.getItem("rp_user") ||
-    localStorage.getItem("rp-user") ||
-    "";
+  // must be UUID for Express validation
+  const rpHeader = auth?.user?.id || getRpUserHeaderFromStorage();
 
   // filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -521,6 +515,9 @@ export default function Users() {
   const [confirmCtx, setConfirmCtx] = useState<"create" | "edit">("create");
   const [pendingRole, setPendingRole] = useState<AppRole>("viewer");
 
+  /* =========================
+     DATA
+  ========================= */
   const usersQ = useQuery({
     queryKey: ["admin_users_list"],
     queryFn: () => apiListUsers(rpHeader),
@@ -579,6 +576,9 @@ export default function Users() {
     await usersQ.refetch();
   };
 
+  /* =========================
+     KPIs + filtering
+  ========================= */
   const kpis = useMemo(() => {
     const byRole = (r: AppRole) => rows.filter((u) => u.role === r).length;
     const active = rows.filter((u) => u.is_active).length;
@@ -605,6 +605,9 @@ export default function Users() {
       });
   }, [rows, searchQuery, roleFilter]);
 
+  /* =========================
+     Dialog open helpers
+  ========================= */
   const openCreateDialog = () => {
     if (!isAdmin) return;
     setTempPwd("");
@@ -634,6 +637,9 @@ export default function Users() {
     setOpenDelete(true);
   };
 
+  /* =========================
+     Role change confirm
+  ========================= */
   const requestRoleChange = (ctx: "create" | "edit", next: AppRole) => {
     const current = ctx === "create" ? cRole : eRole;
     if (next === current) return;
@@ -653,6 +659,9 @@ export default function Users() {
     }
   };
 
+  /* =========================
+     Actions
+  ========================= */
   const handleCreate = async () => {
     if (!isAdmin) return toast({ title: "Forbidden", description: "Admin only", variant: "destructive" });
 
@@ -724,6 +733,9 @@ export default function Users() {
     deleteM.mutate(deleteTarget.user_id);
   };
 
+  /* =========================
+     SECURE UI GUARD
+  ========================= */
   if (!isAdmin) {
     return (
       <div className="space-y-6">
@@ -762,6 +774,7 @@ export default function Users() {
         onConfirm={applyRoleChange}
       />
 
+      {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="min-w-0">
           <div className="text-3xl font-bold text-foreground tracking-tight">Users & Permissions</div>
@@ -781,6 +794,7 @@ export default function Users() {
         </div>
       </div>
 
+      {/* KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Card className="shadow-premium">
           <CardContent className="p-4">
@@ -802,6 +816,7 @@ export default function Users() {
         ))}
       </div>
 
+      {/* Register */}
       <Card className="shadow-premium overflow-hidden">
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -846,10 +861,10 @@ export default function Users() {
                 {(usersQ.error as any)?.message || "Unknown error"}
               </div>
               <div className="mt-3 text-xs text-muted-foreground">
-                If it fails, confirm <b>VITE_API_BASE</b> points to Express (http://localhost:3001) and header exists in{" "}
-                <b>localStorage.x-rp-user</b>.
-              </div>
+                API calls use <b>/api</b> (local via Vite proxy, production via Vercel rewrite to Render). Ensure{" "}
+                <b>localStorage.x-rp-user</b> contains your UUID and your user has <b>admin</b> role in <b>rp_users</b>.
             </div>
+           </div>
           ) : loading ? (
             <div className="text-center py-10 text-muted-foreground">Loading users…</div>
           ) : filtered.length === 0 ? (
@@ -1253,4 +1268,5 @@ export default function Users() {
     </div>
   );
 }
+
 
