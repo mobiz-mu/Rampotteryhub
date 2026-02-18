@@ -1,6 +1,7 @@
 // server/routes/adminUsers.ts
 import { Router } from "express";
-import { supaAdmin } from "../supabaseAdmin";
+import { supaAdmin } from "../supabaseAdmin.js";
+
 
 type AppRole = "admin" | "manager" | "accountant" | "sales" | "viewer";
 

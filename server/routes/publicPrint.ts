@@ -1,6 +1,6 @@
 // server/routes/publicPrint.ts
 import express from "express";
-import { supaAdmin } from "../supabaseAdmin";
+import { supaAdmin } from "../supabaseAdmin.js";
 
 const router = express.Router();
 

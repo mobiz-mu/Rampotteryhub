@@ -1,6 +1,6 @@
 // server/routes/publicQuotations.ts
 import { Router } from "express";
-import { supaAdmin } from "../supabaseAdmin";
+import { supaAdmin } from "../supabaseAdmin.js";
 
 const r = Router();
 

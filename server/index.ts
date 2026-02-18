@@ -3,16 +3,17 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 
-import publicPrint from "./routes/publicPrint";
-import { supaAdmin } from "./supabaseAdmin"; // ✅ KEEP this (single source of truth)
+import publicPrint from "./routes/publicPrint.js";
+import { supaAdmin } from "./supabaseAdmin.js"; // ✅ KEEP this (single source of truth)
 
-import { adminUsersRouter } from "./routes/adminUsers";
-import { publicLinksRouter } from "./routes/publicLinks";
-import publicRoutes from "./routes/public";
+import { adminUsersRouter } from "./routes/adminUsers.js";
+import { publicLinksRouter } from "./routes/publicLinks.js";
+import publicRoutes from "./routes/public.js";
 
-import quotationsRouter from "./routes/quotations";
-import publicQuotations from "./routes/publicQuotations";
-import publicQuotationPrint from "./routes/publicQuotationPrint";
+import quotationsRouter from "./routes/quotations.js";
+import publicQuotations from "./routes/publicQuotations.js";
+import publicQuotationPrint from "./routes/publicQuotationPrint.js";
+
 
 /* =========================
    Types

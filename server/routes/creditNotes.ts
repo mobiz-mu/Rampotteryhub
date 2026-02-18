@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { supaAdmin } from "../supabaseAdmin";
+import { supaAdmin } from "../supabaseAdmin.js";
 import crypto from "crypto";
 
 

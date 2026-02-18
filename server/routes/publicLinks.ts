@@ -1,7 +1,7 @@
 // server/routes/publicLinks.ts
 import express from "express";
 import crypto from "crypto";
-import { supaAdmin } from "../supabaseAdmin";
+import { supaAdmin } from "../supabaseAdmin.js";
 
 export function publicLinksRouter(opts: {
   requireUser: (req: express.Request, res: express.Response) => Promise<any | null>;
