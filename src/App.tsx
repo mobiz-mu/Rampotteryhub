@@ -2,6 +2,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
+import RequirePermission from "@/components/auth/RequirePermission";
+
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -43,7 +45,6 @@ import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import NotFound from "./pages/NotFound";
 
-// ✅ ADD THESE (adjust paths if your files differ)
 import AgingReport from "./pages/AgingReport";
 import StatementPrint from "./pages/StatementPrint";
 
@@ -64,7 +65,6 @@ export default function App() {
 
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthProvider>
-            {/* Inside router context */}
             <WhatsAppFab />
 
             <Routes>
@@ -80,8 +80,6 @@ export default function App() {
               <Route path="/invoices/:id/print" element={<InvoicePrint />} />
               <Route path="/credit-notes/:id/print" element={<CreditNotePrint />} />
               <Route path="/quotations/:id/print" element={<QuotationPrint />} />
-
-              {/* If you want statement print public too, move it here instead of inside Protected */}
               {/* <Route path="/statement/print" element={<StatementPrint />} /> */}
 
               {/* =========================
@@ -96,52 +94,218 @@ export default function App() {
                 }
               >
                 <Route index element={<Navigate to="/dashboard" replace />} />
+
+                {/* Dashboard (leave open to any logged-in user) */}
                 <Route path="dashboard" element={<Dashboard />} />
 
-                {/* Invoices (protected) */}
-                <Route path="invoices" element={<Invoices />} />
-                <Route path="invoices/create" element={<InvoiceCreate />} />
-                <Route path="invoices/:id" element={<InvoiceView />} />
-
-                {/* Credit Notes (protected) */}
-                <Route path="credit-notes" element={<CreditNotes />} />
-                <Route path="credit-notes/create" element={<CreditNoteCreate />} />
-                <Route path="credit-notes/:id" element={<CreditNoteView />} />
-
-                {/* Quotations (protected) */}
-                <Route path="quotations" element={<Quotation />} />
-                <Route path="quotations/new" element={<QuotationCreate />} />
-                <Route path="quotations/create" element={<QuotationCreate />} />
-                <Route path="quotations/:id" element={<QuotationView />} />
-
-                {/* Stock (protected) */}
-                <Route path="stock" element={<Stock />} />
-                <Route path="categories" element={<Categories />} />
-                <Route path="stock-movements" element={<StockMovements />} />
-
-                {/* Parties (protected) */}
-                <Route path="customers" element={<Customers />} />
-                <Route path="suppliers" element={<Suppliers />} />
-                <Route path="ap/bills" element={<SupplierBills />} />
-                <Route path="ap/payments" element={<SupplierPayments />} />
-                <Route path="/suppliers" element={<Suppliers />} />
-                <Route path="/suppliers/new" element={<Suppliers />} />
-
-                {/* ✅ FIX: make these relative since they’re inside "/" shell */}
-                <Route path="aging" element={<AgingReport />} />
-                <Route path="statement/print" element={<StatementPrint />} />
-
-                {/* Reports (role restricted) */}
+                {/* =========================
+                    AR (Customers / Invoices)
+                    - view: ar.view
+                    - create/edit: ar.invoices
+                ========================== */}
                 <Route
-                  path="reports"
+                  path="invoices"
                   element={
-                    <ProtectedRoute allowRoles={["admin", "manager", "accountant"]}>
-                      <Reports />
-                    </ProtectedRoute>
+                    <RequirePermission perm="ar.view">
+                      <Invoices />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="invoices/create"
+                  element={
+                    <RequirePermission perm="ar.invoices">
+                      <InvoiceCreate />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="invoices/:id"
+                  element={
+                    <RequirePermission perm="ar.view">
+                      <InvoiceView />
+                    </RequirePermission>
                   }
                 />
 
-                {/* Users (admin only) */}
+                <Route
+                  path="credit-notes"
+                  element={
+                    <RequirePermission perm="ar.view">
+                      <CreditNotes />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="credit-notes/create"
+                  element={
+                    <RequirePermission perm="ar.invoices">
+                      <CreditNoteCreate />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="credit-notes/:id"
+                  element={
+                    <RequirePermission perm="ar.view">
+                      <CreditNoteView />
+                    </RequirePermission>
+                  }
+                />
+
+                <Route
+                  path="quotations"
+                  element={
+                    <RequirePermission perm="ar.view">
+                      <Quotation />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="quotations/new"
+                  element={
+                    <RequirePermission perm="ar.invoices">
+                      <QuotationCreate />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="quotations/create"
+                  element={
+                    <RequirePermission perm="ar.invoices">
+                      <QuotationCreate />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="quotations/:id"
+                  element={
+                    <RequirePermission perm="ar.view">
+                      <QuotationView />
+                    </RequirePermission>
+                  }
+                />
+
+                {/* =========================
+                    Stock
+                    - view: stock.view
+                    - edit: stock.edit (if you later want to restrict create/edit screens)
+                ========================== */}
+                <Route
+                  path="stock"
+                  element={
+                    <RequirePermission perm="stock.view">
+                      <Stock />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="categories"
+                  element={
+                    <RequirePermission perm="stock.view">
+                      <Categories />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="stock-movements"
+                  element={
+                    <RequirePermission perm="stock.view">
+                      <StockMovements />
+                    </RequirePermission>
+                  }
+                />
+
+                {/* =========================
+                    Parties
+                    - customers: customers.view
+                    - suppliers/AP: ap.view / ap.bills / ap.payments
+                ========================== */}
+                <Route
+                  path="customers"
+                  element={
+                    <RequirePermission perm="customers.view">
+                      <Customers />
+                    </RequirePermission>
+                  }
+                />
+
+                <Route
+                  path="suppliers"
+                  element={
+                    <RequirePermission perm="ap.view">
+                      <Suppliers />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="ap/bills"
+                  element={
+                    <RequirePermission perm="ap.bills">
+                      <SupplierBills />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="ap/payments"
+                  element={
+                    <RequirePermission perm="ap.payments">
+                      <SupplierPayments />
+                    </RequirePermission>
+                  }
+                />
+
+                {/* (Optional duplicates — keep if you rely on them) */}
+                <Route
+                  path="/suppliers"
+                  element={
+                    <RequirePermission perm="ap.view">
+                      <Suppliers />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="/suppliers/new"
+                  element={
+                    <RequirePermission perm="ap.view">
+                      <Suppliers />
+                    </RequirePermission>
+                  }
+                />
+
+                {/* =========================
+                    Reports / Statements
+                ========================== */}
+                <Route
+                  path="reports"
+                  element={
+                    <RequirePermission perm="reports.view">
+                      <Reports />
+                    </RequirePermission>
+                  }
+                />
+
+                <Route
+                  path="aging"
+                  element={
+                    <RequirePermission perm="reports.view">
+                      <AgingReport />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="statement/print"
+                  element={
+                    <RequirePermission perm="reports.view">
+                      <StatementPrint />
+                    </RequirePermission>
+                  }
+                />
+
+                {/* =========================
+                    Users & Permissions
+                    - keep admin-only OR switch to perm key users.manage
+                ========================== */}
                 <Route
                   path="users"
                   element={
@@ -150,6 +314,16 @@ export default function App() {
                     </ProtectedRoute>
                   }
                 />
+                {/* If you prefer permission-based instead, use this and remove admin-only route above:
+                <Route
+                  path="users"
+                  element={
+                    <RequirePermission perm="users.manage">
+                      <Users />
+                    </RequirePermission>
+                  }
+                />
+                */}
               </Route>
 
               {/* Fallback */}
@@ -161,4 +335,3 @@ export default function App() {
     </QueryClientProvider>
   );
 }
-

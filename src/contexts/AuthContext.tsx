@@ -70,6 +70,17 @@ function normRole(v: any): AppRole {
   return "viewer";
 }
 
+async function fetchRpMe(userId: string) {
+  const res = await fetch("/api/auth/me", {
+    method: "GET",
+    credentials: "include",
+    headers: { "x-rp-user": userId },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json?.ok) throw new Error(json?.error || `Auth me failed (${res.status})`);
+  return json.user;
+}
+
 function normPerms(v: any): PermissionsMap {
   if (!v || typeof v !== "object") return {};
   return v as PermissionsMap;
@@ -147,63 +158,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /* =====================================================
-     3️⃣ Load rp_users profile (authority layer)
-  ===================================================== */
+   3️⃣ Load authority profile via backend (avoids RLS issues)
+===================================================== */
+useEffect(() => {
+  let alive = true;
 
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      try {
-        if (!user?.id) {
-          if (alive) {
-            setProfile(null);
-            setProfileLoading(false);
-          }
-          return;
-        }
-
-        if (alive) setProfileLoading(true);
-
-        const { data, error } = await supabase
-          .from("rp_users")
-          .select("*")
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        if (!alive) return;
-
-        if (error) {
-          console.warn("rp_users load error:", error.message);
+  (async () => {
+    try {
+      if (!user?.id) {
+        if (alive) {
           setProfile(null);
-          return;
+          setProfileLoading(false);
         }
-
-        if (!data) {
-          // Auth user exists but no rp_users row
-          setProfile(null);
-          return;
-        }
-
-        if (data.is_active === false) {
-          await supabase.auth.signOut();
-          setProfile(null);
-          return;
-        }
-
-        setProfile(data);
-      } catch (e) {
-        console.error("rp_users load crash:", e);
-        if (alive) setProfile(null);
-      } finally {
-        if (alive) setProfileLoading(false);
+        return;
       }
-    })();
 
-    return () => {
-      alive = false;
-    };
-  }, [user?.id]);
+      if (alive) setProfileLoading(true);
+
+      const me = await fetchRpMe(user.id);
+
+      if (!alive) return;
+
+      if (me?.is_active === false) {
+        await supabase.auth.signOut();
+        setProfile(null);
+        return;
+      }
+
+      setProfile(me);
+    } catch (e: any) {
+      console.warn("auth/me load error:", e?.message || e);
+      if (alive) setProfile(null);
+    } finally {
+      if (alive) setProfileLoading(false);
+    }
+  })();
+
+  return () => {
+    alive = false;
+  };
+}, [user?.id]);
 
   /* =====================================================
      Auth actions

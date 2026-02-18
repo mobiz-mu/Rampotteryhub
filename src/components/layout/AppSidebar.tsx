@@ -27,50 +27,9 @@ interface NavItem {
   title: string;
   href?: string;
   icon: ComponentType<{ className?: string }>;
-  children?: { title: string; href: string }[];
-  adminOnly?: boolean;
+  children?: { title: string; href: string; show?: boolean }[];
+  show?: boolean;
 }
-
-const navigation: NavItem[] = [
-  { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  {
-    title: "Invoices",
-    icon: FileText,
-    children: [
-      { title: "All Invoices", href: "/invoices" },
-      { title: "Create Invoice", href: "/invoices/create" },
-    ],
-  },
-  {
-    title: "Credit Notes",
-    icon: FileMinus,
-    children: [
-      { title: "All Credit Notes", href: "/credit-notes" },
-      { title: "Create Credit Note", href: "/credit-notes/create" },
-    ],
-  },
-  {
-    title: "Quotations",
-    icon: FileQuestion,
-    children: [
-      { title: "All Quotations", href: "/quotations" },
-      { title: "Create Quotation", href: "/quotations/create" },
-    ],
-  },
-  {
-    title: "Stock & Categories",
-    icon: Package,
-    children: [
-      { title: "Stock Items", href: "/stock" },
-      { title: "Categories", href: "/categories" },
-    ],
-  },
-  { title: "Stock Movements", href: "/stock-movements", icon: ArrowLeftRight },
-  { title: "Customers", href: "/customers", icon: Users },
-  { title: "Suppliers", href: "/suppliers", icon: Truck },
-  { title: "Reports", href: "/reports", icon: BarChart3 },
-  { title: "Users & Permissions", href: "/users", icon: Shield, adminOnly: true },
-];
 
 function normalizePath(pathname: string) {
   return pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
@@ -86,7 +45,7 @@ function getActiveGroupTitles(items: NavItem[], pathname: string) {
   const active: string[] = [];
   for (const item of items) {
     if (!item.children) continue;
-    if (item.children.some((c) => isInside(pathname, c.href))) active.push(item.title);
+    if (item.children.some((c) => c.show !== false && isInside(pathname, c.href))) active.push(item.title);
   }
   return active;
 }
@@ -99,9 +58,90 @@ function titleCase(s: string) {
 
 export function AppSidebar() {
   const location = useLocation();
-  const { profile, role, isAdmin, user, signOut } = useAuth() as any;
+  const auth: any = useAuth();
 
-  const nav = useMemo(() => navigation.filter((i) => (!i.adminOnly ? true : !!isAdmin)), [isAdmin]);
+  const { profile, role, isAdmin, user, signOut } = auth;
+
+  // Prefer fine-grained permissions; admin always sees everything
+  const can = (key: string) => (typeof auth?.can === "function" ? auth.can(key) : false) || !!isAdmin;
+
+  const navigation: NavItem[] = useMemo(
+    () => [
+      { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard, show: true },
+
+      {
+        title: "Invoices",
+        icon: FileText,
+        show: can("ar.view"),
+        children: [
+          { title: "All Invoices", href: "/invoices", show: can("ar.view") },
+          { title: "Create Invoice", href: "/invoices/create", show: can("ar.invoices") },
+        ],
+      },
+
+      {
+        title: "Credit Notes",
+        icon: FileMinus,
+        show: can("ar.view"),
+        children: [
+          { title: "All Credit Notes", href: "/credit-notes", show: can("ar.view") },
+          { title: "Create Credit Note", href: "/credit-notes/create", show: can("ar.invoices") },
+        ],
+      },
+
+      {
+        title: "Quotations",
+        icon: FileQuestion,
+        show: can("ar.view"),
+        children: [
+          { title: "All Quotations", href: "/quotations", show: can("ar.view") },
+          { title: "Create Quotation", href: "/quotations/create", show: can("ar.invoices") },
+        ],
+      },
+
+      {
+        title: "Stock & Categories",
+        icon: Package,
+        show: can("stock.view"),
+        children: [
+          { title: "Stock Items", href: "/stock", show: can("stock.view") },
+          { title: "Categories", href: "/categories", show: can("stock.view") },
+        ],
+      },
+
+      { title: "Stock Movements", href: "/stock-movements", icon: ArrowLeftRight, show: can("stock.view") },
+
+      { title: "Customers", href: "/customers", icon: Users, show: can("customers.view") },
+
+      { title: "Suppliers", href: "/suppliers", icon: Truck, show: can("ap.view") },
+
+      { title: "Reports", href: "/reports", icon: BarChart3, show: can("reports.view") },
+
+      // Admin / users.manage
+      { title: "Users & Permissions", href: "/users", icon: Shield, show: isAdmin || can("users.manage") },
+    ],
+    [isAdmin, user?.id, profile?.role, profile?.permissions]
+  );
+
+  // Filter: remove hidden children and hidden groups
+  const nav = useMemo(() => {
+    const out: NavItem[] = [];
+
+    for (const item of navigation) {
+      if (item.show === false) continue;
+
+      if (item.children?.length) {
+        const kids = item.children.filter((c) => c.show !== false);
+        // If no children remain, drop the whole group
+        if (kids.length === 0) continue;
+        out.push({ ...item, children: kids });
+      } else {
+        out.push(item);
+      }
+    }
+
+    return out;
+  }, [navigation]);
 
   const routeOpen = useMemo(() => getActiveGroupTitles(nav, location.pathname), [nav, location.pathname]);
   const [manualOpen, setManualOpen] = useState<string[]>([]);
@@ -181,13 +221,8 @@ export function AppSidebar() {
       />
 
       <aside
-       style={{ transitionTimingFunction: "cubic-bezier(.2,.8,.2,1)" }}
-       className={cn(
-       sidebarBase,
-       "transition-transform duration-300",
-        mobileState,
-        desktopState
-     )}
+        style={{ transitionTimingFunction: "cubic-bezier(.2,.8,.2,1)" }}
+        className={cn(sidebarBase, "transition-transform duration-300", mobileState, desktopState)}
         aria-label="Sidebar"
       >
         <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-foreground/10 to-transparent" />
@@ -195,12 +230,7 @@ export function AppSidebar() {
         <div className="relative flex h-16 items-center gap-3 px-5 border-b border-sidebar-border">
           <div className="relative h-10 w-10 rounded-xl bg-background shadow-sm ring-1 ring-border overflow-hidden">
             <span className="pointer-events-none absolute inset-0 rp-logoShine" />
-            <img
-              src="/logo.png"
-              alt="Ram Pottery Ltd"
-              className="h-full w-full object-contain p-1.5"
-              draggable={false}
-            />
+            <img src="/logo.png" alt="Ram Pottery Ltd" className="h-full w-full object-contain p-1.5" draggable={false} />
           </div>
 
           <div className="flex flex-col leading-tight min-w-0">
@@ -237,9 +267,7 @@ export function AppSidebar() {
                           "transition-all duration-200",
                           "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                           "active:scale-[0.99]",
-                          isActive
-                            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-                            : "text-sidebar-foreground/80"
+                          isActive ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm" : "text-sidebar-foreground/80"
                         )
                       }
                     >
@@ -381,3 +409,4 @@ export function AppSidebar() {
     </>
   );
 }
+

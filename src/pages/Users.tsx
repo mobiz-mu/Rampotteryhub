@@ -521,7 +521,7 @@ export default function Users() {
   const usersQ = useQuery({
     queryKey: ["admin_users_list"],
     queryFn: () => apiListUsers(rpHeader),
-    enabled: isAdmin && !!s(rpHeader),
+    enabled: !!s(rpHeader),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
   });
@@ -736,7 +736,8 @@ export default function Users() {
   /* =========================
      SECURE UI GUARD
   ========================= */
-  if (!isAdmin) {
+  // ✅ Guard only on header existence (backend enforces admin)
+  if (!s(rpHeader)) {
     return (
       <div className="space-y-6">
         <Card className="shadow-premium overflow-hidden">
@@ -746,21 +747,24 @@ export default function Users() {
                 <Lock className="h-5 w-5 text-muted-foreground" />
               </div>
               <div>
-                <div className="text-xl font-semibold tracking-tight">Access denied</div>
-                <div className="text-sm text-muted-foreground">Only Admin can manage users and permissions.</div>
+                <div className="text-xl font-semibold tracking-tight">Unauthorized</div>
+                <div className="text-sm text-muted-foreground">
+                  Missing <b>x-rp-user</b>. Please sign in again.
+                </div>
               </div>
             </div>
           </div>
 
           <CardContent className="p-6">
             <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
-              Ask an administrator to grant you <b>users.manage</b> or switch your role to <b>Admin</b>.
+              If this keeps happening, clear site data and login again so the header is restored.
             </div>
           </CardContent>
         </Card>
       </div>
     );
   }
+
 
   const busy = loading || createM.isPending || updateM.isPending || deleteM.isPending;
 
