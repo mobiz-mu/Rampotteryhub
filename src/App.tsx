@@ -44,6 +44,8 @@ import SupplierPayments from "@/pages/ap/SupplierPayments";
 import Reports from "./pages/Reports";
 import Users from "./pages/Users";
 import NotFound from "./pages/NotFound";
+import CustomersNew from "@/pages/CustomersNew";
+
 
 import AgingReport from "./pages/AgingReport";
 import StatementPrint from "./pages/StatementPrint";
@@ -229,6 +231,15 @@ export default function App() {
                     </RequirePermission>
                   }
                 />
+
+                <Route
+                  path="customers/new"
+                  element={
+                    <RequirePermission perm="customers.view">
+                       <CustomersNew />
+                     </RequirePermission>
+                   }
+                 />
 
                 <Route
                   path="suppliers"

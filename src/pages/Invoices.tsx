@@ -34,6 +34,7 @@ import {
 import { listInvoices, markInvoicePaid, voidInvoice, setInvoicePayment } from "@/lib/invoices";
 import { useAuth } from "@/contexts/AuthContext";
 import type { InvoiceStatus } from "@/types/invoice";
+import { cn } from "@/lib/utils";
 
 /* =========================
    Helpers
@@ -44,8 +45,6 @@ const n = (v: any) => {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
 };
-
-const fmt2 = (v: any) => n(v).toFixed(2);
 
 const rs = (v: any) =>
   `Rs ${n(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -67,13 +66,12 @@ function statusLabel(st: string) {
   return st;
 }
 
-/** Premium status pills (more distinct & readable) */
 function statusPillClass(st: string) {
-  if (st === "PAID") return "bg-emerald-500/10 text-emerald-800 border-emerald-300";
-  if (st === "PARTIALLY_PAID") return "bg-amber-500/10 text-amber-900 border-amber-300";
-  if (st === "VOID") return "bg-slate-500/10 text-slate-700 border-slate-300";
-  if (st === "DRAFT") return "bg-zinc-500/10 text-zinc-800 border-zinc-300";
-  return "bg-blue-500/10 text-blue-900 border-blue-300"; // ISSUED
+  if (st === "PAID") return "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200";
+  if (st === "PARTIALLY_PAID") return "bg-amber-500/10 text-amber-900 dark:text-amber-200";
+  if (st === "VOID") return "bg-slate-500/10 text-slate-700 dark:text-slate-200";
+  if (st === "DRAFT") return "bg-zinc-500/10 text-zinc-800 dark:text-zinc-200";
+  return "bg-sky-500/10 text-sky-900 dark:text-sky-200";
 }
 
 function digitsOnly(v: any) {
@@ -86,9 +84,8 @@ function normalizeMuPhone(raw: any) {
   return "";
 }
 
-/** DD/MM/YYYY (Mauritius style) */
 function formatDateDMY(v: any) {
-  const s = String(v ?? "").slice(0, 10); // YYYY-MM-DD
+  const s = String(v ?? "").slice(0, 10);
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return s || "—";
   return `${m[3]}/${m[2]}/${m[1]}`;
@@ -124,16 +121,12 @@ function openWhatsApp(to: string, text: string) {
   window.open(`https://wa.me/${to}?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
 }
 
-function RsIcon({ className }: { className?: string }) {
-  return (
-    <div className={className ?? ""} style={{ fontWeight: 900, fontSize: 14, lineHeight: "14px" }}>
-      Rs
-    </div>
-  );
+function RsMark({ className }: { className?: string }) {
+  return <span className={cn("font-black tracking-tight text-[13px] leading-[13px]", className)}>Rs</span>;
 }
 
 /* =========================
-   Premium KPI Card
+   KPI Card (FIXED – no wrapping, no JSX error)
 ========================= */
 function KpiCard({
   title,
@@ -150,30 +143,56 @@ function KpiCard({
 }) {
   const toneRing =
     tone === "good"
-      ? "bg-emerald-500/12 text-emerald-800"
+      ? "bg-emerald-500/12 text-emerald-800 dark:text-emerald-200"
       : tone === "warn"
-      ? "bg-amber-500/12 text-amber-900"
+      ? "bg-amber-500/12 text-amber-900 dark:text-amber-200"
       : tone === "bad"
-      ? "bg-rose-500/12 text-rose-800"
+      ? "bg-rose-500/12 text-rose-800 dark:text-rose-200"
       : tone === "info"
-      ? "bg-blue-500/12 text-blue-900"
+      ? "bg-sky-500/12 text-sky-900 dark:text-sky-200"
       : "bg-primary/10 text-primary";
 
   return (
-    <Card className="shadow-[0_10px_30px_-18px_rgba(0,0,0,.35)] hover:shadow-[0_18px_40px_-18px_rgba(0,0,0,.38)] transition-shadow border-white/30 bg-white/80 backdrop-blur">
-      <div className="p-5 flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-muted-foreground">{title}</div>
+    <Card className="rp-card overflow-hidden">
+      <div className="p-4 sm:p-5 flex items-start justify-between gap-4">
+        {/* LEFT SIDE */}
+        <div className="min-w-0 flex-1">
+          <div className="rp-label">{title}</div>
 
-          {/* ✅ full figures: NO truncate */}
-          <div className="mt-2 text-[22px] leading-[1.1] font-extrabold text-foreground break-words">
-            {value}
+          {/* ONE LINE VALUE */}
+          <div className="mt-2 flex items-baseline gap-2 min-w-0">
+            <span className="text-[12px] font-black text-muted-foreground">
+              Rs
+            </span>
+
+            <span
+              className={cn(
+                "tabular-nums font-extrabold text-foreground",
+                "whitespace-nowrap",
+                "leading-[1.05]",
+                "text-[clamp(16px,1.25vw,22px)]"
+              )}
+              title={value}
+            >
+              {String(value).replace(/^Rs\s*/i, "")}
+            </span>
           </div>
 
-          {sub ? <div className="mt-1 text-xs text-muted-foreground">{sub}</div> : null}
+          {/* SUBLINE */}
+          {sub ? (
+            <div className="mt-1 text-xs text-muted-foreground">
+              {sub}
+            </div>
+          ) : null}
         </div>
 
-        <div className={`h-11 w-11 rounded-2xl grid place-items-center ${toneRing}`}>
+        {/* RIGHT ICON */}
+        <div
+          className={cn(
+            "h-11 w-11 rounded-2xl grid place-items-center shrink-0",
+            toneRing
+          )}
+        >
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -207,7 +226,7 @@ function ModalShell({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <Card className="p-6 w-[520px] max-w-[94vw] space-y-4 shadow-2xl border-white/30 bg-white/90 backdrop-blur">
+      <Card className="rp-card p-6 w-[560px] max-w-[94vw] space-y-4 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-lg font-extrabold text-foreground">{title}</div>
@@ -232,21 +251,18 @@ export default function Invoices() {
   const role = String((user as any)?.role || "").toLowerCase();
   const isAdmin = role === "admin";
 
-  /* UI state */
   const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<InvoiceStatus | "ALL">("ALL");
 
-  /* Payment modal */
   const [payOpen, setPayOpen] = useState(false);
   const [payInvoice, setPayInvoice] = useState<any | null>(null);
   const [payAmountStr, setPayAmountStr] = useState<string>("0.00");
-  const [payRemarks, setPayRemarks] = useState<string>(""); // ✅ NEW
+  const [payRemarks, setPayRemarks] = useState<string>("");
   const payRef = useRef<HTMLInputElement | null>(null);
 
-  /* Debounced search */
   useEffect(() => {
-    const t = window.setTimeout(() => setQ(qInput.trim()), 250);
+    const t = window.setTimeout(() => setQ(qInput.trim()), 220);
     return () => window.clearTimeout(t);
   }, [qInput]);
 
@@ -258,7 +274,6 @@ export default function Invoices() {
 
   const rows = invoicesQ.data || [];
 
-  /* KPIs */
   const kpis = useMemo(() => {
     const nonVoid = rows.filter((r: any) => normalizeStatus(r.status) !== "VOID");
 
@@ -277,12 +292,8 @@ export default function Invoices() {
     return { count, total, credits, paid, balance, issued, partial, fullyPaid, discount };
   }, [rows]);
 
-  /* =========================
-     Mutations
-  ========================= */
   const setPaymentM = useMutation({
     mutationFn: async (args: { invoiceId: number; amount: number; remarks?: string }) => {
-      // ✅ safe even if backend ignores extra param
       return (setInvoicePayment as any)(args.invoiceId, args.amount, args.remarks || "");
     },
     onError: (err: any) => {
@@ -321,13 +332,10 @@ export default function Invoices() {
     },
   });
 
-  /* =========================
-     Actions
-  ========================= */
   function openPayment(inv: any) {
     setPayInvoice(inv);
     setPayAmountStr(String(n(inv.amount_paid).toFixed(2)));
-    setPayRemarks(""); // reset
+    setPayRemarks("");
     setPayOpen(true);
     setTimeout(() => payRef.current?.focus(), 60);
   }
@@ -380,48 +388,304 @@ export default function Invoices() {
   }
 
   return (
-    <div className="space-y-5 animate-fade-in">
-      {/* Luxury backdrop (very subtle) */}
-      <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-50 via-white to-slate-50" />
-        <div className="absolute -top-40 -left-40 h-[520px] w-[520px] rounded-full bg-blue-400/10 blur-3xl" />
-        <div className="absolute -top-40 -right-40 h-[520px] w-[520px] rounded-full bg-rose-400/10 blur-3xl" />
-      </div>
+    <div className="rp-page">
+      <style>{`
+/* =========================
+   INVOICES — NO LINES / NO RECTANGLES (HARD RESET)
+========================= */
 
-      {/* Header */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="text-3xl font-extrabold tracking-tight text-foreground">Invoices</div>
-            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold bg-white/70 backdrop-blur shadow-sm">
-              <Sparkles className="h-3.5 w-3.5" /> Premium
-            </span>
+.rp-page{
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 18px 22px 28px 22px;
+  display:flex;
+  flex-direction:column;
+  gap: 16px;
+  overflow-x: hidden;
+}
+
+.rp-bg{
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -10;
+}
+.rp-bg::before{
+  content:"";
+  position:absolute; inset:0;
+  background:
+    radial-gradient(circle at 14% 12%, rgba(185,28,28,.10), transparent 55%),
+    radial-gradient(circle at 88% 10%, rgba(2,6,23,.06), transparent 50%),
+    linear-gradient(to bottom, rgba(248,250,252,1), rgba(255,255,255,1));
+}
+:root.dark .rp-bg::before{
+  background:
+    radial-gradient(circle at 14% 12%, rgba(185,28,28,.22), transparent 55%),
+    radial-gradient(circle at 88% 10%, rgba(255,255,255,.06), transparent 50%),
+    linear-gradient(to bottom, rgba(2,6,23,.85), rgba(2,6,23,.60));
+}
+
+/* Premium cards: remove borders completely */
+.rp-card{
+  border: none !important;
+  outline: none !important;
+  border-radius: 18px;
+  background: linear-gradient(to bottom, rgba(255,255,255,.96), rgba(255,255,255,.90));
+  box-shadow:
+    0 12px 34px rgba(2,6,23,.06),
+    0 1px 0 rgba(255,255,255,.70) inset;
+}
+:root.dark .rp-card{
+  background: linear-gradient(to bottom, rgba(2,6,23,.82), rgba(2,6,23,.62));
+  box-shadow: 0 18px 55px rgba(0,0,0,.45);
+}
+
+.rp-label{
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .10em;
+  text-transform: uppercase;
+  color: rgba(15,23,42,.60);
+}
+:root.dark .rp-label{ color: rgba(226,232,240,.60); }
+
+/* Hero */
+.rp-hero{
+  border-radius: 18px;
+  padding: 14px 16px;
+  border: none !important;
+  outline: none !important;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(185,28,28,.10), transparent 52%),
+    radial-gradient(circle at 72% 30%, rgba(2,6,23,.06), transparent 50%),
+    linear-gradient(to bottom, rgba(255,255,255,.92), rgba(255,255,255,.84));
+  box-shadow:
+    0 12px 34px rgba(2,6,23,.06),
+    0 1px 0 rgba(255,255,255,.70) inset;
+}
+:root.dark .rp-hero{
+  background:
+    radial-gradient(circle at 18% 22%, rgba(185,28,28,.20), transparent 52%),
+    radial-gradient(circle at 72% 30%, rgba(255,255,255,.06), transparent 50%),
+    linear-gradient(to bottom, rgba(2,6,23,.78), rgba(2,6,23,.56));
+}
+
+/* Filters */
+.rp-filter{
+  display:flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+}
+
+/* =========================
+   TABLE — HARD REMOVE ALL LINES
+========================= */
+
+/* ✅ REMOVE ANY BLACK BORDER AROUND THE WHOLE PAGE */
+html, body, #root{
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.rp-page{
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+
+
+.rp-tableShell{
+  overflow: hidden;
+}
+
+.rp-table, .rp-table *{
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.rp-table{
+  width: 100%;
+  table-layout: fixed; /* no scrollbar on desktop */
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.rp-thead th{
+  padding: 12px 14px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: rgba(15,23,42,.60);
+  background: rgba(2,6,23,.02);
+}
+:root.dark .rp-thead th{
+  color: rgba(226,232,240,.60);
+  background: rgba(255,255,255,.05);
+}
+
+/* Row cards look WITHOUT rectangles */
+.rp-row td{
+  padding: 12px 14px;
+}
+.rp-row{
+  background: transparent;
+  transition: background .12s ease;
+}
+.rp-row:hover{
+  background: rgba(2,6,23,.02);
+}
+:root.dark .rp-row:hover{
+  background: rgba(255,255,255,.04);
+}
+
+/* Soft spacing between rows (no line) */
+.rp-gapRow td{
+  padding: 0;
+  height: 8px;
+}
+
+/* Invoice pill WITHOUT border */
+.rp-invPill{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(2,6,23,.03);
+  font-weight: 900;
+  letter-spacing: .2px;
+  color: rgba(2,6,23,.90);
+  max-width: 100%;
+}
+:root.dark .rp-invPill{
+  background: rgba(255,255,255,.05);
+  color: rgba(226,232,240,.92);
+}
+
+.rp-trunc{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.rp-sub{
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(15,23,42,.55);
+}
+:root.dark .rp-sub{ color: rgba(226,232,240,.60); }
+
+.rp-money{
+  font-weight: 900;
+  color: rgba(2,6,23,.88);
+}
+:root.dark .rp-money{ color: rgba(226,232,240,.92); }
+
+.rp-mini{
+  font-size: 12px;
+  color: rgba(15,23,42,.55);
+}
+:root.dark .rp-mini{ color: rgba(226,232,240,.60); }
+
+/* Credits tag (no border) */
+.rp-creditTag{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 14px;
+  background: rgba(16,185,129,.10);
+  color: rgba(6,95,70,1);
+  font-weight: 950;
+}
+:root.dark .rp-creditTag{
+  background: rgba(16,185,129,.14);
+  color: rgba(167,243,208,1);
+}
+.rp-dot{
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  background: rgba(16,185,129,1);
+}
+
+/* Actions button WITHOUT border/outline */
+.rp-actionBtn{
+  height: 38px;
+  width: 38px;
+  border-radius: 999px;
+  border: none !important;
+  outline: none !important;
+  background: rgba(2,6,23,.03);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+:root.dark .rp-actionBtn{
+  background: rgba(255,255,255,.05);
+}
+
+/* ✅ Column widths tuned: FITS 100% (no desktop overflow) */
+.col-inv{ width: 12%; }
+.col-date{ width: 10%; }
+.col-cust{ width: 20%; }
+.col-total{ width: 11%; }
+.col-credits{ width: 11%; }
+.col-paid{ width: 10%; }
+.col-balance{ width: 10%; }
+.col-status{ width: 8%; }
+.col-actions{ width: 8%; }
+
+/* ✅ Give the actions cell some right padding so the dots are more left */
+.rp-actionsCell{
+  padding-right: 18px !important;
+  text-align: right;
+}
+
+
+@media (max-width: 1180px){
+  .col-cust{ width: 26%; }
+  .col-status{ width: 14%; }
+}
+`}</style>
+
+      <div className="rp-bg" />
+
+      {/* HERO */}
+      <div className="rp-hero">
+        <div className="relative z-[1] flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-foreground tracking-tight">Invoices</h1>
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-primary/10 text-primary">
+                <Sparkles className="h-3.5 w-3.5" /> Premium
+              </span>
+            </div>
+            <p className="text-muted-foreground mt-2 text-sm sm:text-base">Open • Print • Payments • Void • WhatsApp</p>
           </div>
-          <div className="text-sm text-muted-foreground">Open • Print • Payments • Void • WhatsApp</div>
-        </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => invoicesQ.refetch()}
-            disabled={invoicesQ.isFetching}
-            className="shadow-sm bg-white/80 backdrop-blur"
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${invoicesQ.isFetching ? "animate-spin" : ""}`} />
-            {invoicesQ.isFetching ? "Refreshing..." : "Refresh"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <Button variant="outline" onClick={() => invoicesQ.refetch()} disabled={invoicesQ.isFetching}>
+              <RefreshCw className={cn("h-4 w-4 mr-2", invoicesQ.isFetching && "animate-spin")} />
+              {invoicesQ.isFetching ? "Refreshing..." : "Refresh"}
+            </Button>
 
-          <Button
-            onClick={() => nav("/invoices/create")}
-            className="shadow-[0_14px_35px_-18px_rgba(0,0,0,.55)] bg-gradient-to-r from-rose-700 to-rose-600 text-white"
-          >
-            + New Invoice
-          </Button>
+            <Button onClick={() => nav("/invoices/create")} className="gradient-primary shadow-glow text-primary-foreground">
+              + New Invoice
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* KPIs (full figures, no truncate) */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* KPIs */}
+      <div className="grid gap-3 sm:gap-4 lg:gap-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
         <KpiCard
           title="Invoices"
           value={`${kpis.count}`}
@@ -430,256 +694,244 @@ export default function Invoices() {
           tone="info"
         />
         <KpiCard title="Total Value" value={rs(kpis.total)} sub="Excluding VOID" icon={CircleDollarSign} />
-        <KpiCard
-          title="Credits"
-          value={rs(kpis.credits)}
-          sub="Applied credit notes"
-          icon={Receipt}
-          tone={kpis.credits > 0 ? "good" : "default"}
-        />
-        <KpiCard
-          title="Paid"
-          value={rs(kpis.paid)}
-          sub={kpis.discount > 0 ? `Discounts: ${rs(kpis.discount)}` : "Payments received"}
-          icon={Wallet}
-          tone="good"
-        />
-        <KpiCard
-          title="Outstanding"
-          value={rs(kpis.balance)}
-          sub="Balance remaining"
-          icon={BadgePercent}
-          tone={kpis.balance > 0 ? "warn" : "good"}
-        />
+        <KpiCard title="Credits" value={rs(kpis.credits)} sub="Applied credit notes" icon={Receipt} tone={kpis.credits > 0 ? "good" : "default"} />
+        <KpiCard title="Paid" value={rs(kpis.paid)} sub={kpis.discount > 0 ? `Discounts: ${rs(kpis.discount)}` : "Payments received"} icon={Wallet} tone="good" />
+        <KpiCard title="Outstanding" value={rs(kpis.balance)} sub="Balance remaining" icon={BadgePercent} tone={kpis.balance > 0 ? "warn" : "good"} />
       </div>
 
       {/* Filters */}
-      <Card className="p-4 flex flex-wrap gap-3 items-center border-white/30 bg-white/80 backdrop-blur shadow-[0_12px_30px_-18px_rgba(0,0,0,.35)]">
-        <Input
-          placeholder="Search invoice / customer / code"
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          className="max-w-[460px] bg-white"
-        />
+      <Card className="rp-card">
+        <div className="rp-filter">
+          <Input
+            placeholder="Search invoice / customer / code"
+            value={qInput}
+            onChange={(e) => setQInput(e.target.value)}
+            className="max-w-[520px] bg-background/60"
+          />
 
-        <select
-          className="h-10 rounded-md border px-3 bg-white shadow-sm"
-          value={status}
-          onChange={(e) => setStatus(e.target.value as any)}
-        >
-          <option value="ALL">All</option>
-          <option value="DRAFT">Draft</option>
-          <option value="ISSUED">Issued</option>
-          <option value="PARTIALLY_PAID">Partially Paid</option>
-          <option value="PAID">Paid</option>
-          <option value="VOID">Void</option>
-        </select>
+          <select
+            className="h-10 rounded-xl px-3 bg-background/60 text-sm font-semibold text-foreground outline-none"
+            value={status}
+            onChange={(e) => setStatus(e.target.value as any)}
+          >
+            <option value="ALL">All</option>
+            <option value="DRAFT">Draft</option>
+            <option value="ISSUED">Issued</option>
+            <option value="PARTIALLY_PAID">Partially Paid</option>
+            <option value="PAID">Paid</option>
+            <option value="VOID">Void</option>
+          </select>
 
-        <div className="ml-auto text-xs text-muted-foreground">
-          {rows.length ? (
-            <>
-              Showing <b className="text-foreground">{rows.length}</b> invoices
-            </>
-          ) : (
-            "—"
-          )}
+          <div className="ml-auto text-xs text-muted-foreground">
+            {rows.length ? (
+              <>
+                Showing <b className="text-foreground">{rows.length}</b> invoices
+              </>
+            ) : (
+              "—"
+            )}
+          </div>
         </div>
       </Card>
 
       {/* Table */}
-      <Card className="overflow-hidden border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.40)]">
-        <div className="overflow-auto">
-          <table className="w-full min-w-[1220px]">
-            <thead className="bg-gradient-to-b from-slate-50 to-white">
-              <tr className="text-[12px] uppercase tracking-wide text-slate-600 border-b">
-                <th className="px-4 py-3 text-left">Invoice</th>
-                <th className="px-4 py-3 text-left">Date</th>
-                <th className="px-4 py-3 text-left">Customer</th>
-                <th className="px-4 py-3 text-left">Total</th>
-                <th className="px-4 py-3 text-left">Discount</th>
+      <Card className="rp-card rp-tableShell">
+        <table className="rp-table">
+          <thead className="rp-thead">
+            <tr>
+              <th className="col-inv">Invoice</th>
+              <th className="col-date">Date</th>
+              <th className="col-cust">Customer</th>
+              <th className="col-total">Total</th>
+              <th className="col-credits">Credits</th>
+              <th className="col-paid">Paid</th>
+              <th className="col-balance">Balance</th>
+              <th className="col-status">Status</th>
+              <th className="col-actions text-right" />
+            </tr>
+          </thead>
 
-                {/* ✅ credits emphasized */}
-                <th className="px-4 py-3 text-left">
+          <tbody>
+            {invoicesQ.isLoading ? (
+              <tr className="rp-row">
+                <td colSpan={9} className="p-8 text-center text-sm text-muted-foreground">
                   <span className="inline-flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-600" />
-                    Credits
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Loading invoices…
                   </span>
-                </th>
-
-                <th className="px-4 py-3 text-left">Paid</th>
-                <th className="px-4 py-3 text-left">Balance</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-3 py-3 text-right" />
+                </td>
               </tr>
-            </thead>
-
-            <tbody className="divide-y">
-              {rows.map((r: any) => {
+            ) : rows.length === 0 ? (
+              <tr className="rp-row">
+                <td colSpan={9} className="p-8 text-center text-sm text-muted-foreground">
+                  No invoices found.
+                </td>
+              </tr>
+            ) : (
+              rows.map((r: any) => {
                 const st = normalizeStatus(r.status);
                 const cust = r.customer || {};
                 const custName = cust.name || r.customer_name || `#${r.customer_id}`;
                 const custCode = cust.customer_code || r.customer_code || "";
                 const invNo = r.invoice_number || `#${r.id}`;
-
-                const dp = n(r.discount_percent);
-                const da = n(r.discount_amount);
-
                 const credits = n(r.credits_applied ?? 0);
 
                 const muPhone = normalizeMuPhone(cust.whatsapp || cust.phone || r.customer_whatsapp || r.customer_phone);
                 const hasWA = Boolean(muPhone);
 
                 return (
-                  <tr key={r.id} className="hover:bg-slate-50/70">
-                    <td className="px-4 py-3">
-                      <div className="inline-flex items-center justify-center border rounded-xl px-3 py-2 font-semibold text-slate-900 bg-white shadow-sm">
-                        {invNo}
-                      </div>
-                    </td>
+                  <React.Fragment key={r.id}>
+                    <tr className="rp-row">
+                      <td>
+                        <div className="rp-invPill rp-trunc">{invNo}</div>
+                        <div className="rp-sub rp-trunc">{custCode ? `Code: ${custCode}` : "—"}</div>
+                      </td>
 
-                    <td className="px-4 py-3 text-sm text-slate-700">{formatDateDMY(r.invoice_date)}</td>
+                      <td>
+                        <div className="rp-money">{formatDateDMY(r.invoice_date)}</div>
+                        <div className="rp-mini rp-trunc">{r.due_date ? `Due: ${formatDateDMY(r.due_date)}` : "—"}</div>
+                      </td>
 
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="font-semibold text-slate-900">{custName}</div>
-                        {hasWA ? (
-                          <span
-                            title="WhatsApp detected"
-                            className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-emerald-500/10 text-emerald-700 border border-emerald-200"
-                          >
-                            <MessageCircle className="h-4 w-4" />
-                          </span>
-                        ) : null}
-                      </div>
-                      {custCode ? <div className="text-xs text-slate-500">{custCode}</div> : null}
-                    </td>
-
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-900 font-semibold">{rs(r.total_amount)}</div>
-                    </td>
-
-                    <td className="px-4 py-3 text-sm">
-                      {dp > 0 || da > 0 ? (
-                        <div className="text-rose-700 font-semibold leading-tight">
-                          <div>- {rs(da || (n(r.total_amount) * dp) / 100)}</div>
-                          <div className="text-rose-700/70 text-xs">{dp ? `${dp}%` : ""}</div>
+                      <td className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="font-semibold text-foreground rp-trunc min-w-0">{custName}</div>
+                          {hasWA ? (
+                            <span
+                              title="WhatsApp detected"
+                              className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-200 shrink-0"
+                            >
+                              <MessageCircle className="h-4 w-4" />
+                            </span>
+                          ) : null}
                         </div>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
+                        <div className="rp-mini rp-trunc">{custCode ? custCode : "—"}</div>
+                      </td>
 
-                    {/* ✅ Credits: premium highlight */}
-                    <td className="px-4 py-3 text-sm">
-                      {credits > 0 ? (
-                        <div className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-500/10 px-3 py-1.5">
-                          <span className="h-2 w-2 rounded-full bg-emerald-600" />
-                          <span className="font-extrabold text-emerald-900">{rs(credits)}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
+                      <td>
+                        <div className="rp-money tabular-nums">{rs(r.total_amount)}</div>
+                      </td>
 
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-900">{rs(r.amount_paid)}</div>
-                    </td>
+                      <td>
+                        {credits > 0 ? (
+                          <div className="rp-creditTag tabular-nums">
+                            <span className="rp-dot" />
+                            {rs(credits)}
+                          </div>
+                        ) : (
+                          <div className="rp-mini">—</div>
+                        )}
+                      </td>
 
-                    <td className="px-4 py-3 text-sm">
-                      <div className="text-slate-900">{rs(r.balance_remaining)}</div>
-                    </td>
+                      <td>
+                        <div className="rp-money tabular-nums">{rs(r.amount_paid)}</div>
+                      </td>
 
-                    <td className="px-4 py-3">
-                      <span
-                        className={
-                          "inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold " +
-                          statusPillClass(st)
-                        }
-                      >
-                        {statusLabel(st)}
-                      </span>
-                    </td>
+                      <td>
+                        <div className="rp-money tabular-nums">{rs(r.balance_remaining)}</div>
+                      </td>
 
-                    {/* Actions */}
-                    <td className="px-3 py-3 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-full border bg-white hover:bg-slate-50 shadow-sm"
-                            aria-label="Actions"
-                          >
-                            <MoreHorizontal className="h-5 w-5 text-slate-700" />
-                          </button>
-                        </DropdownMenuTrigger>
+                      <td>
+                        <span className={cn("inline-flex items-center rounded-full px-3 py-1 text-xs font-extrabold bg-background/60", statusPillClass(st))}>
+                          {statusLabel(st)}
+                        </span>
+                      </td>
 
-                        <DropdownMenuContent align="end" className="w-56">
-                          <DropdownMenuItem onClick={() => nav(`/invoices/${r.id}`)}>
-                            <Eye className="mr-2 h-4 w-4" />
-                            Open
-                          </DropdownMenuItem>
+<td className="px-2 py-3 w-[64px] rp-actionsCell">
+<DropdownMenu>
+<DropdownMenuTrigger asChild>
+<button
+  type="button"
+  className={cn(
+    "h-9 w-9 inline-flex items-center justify-center rounded-full",
+    "bg-rose-600 text-white shadow-md shadow-rose-600/20",
+    "hover:bg-rose-700 hover:shadow-lg hover:shadow-rose-700/25",
+    "transition-all duration-200",
+    "ring-1 ring-rose-500/30",
+    "relative overflow-hidden",
+    "group"
+  )}
+  aria-label="Actions"
+>
+  {/* subtle animated shine */}
+  <span
+    className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+    style={{
+      background:
+        "linear-gradient(120deg, transparent 0%, rgba(255,255,255,.25) 40%, transparent 70%)",
+      transform: "translateX(-40%)",
+      animation: "rpDotsShine 1.6s ease-in-out infinite",
+    }}
+  />
+  <MoreHorizontal className="h-5 w-5 relative z-[1]" />
+</button>
+</DropdownMenuTrigger>
 
-                          <DropdownMenuItem onClick={() => nav(`/invoices/${r.id}/print`)}>
-                            <Printer className="mr-2 h-4 w-4" />
-                            Print (PDF)
-                          </DropdownMenuItem>
-
-                          <DropdownMenuSeparator />
-
-                          {st !== "VOID" ? (
-                            <DropdownMenuItem onClick={() => openPayment(r)}>
-                              <RsIcon className="mr-2" />
-                              Payment
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuItem onClick={() => nav(`/invoices/${r.id}`)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              Open
                             </DropdownMenuItem>
-                          ) : null}
 
-                          <DropdownMenuItem onClick={() => onSendWhatsApp(r)} disabled={!hasWA}>
-                            <MessageCircle className="mr-2 h-4 w-4 text-emerald-600" />
-                            Send to WhatsApp
-                          </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => nav(`/invoices/${r.id}/print`)}>
+                              <Printer className="mr-2 h-4 w-4" />
+                              Print (PDF)
+                            </DropdownMenuItem>
 
-                          {st !== "PAID" && st !== "VOID" ? (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  if (!confirm("Mark invoice as PAID (pay remaining after credits)?")) return;
-                                  markPaidM.mutate(r.id);
-                                }}
-                                disabled={markPaidM.isPending}
-                              >
-                                <CheckCircle2 className="mr-2 h-4 w-4" />
-                                Mark Paid
+                            <DropdownMenuSeparator />
+
+                            {st !== "VOID" ? (
+                              <DropdownMenuItem onClick={() => openPayment(r)}>
+                                <span className="mr-2 inline-flex h-4 w-4 items-center justify-center">
+                                  <RsMark />
+                                </span>
+                                Payment
                               </DropdownMenuItem>
-                            </>
-                          ) : null}
+                            ) : null}
 
-                          {st !== "VOID" ? (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => onVoid(r)} disabled={voidM.isPending}>
-                                <Ban className="mr-2 h-4 w-4" />
-                                Void {isAdmin ? "" : "(Admin)"}
-                              </DropdownMenuItem>
-                            </>
-                          ) : null}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </td>
-                  </tr>
+                            <DropdownMenuItem onClick={() => onSendWhatsApp(r)} disabled={!hasWA}>
+                              <MessageCircle className="mr-2 h-4 w-4 text-emerald-600" />
+                              Send to WhatsApp
+                            </DropdownMenuItem>
+
+                            {st !== "PAID" && st !== "VOID" ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    if (!confirm("Mark invoice as PAID (pay remaining after credits)?")) return;
+                                    markPaidM.mutate(r.id);
+                                  }}
+                                  disabled={markPaidM.isPending}
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  Mark Paid
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+
+                            {st !== "VOID" ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => onVoid(r)} disabled={voidM.isPending}>
+                                  <Ban className="mr-2 h-4 w-4" />
+                                  Void {isAdmin ? "" : "(Admin)"}
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </td>
+                    </tr>
+
+                    {/* ✅ spacing row (no line) */}
+                    <tr className="rp-gapRow" aria-hidden="true">
+                      <td colSpan={9} />
+                    </tr>
+                  </React.Fragment>
                 );
-              })}
-
-              {!invoicesQ.isLoading && rows.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="p-6 text-center text-sm text-muted-foreground">
-                    No invoices found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              })
+            )}
+          </tbody>
+        </table>
       </Card>
 
       {/* Payment Modal */}
@@ -693,31 +945,33 @@ export default function Invoices() {
             from what is due.
           </>
         }
-        icon={<RsIcon />}
+        icon={<RsMark />}
       >
-        {/* Figures */}
-        <div className="rounded-2xl border p-4 bg-white shadow-sm">
+        <div className="rounded-2xl bg-background/60 p-4">
           <div className="text-xs text-muted-foreground">Invoice</div>
           <div className="font-semibold">
             {payInvoice?.invoice_number || `#${payInvoice?.id}`} • {formatDateDMY(payInvoice?.invoice_date)}
           </div>
 
           <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-            <div className="rounded-xl border p-2.5 bg-white">
+            <div className="rounded-xl bg-background/60 p-2.5">
               <div className="text-xs text-muted-foreground">Gross</div>
-              <div className="font-extrabold text-slate-900">{rs(payInvoice?.gross_total ?? payInvoice?.total_amount)}</div>
+              <div className="font-extrabold tabular-nums">{rs(payInvoice?.gross_total ?? payInvoice?.total_amount)}</div>
             </div>
-            <div className="rounded-xl border p-2.5 bg-emerald-500/10 border-emerald-200">
-              <div className="text-xs text-emerald-800/70">Credits</div>
-              <div className="font-extrabold text-emerald-900">{rs(payInvoice?.credits_applied ?? 0)}</div>
+
+            <div className="rounded-xl bg-emerald-500/10 p-2.5">
+              <div className="text-xs text-emerald-800/70 dark:text-emerald-200/70">Credits</div>
+              <div className="font-extrabold tabular-nums">{rs(payInvoice?.credits_applied ?? 0)}</div>
             </div>
-            <div className="rounded-xl border p-2.5 bg-white">
+
+            <div className="rounded-xl bg-background/60 p-2.5">
               <div className="text-xs text-muted-foreground">Paid</div>
-              <div className="font-extrabold text-slate-900">{rs(payInvoice?.amount_paid ?? 0)}</div>
+              <div className="font-extrabold tabular-nums">{rs(payInvoice?.amount_paid ?? 0)}</div>
             </div>
-            <div className="rounded-xl border p-2.5 bg-amber-500/10 border-amber-200">
-              <div className="text-xs text-amber-900/70">Due</div>
-              <div className="font-extrabold text-amber-950">
+
+            <div className="rounded-xl bg-amber-500/10 p-2.5">
+              <div className="text-xs text-amber-900/70 dark:text-amber-200/70">Due</div>
+              <div className="font-extrabold tabular-nums">
                 {rs(
                   Math.max(
                     0,
@@ -730,20 +984,18 @@ export default function Invoices() {
             </div>
           </div>
 
-          {/* ✅ NEW: Remarks container just below figures */}
-          <div className="mt-3 rounded-xl border p-3 bg-slate-50">
-            <div className="text-xs font-semibold text-slate-700">Remarks</div>
+          <div className="mt-3 rounded-xl bg-background/60 p-3">
+            <div className="text-xs font-semibold text-foreground/80">Remarks</div>
             <textarea
-              className="mt-2 w-full min-h-[70px] rounded-lg border bg-white p-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="e.g. Cash received at shop • Bank transfer ref • Any note for accountant"
+              className="mt-2 w-full min-h-[78px] rounded-xl bg-background/70 p-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="e.g. Cash received at shop • Bank transfer ref • Note for accountant"
               value={payRemarks}
               onChange={(e) => setPayRemarks(e.target.value)}
             />
-            <div className="mt-1 text-[11px] text-slate-500">Optional. Saved with the payment if backend supports it.</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">Optional. Saved with the payment if backend supports it.</div>
           </div>
         </div>
 
-        {/* Amount input */}
         <div className="space-y-2">
           <div className="text-sm font-semibold">Total paid so far</div>
           <Input
@@ -762,20 +1014,14 @@ export default function Invoices() {
           />
 
           <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="flex-1 bg-white"
-              onClick={() => setPayAmountStr("0.00")}
-              disabled={setPaymentM.isPending}
-            >
+            <Button type="button" variant="outline" className="flex-1" onClick={() => setPayAmountStr("0.00")} disabled={setPaymentM.isPending}>
               Set 0
             </Button>
 
             <Button
               type="button"
               variant="outline"
-              className="flex-1 bg-white"
+              className="flex-1"
               onClick={() => {
                 const gross = n(payInvoice?.gross_total ?? payInvoice?.total_amount);
                 const credits = n(payInvoice?.credits_applied ?? 0);
@@ -790,10 +1036,10 @@ export default function Invoices() {
         </div>
 
         <div className="flex justify-end gap-2 pt-1">
-          <Button variant="outline" className="bg-white" onClick={() => setPayOpen(false)} disabled={setPaymentM.isPending}>
+          <Button variant="outline" onClick={() => setPayOpen(false)} disabled={setPaymentM.isPending}>
             Cancel
           </Button>
-          <Button onClick={savePayment} disabled={setPaymentM.isPending} className="bg-gradient-to-r from-rose-700 to-rose-600 text-white">
+          <Button onClick={savePayment} disabled={setPaymentM.isPending} className="gradient-primary shadow-glow text-primary-foreground">
             {setPaymentM.isPending ? "Saving..." : "Save"}
           </Button>
         </div>

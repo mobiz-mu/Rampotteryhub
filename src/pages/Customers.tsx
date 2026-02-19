@@ -159,10 +159,17 @@ export default function Customers() {
 
   return (
     <div className="space-y-6 pb-10">
+      {/* premium subtle backdrop */}
+      <div className="pointer-events-none fixed inset-0 -z-10">
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-50 via-white to-slate-50 dark:from-slate-950 dark:via-slate-950 dark:to-slate-950" />
+        <div className="absolute -top-48 -left-48 h-[520px] w-[520px] rounded-full bg-rose-500/10 blur-3xl" />
+        <div className="absolute -top-48 -right-48 h-[520px] w-[520px] rounded-full bg-sky-500/10 blur-3xl" />
+      </div>
+
       {/* Top header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-2xl bg-primary/10 border flex items-center justify-center">
+          <div className="h-10 w-10 rounded-2xl bg-primary/10 border border-white/30 dark:border-white/10 flex items-center justify-center">
             <Users className="h-5 w-5 text-primary" />
           </div>
           <div>
@@ -195,11 +202,11 @@ export default function Customers() {
       </div>
 
       {/* Search */}
-      <Card className="p-4 shadow-sm">
+      <Card className="p-4 border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.35)] dark:bg-slate-950/40 dark:border-white/10">
         <div className="relative">
           <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
           <Input
-            className="pl-9"
+            className="pl-9 bg-white/90 dark:bg-slate-950/50"
             placeholder="Search customer, code, phone, WhatsApp, BRN, VAT…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -211,10 +218,10 @@ export default function Customers() {
       </Card>
 
       {/* Table */}
-      <Card className="overflow-hidden shadow-sm">
+      <Card className="overflow-hidden border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.35)] dark:bg-slate-950/40 dark:border-white/10">
         <div className="overflow-auto max-h-[68vh]">
           <table className="w-full min-w-[980px] text-sm">
-            <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b">
+            <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border/40">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold">Code</th>
                 <th className="px-4 py-3 text-left font-semibold">Customer</th>
@@ -225,7 +232,7 @@ export default function Customers() {
               </tr>
             </thead>
 
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-border/30">
               {customersQ.isLoading ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-10 text-muted-foreground">
@@ -240,17 +247,20 @@ export default function Customers() {
                 </tr>
               ) : (
                 paginated.map((c) => (
-                  <tr key={c.id} className="hover:bg-muted/40 transition">
+                  <tr key={c.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-4 font-semibold">{c.customer_code || "-"}</td>
+
                     <td className="px-4 py-4">
                       <div className="font-medium">{c.name}</div>
                       {(c as any).client_name ? (
                         <div className="text-[11px] text-muted-foreground">Client: {String((c as any).client_name)}</div>
                       ) : null}
                     </td>
+
                     <td className="px-4 py-4">{c.phone || "-"}</td>
                     <td className="px-4 py-4">{c.whatsapp || "-"}</td>
                     <td className="px-4 py-4">{Number((c as any).discount_percent ?? 0).toFixed(0)}%</td>
+
                     <td className="px-4 py-4">
                       <div className="flex justify-end gap-2">
                         <Button
@@ -285,11 +295,16 @@ export default function Customers() {
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between px-4 py-3 border-t text-xs text-muted-foreground">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border/40 text-xs text-muted-foreground">
           <div>{showing}</div>
 
           <div className="flex items-center gap-2">
-            <Button size="icon" variant="outline" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+            <Button
+              size="icon"
+              variant="outline"
+              disabled={safePage === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
               <ChevronLeft className="h-4 w-4" />
             </Button>
 

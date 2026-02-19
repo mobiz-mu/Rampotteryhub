@@ -15,25 +15,33 @@ function money(v: any) {
 function fmtDateISO(v: any) {
   const s = String(v || "").trim();
   if (!s) return "—";
-  // if already YYYY-MM-DD keep it for statement style
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return s;
   return d.toISOString().slice(0, 10);
 }
-
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+// ✅ due = balance if available, otherwise total - paid - credits
+function computeDue(inv: any) {
+  const due =
+    inv?.balance_due != null
+      ? n(inv.balance_due)
+      : inv?.balance_remaining != null
+      ? n(inv.balance_remaining)
+      : n(inv?.total_amount) - n(inv?.amount_paid) - n(inv?.credits_applied);
+
+  return Math.max(0, due);
 }
 
 export default function StatementPrint() {
   const nav = useNavigate();
   const [params] = useSearchParams();
 
-  // Keep your param name for compatibility
   const customerId = Number(params.get("customerId") || 0);
 
-  // Added range support (optional)
   const from = (params.get("from") || "").trim();
   const to = (params.get("to") || "").trim();
 
@@ -51,17 +59,21 @@ export default function StatementPrint() {
     staleTime: 20_000,
   });
 
+  // ✅ include total + paid + due fields
   const invQ = useQuery({
     queryKey: ["statement_invoices", customerId, rangeFrom, rangeTo],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
-        .select("id,invoice_number,invoice_date,total_amount,status")
+        .select(
+          "id,invoice_number,invoice_date,total_amount,amount_paid,credits_applied,balance_remaining,balance_due,status"
+        )
         .eq("customer_id", customerId)
-        .not("status", "in", '("VOID")')
+        .not("status", "in", '("VOID")') // keep DRAFT visible if you want, but it will affect totals
         .gte("invoice_date", rangeFrom)
         .lte("invoice_date", rangeTo)
-        .order("invoice_date", { ascending: true });
+        .order("invoice_date", { ascending: true })
+        .order("id", { ascending: true });
 
       if (error) throw error;
       return (data || []) as any[];
@@ -81,27 +93,37 @@ export default function StatementPrint() {
   }, [customer]);
 
   const rows = useMemo(() => {
-    return invoices.map((r, idx) => ({
-      sn: idx + 1,
-      id: Number(r.id),
-      invoice_number: String(r.invoice_number ?? ""),
-      invoice_date: fmtDateISO(r.invoice_date),
-      amount: n(r.total_amount),
-      status: String(r.status || ""),
-    }));
+    return invoices.map((r, idx) => {
+      const total = n(r.total_amount);
+      const paid = n(r.amount_paid);
+      const due = computeDue(r); // or Math.max(0, total - paid)
+      return {
+        sn: idx + 1,
+        id: Number(r.id),
+        invoice_number: String(r.invoice_number ?? ""),
+        invoice_date: fmtDateISO(r.invoice_date),
+        status: String(r.status || ""),
+        total,
+        paid,
+        due,
+      };
+    });
   }, [invoices]);
 
+  // ✅ TOTALS
+  // totalBalance = totalAmount - totalPaid  (same as sum(due) if due computed as balance)
   const totals = useMemo(() => {
     return rows.reduce(
       (acc, r) => {
-        acc.total += r.amount;
+        acc.totalAmount += n(r.total);
+        acc.totalPaid += n(r.paid);
+        acc.totalDue += n(r.due);
         return acc;
       },
-      { total: 0 }
+      { totalAmount: 0, totalPaid: 0, totalDue: 0 }
     );
   }, [rows]);
 
-  // Print helper: optional auto print if ?autoprint=1
   const autoPrint = params.get("autoprint") === "1";
   useEffect(() => {
     if (!autoPrint) return;
@@ -117,7 +139,6 @@ export default function StatementPrint() {
     sp.set("customerId", String(customerId));
     if (from) sp.set("from", from);
     if (to) sp.set("to", to);
-    // do not include autoprint in share link
     return `${base}?${sp.toString()}`;
   }, [customerId, from, to]);
 
@@ -126,10 +147,12 @@ export default function StatementPrint() {
       `Ram Pottery Ltd — Statement of Account\n` +
       `Customer: ${customerName}\n` +
       `Period: ${rangeFrom} → ${rangeTo}\n\n` +
+      `Total Amount: Rs ${money(totals.totalAmount)}\n` +
+      `Amount Paid: Rs ${money(totals.totalPaid)}\n` +
+      `Balance Due: Rs ${money(totals.totalAmount - totals.totalPaid)}\n\n` +
       `Please find the statement attached (PDF). You can also view it here:\n${shareUrl}`;
 
-    const wa = `https://wa.me/?text=${encodeURIComponent(msg)}`;
-    window.open(wa, "_blank", "noopener,noreferrer");
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
   }
 
   function openEmail() {
@@ -137,6 +160,9 @@ export default function StatementPrint() {
     const body =
       `Dear ${customerName},\n\n` +
       `Please find attached the Statement of Account for the period ${rangeFrom} to ${rangeTo}.\n\n` +
+      `Total Amount: Rs ${money(totals.totalAmount)}\n` +
+      `Amount Paid: Rs ${money(totals.totalPaid)}\n` +
+      `Balance Due: Rs ${money(totals.totalAmount - totals.totalPaid)}\n\n` +
       `You can also view it here:\n${shareUrl}\n\n` +
       `Regards,\nRam Pottery Ltd`;
     window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -149,6 +175,8 @@ export default function StatementPrint() {
   if (customerId <= 0) return <div className="p-6 text-sm text-muted-foreground">Invalid customer.</div>;
   if (custQ.isLoading || invQ.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading statement…</div>;
   if (!customer) return <div className="p-6 text-sm text-destructive">Customer not found.</div>;
+
+  const balanceTotal = totals.totalAmount - totals.totalPaid; // ✅ what you asked for
 
   return (
     <div className="p-4 print-shell">
@@ -206,23 +234,35 @@ export default function StatementPrint() {
               <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800 }}>{customerName}</div>
               <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>{customer.address || "—"}</div>
               <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                {(customer.whatsapp || customer.phone) ? `Phone: ${customer.whatsapp || customer.phone}` : "—"}
+                {customer.whatsapp || customer.phone ? `Phone: ${customer.whatsapp || customer.phone}` : "—"}
               </div>
             </div>
 
             <div style={{ border: "1px solid rgba(0,0,0,.10)", borderRadius: 12, padding: 12 }}>
               <div style={{ fontSize: 11, letterSpacing: ".10em", textTransform: "uppercase", opacity: 0.7 }}>Summary</div>
+
               <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                 <span>Total Amount</span>
-                <b>Rs {money(totals.total)}</b>
+                <b>Rs {money(totals.totalAmount)}</b>
               </div>
-              <div style={{ marginTop: 6, fontSize: 11, opacity: 0.75 }}>
-                This report shows issued invoices (excluding VOID).
+
+              <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span>Amount Paid</span>
+                <b>Rs {money(totals.totalPaid)}</b>
               </div>
+
+              <div style={{ marginTop: 8, height: 1, background: "rgba(0,0,0,.10)" }} />
+
+              <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span style={{ fontWeight: 800 }}>Balance Due (Total − Paid)</span>
+                <b style={{ fontSize: 13 }}>Rs {money(balanceTotal)}</b>
+              </div>
+
+              <div style={{ marginTop: 6, fontSize: 11, opacity: 0.75 }}>This report shows invoices (excluding VOID).</div>
             </div>
           </div>
 
-          {/* Table — Required Format */}
+          {/* Table */}
           <div style={{ marginTop: 14 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
@@ -231,14 +271,16 @@ export default function StatementPrint() {
                   <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.10)" }}>DATE</th>
                   <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.10)" }}>CUSTOMER</th>
                   <th style={{ textAlign: "left", padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.10)" }}>INVOICE NO</th>
-                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.10)" }}>AMOUNT</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.10)" }}>TOTAL</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.10)" }}>PAID</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.10)" }}>DUE</th>
                 </tr>
               </thead>
 
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ padding: "12px 8px", opacity: 0.75 }}>
+                    <td colSpan={7} style={{ padding: "12px 8px", opacity: 0.75 }}>
                       No invoices found for this customer in the selected period.
                     </td>
                   </tr>
@@ -253,7 +295,13 @@ export default function StatementPrint() {
                         {r.status ? <div style={{ fontSize: 11, opacity: 0.65 }}>{r.status}</div> : null}
                       </td>
                       <td style={{ padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.06)", textAlign: "right", fontWeight: 900 }}>
-                        Rs {money(r.amount)}
+                        Rs {money(r.total)}
+                      </td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.06)", textAlign: "right", fontWeight: 900 }}>
+                        Rs {money(r.paid)}
+                      </td>
+                      <td style={{ padding: "10px 8px", borderBottom: "1px solid rgba(0,0,0,.06)", textAlign: "right", fontWeight: 900 }}>
+                        Rs {money(r.due)}
                       </td>
                     </tr>
                   ))
@@ -266,7 +314,13 @@ export default function StatementPrint() {
                       TOTAL
                     </td>
                     <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>
-                      Rs {money(totals.total)}
+                      Rs {money(totals.totalAmount)}
+                    </td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>
+                      Rs {money(totals.totalPaid)}
+                    </td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900 }}>
+                      Rs {money(balanceTotal)}
                     </td>
                   </tr>
                 ) : null}
@@ -294,3 +348,4 @@ export default function StatementPrint() {
     </div>
   );
 }
+

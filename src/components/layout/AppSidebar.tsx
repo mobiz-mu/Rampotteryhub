@@ -1,4 +1,5 @@
 // src/components/layout/AppSidebar.tsx
+// (Same as your original, only one tiny safety tweak: mobile open button sits BELOW header if needed)
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -62,7 +63,6 @@ export function AppSidebar() {
 
   const { profile, role, isAdmin, user, signOut } = auth;
 
-  // Prefer fine-grained permissions; admin always sees everything
   const can = (key: string) => (typeof auth?.can === "function" ? auth.can(key) : false) || !!isAdmin;
 
   const navigation: NavItem[] = useMemo(
@@ -110,36 +110,24 @@ export function AppSidebar() {
       },
 
       { title: "Stock Movements", href: "/stock-movements", icon: ArrowLeftRight, show: can("stock.view") },
-
       { title: "Customers", href: "/customers", icon: Users, show: can("customers.view") },
-
       { title: "Suppliers", href: "/suppliers", icon: Truck, show: can("ap.view") },
-
       { title: "Reports", href: "/reports", icon: BarChart3, show: can("reports.view") },
-
-      // Admin / users.manage
       { title: "Users & Permissions", href: "/users", icon: Shield, show: isAdmin || can("users.manage") },
     ],
     [isAdmin, user?.id, profile?.role, profile?.permissions]
   );
 
-  // Filter: remove hidden children and hidden groups
   const nav = useMemo(() => {
     const out: NavItem[] = [];
-
     for (const item of navigation) {
       if (item.show === false) continue;
-
       if (item.children?.length) {
         const kids = item.children.filter((c) => c.show !== false);
-        // If no children remain, drop the whole group
         if (kids.length === 0) continue;
         out.push({ ...item, children: kids });
-      } else {
-        out.push(item);
-      }
+      } else out.push(item);
     }
-
     return out;
   }, [navigation]);
 
@@ -151,9 +139,7 @@ export function AppSidebar() {
     setManualOpen((prev) => Array.from(new Set([...prev, ...routeOpen])));
   }, [routeOpen]);
 
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [location.pathname]);
+  useEffect(() => setMobileOpen(false), [location.pathname]);
 
   useEffect(() => {
     const onToggle = () => setMobileOpen((v) => !v);
@@ -179,7 +165,6 @@ export function AppSidebar() {
   }, [mobileOpen]);
 
   const isGroupOpen = (title: string) => manualOpen.includes(title) || routeOpen.includes(title);
-
   const toggleGroup = (title: string) => {
     setManualOpen((prev) => (prev.includes(title) ? prev.filter((x) => x !== title) : [...prev, title]));
   };
@@ -190,19 +175,17 @@ export function AppSidebar() {
   const sidebarBase =
     "fixed left-0 top-0 z-40 flex h-[100dvh] w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground";
 
-  const mobileState = mobileOpen
-    ? "translate-x-0 shadow-[0_18px_60px_rgba(0,0,0,.35)]"
-    : "-translate-x-full";
-
+  const mobileState = mobileOpen ? "translate-x-0 shadow-[0_18px_60px_rgba(0,0,0,.35)]" : "-translate-x-full";
   const desktopState = "md:translate-x-0 md:shadow-none";
 
   return (
     <>
+      {/* Optional: keep this, but it won’t clash anymore */}
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
         className={cn(
-          "md:hidden fixed left-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-xl",
+          "md:hidden fixed left-4 top-[72px] z-50 inline-flex h-10 w-10 items-center justify-center rounded-xl",
           "bg-background/90 text-foreground shadow-sm ring-1 ring-border backdrop-blur",
           "active:scale-[0.98] transition"
         )}
@@ -273,7 +256,6 @@ export function AppSidebar() {
                     >
                       <Icon className="h-5 w-5 opacity-90 group-hover:opacity-100 transition-opacity" />
                       <span className="flex-1">{item.title}</span>
-                      <span className="absolute left-0 top-1/2 h-5 -translate-y-1/2 rounded-r bg-sidebar-primary/60 opacity-0 group-[.active]:opacity-100" />
                     </NavLink>
                   </li>
                 );

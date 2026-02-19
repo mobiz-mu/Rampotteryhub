@@ -1,0 +1,393 @@
+/* src/styles/reports.css */
+
+/* =========================
+   Premium page shell
+========================= */
+.reports-page {
+  --rp-bg: radial-gradient(1200px circle at 0% 0%, rgba(127, 29, 29, 0.10), transparent 55%),
+           radial-gradient(900px circle at 100% 0%, rgba(0, 0, 0, 0.06), transparent 55%),
+           linear-gradient(to bottom, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
+  --rp-card: rgba(255, 255, 255, 0.86);
+  --rp-border: rgba(17, 24, 39, 0.10);
+  --rp-shadow: 0 18px 60px rgba(0, 0, 0, 0.10);
+  --rp-shadow-soft: 0 12px 40px rgba(0, 0, 0, 0.08);
+
+  background: transparent;
+}
+
+.reports-hero {
+  border-radius: 28px;
+  border: 1px solid var(--rp-border);
+  background: var(--rp-bg);
+  box-shadow: var(--rp-shadow);
+  backdrop-filter: blur(10px);
+}
+
+.reports-card {
+  border-radius: 22px;
+  border: 1px solid var(--rp-border);
+  background: var(--rp-card);
+  box-shadow: var(--rp-shadow-soft);
+  backdrop-filter: blur(10px);
+}
+
+.reports-panelTitle {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* =========================
+   3-column layout
+========================= */
+.reports-grid {
+  display: grid;
+  gap: 18px;
+}
+
+/* Mobile: stacked */
+@media (max-width: 1023px) {
+  .reports-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Desktop: 3 columns */
+@media (min-width: 1024px) {
+  .reports-grid {
+    grid-template-columns: 360px 360px minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+/* =========================
+   Report output container (screen)
+========================= */
+.rpt-print {
+  background: #fff;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.rpt-printHeader {
+  padding: 10px 14px 8px;
+}
+
+.rpt-printHeaderLine {
+  height: 1px;
+  background: rgba(17, 24, 39, 0.10);
+  margin-top: 8px;
+}
+
+.rpt-tableWrap {
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  background: #fff;
+}
+
+/* =========================
+   Print/PDF rules — IMPORTANT
+   - remove sticky
+   - remove scrollbars
+   - prevent header overlap
+========================= */
+@page {
+  margin: 10mm;
+}
+
+@media print {
+  html, body {
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* isolate report ONLY */
+  body * {
+    visibility: hidden !important;
+  }
+
+  #report-print,
+  #report-print * {
+    visibility: visible !important;
+  }
+
+  #report-print {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* kill sticky headers in print */
+  thead, th {
+    position: static !important;
+  }
+
+  /* no internal scrolling */
+  .rpt-tableWrap,
+  [data-pdf-nosroll="1"] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* simplify shadows */
+  .shadow-premium,
+  .reports-card,
+  .reports-hero {
+    box-shadow: none !important;
+  }
+
+  /* ensure tables behave in print */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* tighter typography for print */
+  #report-print {
+    font-size: 11px !important;
+  }
+
+  #report-print .text-xl,
+  #report-print .text-2xl,
+  #report-print .text-3xl {
+    font-size: 16px !important;
+  }
+}
+
+
+/* ===== Horizontal Layout ===== */
+.reports-grid-horizontal{
+  display:grid;
+  grid-template-columns: 1fr;
+  gap:16px;
+}
+
+/* Top bar: Library + Filters in one row (NO overflow) */
+.reports-topbar{
+  display:grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap:16px;
+  align-items:start;
+}
+
+/* CRITICAL: allow grid children to shrink instead of overflowing */
+.reports-topbar > *{
+  min-width: 0;
+}
+
+/* Collapse earlier so it never pushes Filters off-screen */
+@media (max-width: 1280px){
+  .reports-topbar{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Horizontal report library scroller */
+.reports-libraryRow{
+  display:flex;
+  gap:10px;
+  overflow:auto;
+  padding:8px;
+  border:1px solid hsl(var(--border));
+  border-radius:16px;
+  background: hsl(var(--muted)/0.15);
+  scroll-snap-type: x mandatory;
+}
+
+.reports-libraryRow::-webkit-scrollbar{ height:10px; }
+.reports-libraryRow::-webkit-scrollbar-thumb{
+  background: hsl(var(--border));
+  border-radius:999px;
+}
+
+.reports-libraryChip{
+  min-width: 280px;
+  max-width: 420px;
+  scroll-snap-align: start;
+}
+
+/* Viewer full width */
+.reports-viewerWide{
+  width:100%;
+  min-width: 0;
+}
+
+
+/* ===== Report Library Premium Grid ===== */
+.reports-libraryGrid{
+  display:grid;
+  gap:12px;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+}
+
+@media (min-width: 900px){
+  .reports-libraryGrid{
+    grid-template-columns: repeat(3, minmax(0,1fr));
+  }
+}
+
+@media (min-width: 1200px){
+  .reports-libraryGrid{
+    grid-template-columns: repeat(4, minmax(0,1fr));
+  }
+}
+
+/* Tile */
+.reports-tile{
+  text-align:left;
+  border-radius:18px;
+  border:1px solid rgba(17,24,39,0.10);
+  background: rgba(255,255,255,0.72);
+  box-shadow: 0 10px 34px rgba(0,0,0,0.06);
+  backdrop-filter: blur(10px);
+  overflow:hidden;
+  transform: translateY(0);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+  animation: rptFadeUp .26s ease both;
+}
+
+.reports-tileInner{
+  padding:12px 12px 12px;
+  min-height: 108px; /* small but premium */
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.reports-tileTop{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+.reports-tileIcon{
+  height:38px;
+  width:38px;
+  border-radius:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid rgba(17,24,39,0.12);
+  background: rgba(255,255,255,0.85);
+  color: rgba(55,65,81,0.9);
+  transition: transform .18s ease, background .18s ease, border-color .18s ease;
+}
+
+.reports-tileTitle{
+  font-weight: 850;
+  letter-spacing:-0.01em;
+  font-size: 13px;
+  line-height: 1.15;
+  color: rgba(17,24,39,0.92);
+  display:-webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow:hidden;
+}
+
+.reports-tileDesc{
+  font-size: 11px;
+  line-height: 1.25;
+  color: rgba(107,114,128,0.95);
+  display:-webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow:hidden;
+}
+
+.reports-tileBadge{
+  font-size:10px;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid rgba(17,24,39,0.10);
+  background: rgba(243,244,246,0.8);
+  color: rgba(17,24,39,0.75);
+  font-weight:700;
+}
+
+.reports-tileChevron{
+  height:28px;
+  width:28px;
+  border-radius:12px;
+  border:1px solid rgba(17,24,39,0.10);
+  background: rgba(255,255,255,0.8);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color: rgba(107,114,128,0.9);
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* Hover */
+.reports-tile:hover{
+  transform: translateY(-2px);
+  box-shadow: 0 18px 54px rgba(0,0,0,0.10);
+  border-color: rgba(127,29,29,0.28);
+  background: rgba(255,255,255,0.85);
+}
+
+.reports-tile:hover .reports-tileIcon{
+  transform: translateY(-1px);
+}
+
+/* Active */
+.reports-tile.is-active{
+  background: rgba(127,29,29,0.92);
+  border-color: rgba(127,29,29,0.95);
+  box-shadow: 0 20px 70px rgba(127,29,29,0.22);
+}
+
+.reports-tile.is-active .reports-tileTitle,
+.reports-tile.is-active .reports-tileDesc{
+  color: rgba(255,255,255,0.92);
+}
+
+.reports-tile.is-active .reports-tileDesc{
+  color: rgba(255,255,255,0.78);
+}
+
+.reports-tileIcon.is-active{
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.92);
+}
+
+.reports-tileBadge.is-active{
+  border-color: rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.9);
+}
+
+/* Fade/slide in (premium) */
+@keyframes rptFadeUp{
+  from{ opacity:0; transform: translateY(6px); }
+  to{ opacity:1; transform: translateY(0); }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  .reports-tile{ animation:none; transition:none; }
+}

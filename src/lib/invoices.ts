@@ -161,7 +161,79 @@ async function insertInvoiceMovements(invoice: any) {
   if (error) throw error;
 }
 
+/* =========================
+   Payments helpers (AUTO)
+========================= */
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
 
+async function sumPayments(invoiceId: number) {
+  const { data, error } = await supabase.from("invoice_payments").select("amount").eq("invoice_id", invoiceId);
+  if (error) throw error;
+  return round2((data || []).reduce((s: number, r: any) => s + n2(r.amount), 0));
+}
+
+async function insertPaymentRow(p: {
+  invoice_id: number;
+  amount: number;
+  method?: string;
+  reference?: string | null;
+  notes?: string | null;
+  is_auto?: boolean;
+  payment_date?: string;
+}) {
+  const amt = round2(n2(p.amount));
+  if (amt <= 0) return;
+
+  const { error } = await supabase.from("invoice_payments").insert({
+    invoice_id: p.invoice_id,
+    payment_date: p.payment_date ?? todayISO(),
+    amount: amt,
+    method: p.method ?? "Cash",
+    reference: p.reference ?? null,
+    notes: p.notes ?? null,
+    is_auto: !!p.is_auto,
+  });
+
+  if (error) throw error;
+}
+
+/**
+ * Ensures invoice_payments reflects the invoice's paid state.
+ * - If PAID: add missing payment for remaining balance
+ * - If PARTIALLY_PAID: add delta to reach invoice.amount_paid
+ */
+async function ensurePaymentsMatchInvoice(inv: Invoice, mode: "PAID" | "PARTIAL") {
+  const invoiceId = Number(inv.id);
+
+  const gross = round2(n2((inv as any).gross_total ?? (inv as any).total_amount));
+  const credits = round2(n2((inv as any).credits_applied ?? 0));
+
+  // What should be paid after credits
+  const dueAfterCredits = round2(Math.max(0, gross - credits));
+
+  const paidFromPayments = await sumPayments(invoiceId);
+
+  const targetPaid =
+    mode === "PAID" ? dueAfterCredits : round2(n2((inv as any).amount_paid ?? 0)); // partial: follow amount_paid
+
+  const delta = round2(targetPaid - paidFromPayments);
+
+  if (delta > 0.00001) {
+    await insertPaymentRow({
+      invoice_id: invoiceId,
+      amount: delta,
+      method: mode === "PAID" ? "Auto Adjustment" : "Auto Partial",
+      reference: mode === "PAID" ? "AUTO-PAID" : "AUTO-PARTIAL",
+      notes:
+        mode === "PAID"
+          ? "Auto payment inserted when invoice set to PAID"
+          : "Auto payment inserted when invoice set to PARTIALLY_PAID",
+      is_auto: true,
+    });
+  }
+}
 
 /* =========================
    LIST INVOICES (private / authenticated)
@@ -591,12 +663,20 @@ export async function setInvoicePayment(invoiceId: number, amount_paid: number) 
   else if (paid > eps || credits > eps) status = "PARTIALLY_PAID";
   else status = "ISSUED";
 
+  // 1) Update invoice header
   const final = await updateInvoiceHeader(invoiceId, {
     amount_paid: paid,
     status,
     balance_remaining: bal,
     balance_due: bal,
   } as any);
+
+  // 2) ✅ Ensure invoice_payments always matches paid status
+  if (status === "PAID") {
+    await ensurePaymentsMatchInvoice(final, "PAID");
+  } else if (status === "PARTIALLY_PAID") {
+    await ensurePaymentsMatchInvoice(final, "PARTIAL");
+  }
 
   const { data: joined } = await supabase
     .from("invoices")
@@ -623,11 +703,7 @@ export async function postInvoiceAndDeductStock(invoiceId: number) {
   }
 
   // ✅ Must not post empty invoice
-  const { data: anyItem, error: chkErr } = await supabase
-    .from("invoice_items")
-    .select("id")
-    .eq("invoice_id", invoiceId)
-    .limit(1);
+  const { data: anyItem, error: chkErr } = await supabase.from("invoice_items").select("id").eq("invoice_id", invoiceId).limit(1);
 
   if (chkErr) throw chkErr;
   if (!anyItem?.length) throw new Error("Cannot post invoice without items.");
@@ -642,8 +718,6 @@ export async function postInvoiceAndDeductStock(invoiceId: number) {
     stock_deducted_at: new Date().toISOString(),
   } as any);
 }
-
-
 
 export async function listInvoicesByCustomer(customerId: number) {
   if (!Number.isFinite(Number(customerId))) return [];
@@ -670,15 +744,21 @@ export async function markInvoicePaid(arg: any) {
   const gross = n2((inv as any).gross_total ?? (inv as any).total_amount);
   const credits = n2((inv as any).credits_applied ?? 0);
 
-  // Pay only what is actually still due
-  const payNeeded = Math.max(0, gross - credits);
+  // Pay only what is actually still due after credits
+  const payNeeded = round2(Math.max(0, gross - credits));
 
-  return updateInvoiceHeader(invoiceId, {
+  // 1) Update invoice header
+  const updated = await updateInvoiceHeader(invoiceId, {
     amount_paid: payNeeded,
     status: "PAID",
     balance_remaining: 0,
     balance_due: 0,
   } as any);
+
+  // 2) ✅ Enforce payment row exists (auto insert missing delta)
+  await ensurePaymentsMatchInvoice(updated, "PAID");
+
+  return updated as Invoice;
 }
 
 export async function voidInvoice(arg: any) {

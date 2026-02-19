@@ -208,3 +208,71 @@
 main { -webkit-overflow-scrolling: touch; }
 
 
+/* =========================
+   Enterprise App Shell (no frame, no black box, consistent canvas)
+========================= */
+
+/* App background (soft enterprise canvas) */
+.rp-appShell{
+  background:
+    radial-gradient(circle at 18% 12%, hsl(var(--primary) / 0.10), transparent 42%),
+    radial-gradient(circle at 82% 18%, hsl(224 71% 4% / 0.04), transparent 48%),
+    linear-gradient(to bottom, hsl(var(--background)), hsl(var(--background)));
+}
+
+/* Dark mode canvas */
+.dark .rp-appShell{
+  background:
+    radial-gradient(circle at 18% 12%, hsl(var(--primary) / 0.14), transparent 46%),
+    radial-gradient(circle at 82% 18%, rgba(255,255,255,0.05), transparent 50%),
+    linear-gradient(to bottom, hsl(var(--background)), hsl(var(--background)));
+}
+
+/* Main scroll area = the product “canvas” */
+.rp-scroll{
+  padding: 18px 22px 28px 22px;
+  /* removes any accidental “frame line” feel */
+  background: transparent;
+}
+@media (max-width: 768px){
+  .rp-scroll{ padding: 14px 14px 22px 14px; }
+}
+@media (min-width: 1024px){
+  .rp-scroll{ padding: 18px 26px 32px 26px; }
+}
+
+/* Page container (keeps dashboard + all pages consistent) */
+.rp-page{
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+/* Enterprise: stop borders from showing as “lines” everywhere */
+.rp-card,
+.rp-hero{
+  border-color: transparent !important;
+}
+
+/* Tables: remove “boxy” feel (no hard borders) */
+.rp-tableWrap,
+.rp-tableWrap *{
+  border-color: hsl(var(--border) / 0.55);
+}
+.dark .rp-tableWrap,
+.dark .rp-tableWrap *{
+  border-color: hsl(var(--border) / 0.75);
+}
+
+/* Header: prevent double border line (your AppHeader already has border-b) */
+.rp-headerWrap{
+  border-bottom: none !important;
+}
+
+@keyframes rpDotsShine {
+  0% { transform: translateX(-60%); opacity: 0; }
+  20% { opacity: .9; }
+  55% { opacity: .9; }
+  100% { transform: translateX(60%); opacity: 0; }
+}
+
+
