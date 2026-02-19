@@ -1154,18 +1154,18 @@ export default function CreditNoteCreate() {
             <div className="inv-table-wrap">
               <table className="inv-table inv-table--invoiceCols">
                 <colgroup>
-                  <col style={{ width: "4%" }} />
-                  <col style={{ width: "29%" }} />
-                  <col style={{ width: "5%" }} />
-                  <col style={{ width: "16%" }} />
-                  <col style={{ width: "7%" }} />
-                  <col style={{ width: "8%" }} />
-                  <col style={{ width: "10%" }} />
-                  <col style={{ width: "7%" }} />
-                  <col style={{ width: "10%" }} />
-                  <col style={{ width: "12%" }} />
-                  <col style={{ width: "4%" }} />
-                </colgroup>
+                    <col style={{ width: "44px" }} />   {/* # */}
+                    <col style={{ width: "360px" }} />  {/* PRODUCT */}
+                    <col style={{ width: "56px" }} />   {/* 🔍 */}
+                    <col style={{ width: "190px" }} />  {/* QTY (UOM + Qty input) */}
+                    <col style={{ width: "90px" }} />   {/* UNIT */}
+                    <col style={{ width: "110px" }} />  {/* TOTAL QTY */}
+                    <col style={{ width: "120px" }} />  {/* UNIT EX */}
+                    <col style={{ width: "90px" }} />   {/* VAT % */}
+                    <col style={{ width: "120px" }} />  {/* UNIT INC */}
+                    <col style={{ width: "140px" }} />  {/* TOTAL */}
+                    <col style={{ width: "44px" }} />   {/* X */}
+               </colgroup>
 
                 <thead>
                   <tr>

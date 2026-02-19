@@ -352,7 +352,7 @@
 .inv-items-sub{ margin-top:2px; font-size:12px; color:var(--inv-muted); }
 
 .inv-table-wrap{
-  overflow-x:auto;
+  overflow-x: hidden !important;
   border-radius:16px;
   border:1px solid rgba(15,23,42,.08);
   background:#fff;
@@ -1056,5 +1056,65 @@
 }
 
 
+/* =========================================================
+   ITEMS ROW — compact widths (Product smaller, Search smaller, VAT smaller)
+   Paste at VERY BOTTOM
+========================================================= */
 
+/* Slightly tighter table padding */
+.inv-table .inv-th{ padding: 10px 8px !important; }
+.inv-table .inv-td{ padding: 8px 8px !important; }
 
+/* Make PRODUCT column a bit smaller */
+.inv-table--invoiceCols colgroup col:nth-child(2){ width: 24% !important; } /* was 29% */
+
+/* Make 🔍 column smaller */
+.inv-table--invoiceCols colgroup col:nth-child(3){ width: 44px !important; }
+.inv-table--invoiceCols th:nth-child(3),
+.inv-table--invoiceCols td:nth-child(3){
+  width: 44px !important;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
+}
+
+/* Smaller 🔍 button */
+.inv-prodSearchBtn,
+.inv-iconBtn--table{
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 12px !important;
+  font-size: 14px !important;
+  box-shadow: 0 6px 14px rgba(0,0,0,.06) !important;
+}
+
+/* QTY cell tighter */
+.inv-input--uom{ width: 72px !important; min-width: 72px !important; }
+.inv-input--qty{ width: 76px !important; min-width: 76px !important; }
+.inv-boxcell{ gap: 6px !important; }
+
+/* UNIT (units_per_box) smaller */
+.inv-table--invoiceCols colgroup col:nth-child(5){ width: 6% !important; }  /* was 7% */
+
+/* TOTAL QTY smaller */
+.inv-table--invoiceCols colgroup col:nth-child(6){ width: 7% !important; }  /* was 8% */
+
+/* UNIT EX smaller */
+.inv-table--invoiceCols colgroup col:nth-child(7){ width: 9% !important; }  /* was 10% */
+
+/* VAT % smaller */
+.inv-table--invoiceCols colgroup col:nth-child(8){ width: 6% !important; }  /* was 7% */
+
+/* VAT input tighter */
+.inv-table--invoiceCols td:nth-child(8) .inv-input,
+.inv-table--invoiceCols th:nth-child(8){
+  padding-left: 6px !important;
+  padding-right: 6px !important;
+}
+
+/* Keep product select clean + compact */
+.inv-input--prod{
+  padding-top: 9px !important;
+  padding-bottom: 9px !important;
+  padding-left: 12px !important;
+  padding-right: 34px !important; /* arrow room */
+}

@@ -119,7 +119,14 @@ function normUom(it: RamPotteryDocItem): "BOX" | "PCS" | "KG" | "G" | "BAG" {
   return "BOX";
 }
 
-/** qty input: BOX/KG => box_qty, PCS => pcs_qty, G => grams_qty, BAG => bags_qty; fallback => total_qty */
+/** qty input:
+ *  - BOX/KG => box_qty
+ *  - PCS    => pcs_qty
+ *  - G      => grams_qty
+ *  - BAG    => bags_qty (or fallback to box_qty because InvoiceCreate sends bag count in box_qty)
+ *  - fallback => total_qty
+ */
+
 function qtyInput(it: RamPotteryDocItem): number | null {
   const u = normUom(it);
 
@@ -143,23 +150,40 @@ function qtyInput(it: RamPotteryDocItem): number | null {
 
   if (u === "BAG") {
     const v = (it as any).bags_qty;
-    if (v === null || v === undefined || v === "") return fallbackTotal();
-    return n2(v);
+    if (v !== null && v !== undefined && v !== "") return n2(v);
+
+    // ✅ IMPORTANT: InvoiceCreate passes BAG count in box_qty
+    const bx = it.box_qty;
+    if (bx !== null && bx !== undefined && bx !== "") return n2(bx);
+
+    return fallbackTotal();
   }
 
-  const v = it.box_qty; // BOX or KG
+  // BOX or KG
+  const v = it.box_qty;
   if (v === null || v === undefined || v === "") return fallbackTotal();
   return n2(v);
 }
 
-/** units per box: only for BOX */
+/** units per box:
+ *  - BOX => units_per_box
+ *  - BAG => units_per_box (kg per bag, default 25)
+ */
 function upb(it: RamPotteryDocItem): number | null {
   const u = normUom(it);
-  if (u !== "BOX") return null;
+
+  if (u !== "BOX" && u !== "BAG") return null;
+
   const v = it.units_per_box ?? it.unit_per_box;
-  if (v === null || v === undefined || v === "") return null;
-  return Math.max(1, Math.trunc(n2(v)));
+  if (v === null || v === undefined || v === "") return u === "BAG" ? 25 : null;
+
+  const num = n2(v);
+  if (!Number.isFinite(num) || num <= 0) return u === "BAG" ? 25 : null;
+
+  // BAG can be 25 (int), BOX is int
+  return Math.max(1, Math.trunc(num));
 }
+
 
 /** display qty nicely */
 function fmtQty(uom: "BOX" | "PCS" | "KG" | "G" | "BAG", v: number | null) {
@@ -259,7 +283,7 @@ function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
               {/* ✅ shows "10 PCS" / "2 BOX" / "1.25 KG" / "500 G" / "3 BAG" */}
               <td>{qtyText ? `${qtyText} ${u}` : ""}</td>
 
-              <td>{u === "BOX" ? unitPerBoxText : ""}</td>
+              <td>{u === "BOX" || u === "BAG" ? unitPerBoxText : ""}</td>
 
               {/* ✅ TOTAL QTY from DB (already correct based on your CN create logic) */}
               <td>{txt(it.total_qty)}</td>
