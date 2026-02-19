@@ -498,75 +498,80 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   );
 
   const BoxesBlock = (
-    <div className="rpdoc-boxes">
-      <div className="rpdoc-box">
-        <div className="rpdoc-boxHead">CUSTOMER DETAILS</div>
-        <div className="rpdoc-boxBody">
-          <div className="rpdoc-kv">
-            <div className="k">Name:</div>
-            <div className="v">{txt(customer?.name)}</div>
-          </div>
-          <div className="rpdoc-kv">
-            <div className="k">Address:</div>
-            <div className="v">{txt(customer?.address)}</div>
-          </div>
-          <div className="rpdoc-kv">
-            <div className="k">Tel:</div>
-            <div className="v">{txt(customer?.phone)}</div>
-          </div>
+  <div className="rpdoc-boxes">
+    <div className="rpdoc-box">
+      <div className="rpdoc-boxHead">CUSTOMER DETAILS</div>
 
-          <div className="rpdoc-kvLine">
-            <div className="kvPair">
-              <div className="k">BRN:</div>
-              <div className="v rpdoc-nowrap">{txt(customer?.brn)}</div>
-            </div>
-
-            <div className="kvPair">
-              <div className="k">VAT NO:</div>
-              <div className="v rpdoc-nowrap">{txt(customer?.vat_no)}</div>
-            </div>
-          </div>
-
-          <div className="rpdoc-kv">
-            <div className="k">Customer Code:</div>
-            <div className="v">{txt(customer?.customer_code)}</div>
-          </div>
+      <div className="rpdoc-boxBody">
+        {/* Name */}
+        <div className="rpdoc-kv">
+          <div className="k">Name:</div>
+          <div className="v">{txt(customer?.name)}</div>
         </div>
-      </div>
 
-      <div className="rpdoc-box">
-        <div className="rpdoc-boxHead">
-          BRN: {txt(company?.brn) || "-"}
-          <span className="rpdoc-dot">•</span>
-          VAT NO: {txt(company?.vat_no) || "-"}
+        {/* Address */}
+        <div className="rpdoc-kv">
+          <div className="k">Address:</div>
+          <div className="v">{txt(customer?.address)}</div>
         </div>
-        <div className="rpdoc-boxBody">
-          <div className="rpdoc-kv">
-            <div className="k">{docNoLabel}</div>
-            <div className="v">{txt(docNoValue)}</div>
-          </div>
-          <div className="rpdoc-kv">
-            <div className="k">{dateLabel}</div>
-            <div className="v">{txt(dateValue)}</div>
-          </div>
-          <div className="rpdoc-kv">
-            <div className="k">{poLabel}</div>
-            <div className="v">{txt(purchaseOrderValue)}</div>
-          </div>
 
-          {/* ✅ Sales rep MUST show */}
-          <div className="rpdoc-kv">
-            <div className="k">Sales Rep :</div>
-            <div className="v">{txt(salesRepName)}</div>
-          </div>
-          <div className="rpdoc-kv">
-            <div className="k">Tel:</div>
-            <div className="v">{txt(salesRepPhone)}</div>
-          </div>
+        {/* Tel */}
+        <div className="rpdoc-kv">
+          <div className="k">Tel:</div>
+          <div className="v">{txt(customer?.phone)}</div>
+        </div>
+
+        {/* BRN only (single line) */}
+        <div className="rpdoc-kv">
+          <div className="k">BRN:</div>
+          <div className="v rpdoc-nowrap">{txt(customer?.brn)}</div>
+        </div>
+
+        {/* VAT appears once under BRN */}
+        <div className="rpdoc-kv">
+          <div className="k">VAT NO:</div>
+          <div className="v rpdoc-nowrap">{txt(customer?.vat_no)}</div>
         </div>
       </div>
     </div>
-  );
+
+    <div className="rpdoc-box">
+      <div className="rpdoc-boxHead">
+        BRN: {txt(company?.brn) || "-"}
+        <span className="rpdoc-dot">•</span>
+        VAT NO: {txt(company?.vat_no) || "-"}
+      </div>
+
+      <div className="rpdoc-boxBody">
+        <div className="rpdoc-kv">
+          <div className="k">{docNoLabel}</div>
+          <div className="v">{txt(docNoValue)}</div>
+        </div>
+
+        <div className="rpdoc-kv">
+          <div className="k">{dateLabel}</div>
+          <div className="v">{txt(dateValue)}</div>
+        </div>
+
+        <div className="rpdoc-kv">
+          <div className="k">{poLabel}</div>
+          <div className="v">{txt(purchaseOrderValue)}</div>
+        </div>
+
+        <div className="rpdoc-kv">
+          <div className="k">Sales Rep :</div>
+          <div className="v">{txt(salesRepName)}</div>
+        </div>
+
+        <div className="rpdoc-kv">
+          <div className="k">Tel:</div>
+          <div className="v">{txt(salesRepPhone)}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 
   // Page 1 footer only when <=7
   const Page1Footer = count <= 7 ? (
