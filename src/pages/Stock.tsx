@@ -12,6 +12,8 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
+import * as XLSX from "xlsx";
+
 import {
   Package,
   Plus,
@@ -23,6 +25,10 @@ import {
   X,
   ChevronUp,
   ChevronDown,
+  History,
+  Upload,
+  ArrowUpRight,
+  FileSpreadsheet,
 } from "lucide-react";
 
 /* =========================
@@ -42,6 +48,20 @@ type ProductCategoryLink = {
 
 type StockUnit = "PCS" | "WEIGHT" | "BAGS";
 type PriceUnit = "PCS" | "KG" | "BAG";
+
+type StockMovement = {
+  id: number;
+  product_id: number;
+  movement_date: string;
+  movement_type: "IN" | "OUT" | "ADJUSTMENT";
+  quantity: number;
+  quantity_grams?: number | null;
+  reference?: string | null;
+  source_table?: string | null;
+  source_id?: number | null;
+  notes?: string | null;
+  created_at?: string | null;
+};
 
 /* =========================
    Helpers
@@ -97,6 +117,18 @@ function splitGramsToKgG(g: number) {
   return { kg: Math.floor(grams / 1000), g: grams % 1000 };
 }
 
+function fmtDateTime(iso: any) {
+  const d = iso ? new Date(String(iso)) : null;
+  if (!d || Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /**
  * Low stock logic:
  * - PCS/BAGS: compare current_stock (count) <= reorder_level
@@ -114,7 +146,6 @@ function isLowStock(p: Product) {
     return kg <= reorder;
   }
 
-  // PCS or BAGS stored in current_stock
   const count = n0((p as any).current_stock);
   return count <= reorder;
 }
@@ -143,7 +174,6 @@ function stockDisplay(p: Product) {
     };
   }
 
-  // PCS
   const { boxes, units } = splitPcsToBoxUnits(pcsOrBags, upb);
   return {
     unit,
@@ -159,6 +189,28 @@ function csvEscape(x: any) {
 function downloadCsv(filename: string, header: string[], rows: any[][]) {
   const csv = [header.join(","), ...rows.map((r) => r.map(csvEscape).join(","))].join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadXlsx(filename: string, sheetName: string, header: string[], rows: any[][]) {
+  const aoa = [header, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+  // browser-safe
+  const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([out], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -185,7 +237,6 @@ function toPayload(form: any): ProductUpsert {
       ? "KG"
       : "PCS";
 
-  // STOCK -> base storage
   let current_stock_pcs_or_bags = 0;
   let current_stock_grams = 0;
 
@@ -201,7 +252,6 @@ function toPayload(form: any): ProductUpsert {
     current_stock_grams = Math.max(0, kg * 1000 + g);
     current_stock_pcs_or_bags = 0;
   } else {
-    // ✅ BAGS stored as count inside current_stock
     const bags = Math.max(0, nInt(form.current_stock_bags) ?? 0);
     current_stock_pcs_or_bags = bags;
     current_stock_grams = 0;
@@ -230,7 +280,7 @@ function toPayload(form: any): ProductUpsert {
 }
 
 /* =========================
-   Supabase category helpers
+   Supabase helpers
 ========================= */
 async function fetchCategories() {
   const { data, error } = await supabase.from("categories").select("*").order("name", { ascending: true });
@@ -258,6 +308,17 @@ async function syncProductCategories(productId: number, categoryIds: string[]) {
   const rows = uniq.map((cid) => ({ product_id: productId, category_id: cid }));
   const { error: insErr } = await supabase.from("product_categories").insert(rows);
   if (insErr) throw insErr;
+}
+
+async function fetchStockHistory(productId: number, limit = 80) {
+  const { data, error } = await supabase
+    .from("stock_movements")
+    .select("id,product_id,movement_date,movement_type,quantity,quantity_grams,reference,source_table,source_id,notes,created_at")
+    .eq("product_id", productId)
+    .order("movement_date", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data || []) as StockMovement[];
 }
 
 /* =========================
@@ -336,9 +397,7 @@ function Stat({
   return (
     <Card className={`p-3 shadow-premium ring-1 rounded-2xl ${ring}`}>
       <div className="flex items-center gap-3">
-        <div className="h-9 w-9 rounded-xl bg-background ring-1 ring-border flex items-center justify-center">
-          {icon}
-        </div>
+        <div className="h-9 w-9 rounded-xl bg-background ring-1 ring-border flex items-center justify-center">{icon}</div>
         <div className="min-w-0">
           <div className="text-[11px] text-muted-foreground">{label}</div>
           <div className="text-sm font-extrabold truncate">{value}</div>
@@ -348,10 +407,55 @@ function Stat({
   );
 }
 
+function DrawerShell({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <div
+        className={`fixed inset-0 z-[60] transition ${open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
+        onClick={onClose}
+      >
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+      </div>
+
+      <div
+        className={`fixed right-0 top-0 z-[61] h-full w-[94vw] max-w-[520px] bg-white shadow-2xl border-l transition-transform duration-300 ${
+          open ? "translate-x-0" : "translate-x-full"
+        }`}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="p-4 border-b bg-white/90 backdrop-blur">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-extrabold truncate">{title}</div>
+              <div className="text-[11px] text-muted-foreground">Stock movements trail • newest first</div>
+            </div>
+            <Button variant="outline" className="h-8 rounded-xl" onClick={onClose}>
+              Close
+            </Button>
+          </div>
+        </div>
+
+        <div className="h-[calc(100%-68px)] overflow-auto p-4 bg-slate-50/40">{children}</div>
+      </div>
+    </>
+  );
+}
+
 /* =========================
    Virtual list constants
 ========================= */
-const ROW_H = 86; // fixed row height for virtualization
+const ROW_H = 86;
 const OVERSCAN = 8;
 
 /* =========================
@@ -366,7 +470,7 @@ export default function Stock() {
   const [activeOnly, setActiveOnly] = useState(true);
   const [lowOnly, setLowOnly] = useState(false);
 
-  // category filter (optional + lazy)
+  // category filter
   const [showCategories, setShowCategories] = useState(false);
   const [catQ, setCatQ] = useState("");
   const [filterCategoryId, setFilterCategoryId] = useState<string | "ALL">("ALL");
@@ -377,10 +481,21 @@ export default function Stock() {
   const [form, setForm] = useState<any>(emptyForm);
   const [catPickQ, setCatPickQ] = useState("");
 
-  // list virtualization state
+  // list virtualization
   const listRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(640);
+
+  // ✅ Update Stock dialog
+  const [stockOpen, setStockOpen] = useState(false);
+  const [stockProduct, setStockProduct] = useState<Product | null>(null);
+  const [stockType, setStockType] = useState<"IN" | "OUT" | "ADJUSTMENT">("IN");
+  const [stockQty, setStockQty] = useState("");
+  const [stockNotes, setStockNotes] = useState("");
+
+  // ✅ Stock history drawer
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyProduct, setHistoryProduct] = useState<Product | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
@@ -406,7 +521,7 @@ export default function Stock() {
     };
   }, []);
 
-  // Categories (only useful if showCategories OR filterCategoryId not ALL OR dialog uses it)
+  // Categories
   const categoriesQ = useQuery({
     queryKey: ["categories"],
     queryFn: fetchCategories,
@@ -435,7 +550,7 @@ export default function Stock() {
 
   const rows = (productsQ.data || []) as Product[];
 
-  // Lazy load category links ONLY when needed (showCategories or filtering by category)
+  // Lazy load category links
   const needLinks = showCategories || filterCategoryId !== "ALL";
   const productIdsKey = useMemo(() => rows.map((r) => r.id).join(","), [rows]);
 
@@ -458,6 +573,15 @@ export default function Stock() {
     return m;
   }, [linksQ.data]);
 
+  // ✅ Stock history query (drawer only)
+  const historyQ = useQuery({
+    queryKey: ["stock_history", historyProduct?.id || 0],
+    enabled: historyOpen && !!historyProduct?.id,
+    queryFn: () => fetchStockHistory(Number(historyProduct?.id), 120),
+    staleTime: 10_000,
+  });
+  const historyRows = (historyQ.data || []) as StockMovement[];
+
   // Mutations
   const createM = useMutation({
     mutationFn: (payload: ProductUpsert) => createProduct(payload),
@@ -478,7 +602,7 @@ export default function Stock() {
     onError: (e: any) => toast.error(e?.message || "Failed"),
   });
 
-  // Sorting (fast + stable)
+  // Sorting
   const [sort, setSort] = useState<{ key: "name" | "stock" | "price"; dir: "asc" | "desc" }>({
     key: "name",
     dir: "asc",
@@ -489,16 +613,14 @@ export default function Stock() {
       if (st.key === key) return { key, dir: st.dir === "asc" ? "desc" : "asc" };
       return { key, dir: "asc" };
     });
-    // reset scroll to top for a crisp feel
     if (listRef.current) listRef.current.scrollTop = 0;
     setScrollTop(0);
   };
 
-  // Render rows (derived + filtered + sorted)
+  // Render rows
   const rendered = useMemo(() => {
     const filterId = filterCategoryId;
 
-    // build light row model
     const base = rows.map((p) => {
       const low = isLowStock(p);
       const stock = stockDisplay(p);
@@ -506,9 +628,8 @@ export default function Stock() {
       const catIds = needLinks ? categoryIdsByProductId.get(p.id) || [] : [];
       const reorder = n0((p as any).reorder_level);
 
-      // numeric stock for sorting
       let stockN = 0;
-      if (stock.unit === "WEIGHT") stockN = n0((p as any).current_stock_grams) / 1000; // kg
+      if (stock.unit === "WEIGHT") stockN = n0((p as any).current_stock_grams) / 1000;
       else stockN = n0((p as any).current_stock);
 
       return {
@@ -533,7 +654,6 @@ export default function Stock() {
     filtered.sort((a, b) => {
       if (sort.key === "price") return (a.priceN - b.priceN) * dirMul;
       if (sort.key === "stock") return (a.stockN - b.stockN) * dirMul;
-      // name
       return a.p.name.localeCompare(b.p.name) * dirMul;
     });
 
@@ -620,7 +740,11 @@ export default function Stock() {
   function openEdit(p: Product) {
     const stock_unit: StockUnit = normalizeStockUnit((p as any).stock_unit);
     const selling_price_unit: PriceUnit =
-      stock_unit === "WEIGHT" ? "KG" : stock_unit === "BAGS" ? "BAG" : normalizePriceUnit((p as any).selling_price_unit);
+      stock_unit === "WEIGHT"
+        ? "KG"
+        : stock_unit === "BAGS"
+        ? "BAG"
+        : normalizePriceUnit((p as any).selling_price_unit);
 
     const upb = Math.max(1, Math.trunc(n0(p.units_per_box ?? 1)));
     const pcsOrBags = Math.max(0, Math.trunc(n0((p as any).current_stock ?? 0)));
@@ -663,6 +787,19 @@ export default function Stock() {
       category_ids: catIds,
     });
     setOpen(true);
+  }
+
+  function openStockUpdate(p: Product) {
+    setStockProduct(p);
+    setStockType("IN");
+    setStockQty("");
+    setStockNotes("");
+    setStockOpen(true);
+  }
+
+  function openHistory(p: Product) {
+    setHistoryProduct(p);
+    setHistoryOpen(true);
   }
 
   async function save() {
@@ -722,10 +859,46 @@ export default function Stock() {
     }
   }
 
-  const exportCsv = () => {
-    if (!rows.length) return toast.error("No stock items to export");
+  // ✅ Manual Stock Update -> stock_movements
+  async function applyStockUpdate() {
+    if (!stockProduct) return;
 
-    const header = [
+    const qty = Number(stockQty);
+    if (!Number.isFinite(qty) || qty === 0) return toast.error("Invalid quantity");
+
+    const row = {
+      product_id: stockProduct.id,
+      movement_type: stockType,
+      quantity: qty,
+      reference: `MANUAL:${Date.now()}`,
+      source_table: "manual",
+      source_id: null,
+      notes: s(stockNotes) || "Manual stock update",
+    };
+
+    const { error } = await supabase.from("stock_movements").insert(row);
+    if (error) return toast.error(error.message);
+
+    toast.success("Stock updated");
+    setStockOpen(false);
+    setStockQty("");
+    setStockNotes("");
+    const pid = stockProduct.id;
+    setStockProduct(null);
+
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["products"], exact: false }),
+      qc.invalidateQueries({ queryKey: ["stock_history"], exact: false }),
+    ]);
+
+    if (historyOpen && historyProduct?.id === pid) historyQ.refetch();
+  }
+
+  /* =========================
+     Export / Template (CSV + XLSX)
+  ========================= */
+  const exportHeader = useMemo(
+    () => [
       "sku",
       "item_code",
       "name",
@@ -739,9 +912,12 @@ export default function Stock() {
       "cost_price",
       "reorder_level",
       "is_active",
-    ];
+    ],
+    []
+  );
 
-    const data = rows.map((p) => [
+  const exportRows = useMemo(() => {
+    return rows.map((p) => [
       p.sku || "",
       p.item_code || "",
       p.name || "",
@@ -756,37 +932,173 @@ export default function Stock() {
       (p as any).reorder_level ?? "",
       (p as any).is_active ? "TRUE" : "FALSE",
     ]);
+  }, [rows]);
 
-    downloadCsv("stock-items.csv", header, data);
+  const exportCsv = () => {
+    if (!rows.length) return toast.error("No stock items to export");
+    downloadCsv("stock-items.csv", exportHeader, exportRows);
     toast.success("Downloaded stock-items.csv");
   };
 
-  const downloadTemplateCsv = () => {
-    const header = [
-      "sku",
-      "item_code",
-      "name",
-      "description",
-      "stock_unit",
-      "units_per_box",
-      "current_stock",
-      "current_stock_grams",
-      "selling_price",
-      "selling_price_unit",
-      "cost_price",
-      "reorder_level",
-      "is_active",
-    ];
+  const exportExcel = () => {
+    if (!rows.length) return toast.error("No stock items to export");
+    downloadXlsx("stock-items.xlsx", "StockItems", exportHeader, exportRows);
+    toast.success("Downloaded stock-items.xlsx");
+  };
 
-    const sample = [
+  const templateRows = useMemo(
+    () => [
       ["", "ITEM-PCS-001", "Sample Lamp", "Lamp - PCS example", "PCS", "20", "30", "0", "120", "PCS", "80", "30", "TRUE"],
       ["", "ITEM-KG-001", "Sample Cement (Bulk)", "WEIGHT example", "WEIGHT", "", "0", "5250", "180", "KG", "130", "2", "TRUE"],
       ["", "ITEM-BAG-001", "Sample Cement Bag 50kg", "BAGS example", "BAGS", "", "25", "0", "260", "BAG", "210", "10", "TRUE"],
-    ];
+    ],
+    []
+  );
 
-    downloadCsv("stock-import-template.csv", header, sample);
+  const downloadTemplateCsv = () => {
+    downloadCsv("stock-import-template.csv", exportHeader, templateRows);
     toast.success("Downloaded template CSV");
   };
+
+  const downloadTemplateExcel = () => {
+    downloadXlsx("stock-import-template.xlsx", "Template", exportHeader, templateRows);
+    toast.success("Downloaded template XLSX");
+  };
+
+  /* =========================
+     Import Excel / CSV (hardened)
+     - template columns
+     - upsert by sku
+  ========================= */
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    // basic guardrails (admin imports only)
+    const maxMB = 8;
+    if (file.size > maxMB * 1024 * 1024) {
+      return toast.error(`File too large. Max ${maxMB}MB.`);
+    }
+
+    const nameLower = (file.name || "").toLowerCase();
+    const isCsv = nameLower.endsWith(".csv");
+
+    try {
+      let wb: XLSX.WorkBook;
+
+      if (isCsv) {
+        const text = await file.text();
+        // safer parsing: no formulas, minimal extras
+        wb = XLSX.read(text, {
+          type: "string",
+          cellFormula: false,
+          cellNF: false,
+          cellText: true,
+          dense: true,
+        } as any);
+      } else {
+        const buf = await file.arrayBuffer();
+        wb = XLSX.read(buf, {
+          type: "array",
+          cellFormula: false,
+          cellNF: false,
+          cellText: true,
+          dense: true,
+        } as any);
+      }
+
+      const firstSheet = wb.SheetNames?.[0];
+      if (!firstSheet) return toast.error("No sheets found");
+
+      const ws = wb.Sheets[firstSheet];
+      const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+
+      if (!json.length) return toast.error("Empty file");
+
+      // normalize column keys (support user capitalization)
+      const normKey = (k: any) => String(k ?? "").trim().toLowerCase();
+
+      let ok = 0;
+      let fail = 0;
+      const hardFailRows: number[] = [];
+
+      for (let i = 0; i < json.length; i++) {
+        const src = json[i] || {};
+        const row: any = {};
+        for (const k of Object.keys(src)) row[normKey(k)] = src[k];
+
+        const productName = s(row.name);
+        if (!productName) {
+          fail++;
+          hardFailRows.push(i + 2); // +2 = header row + 1-based data row
+          continue;
+        }
+
+        const payload: any = {
+          sku: s(row.sku) || genSku(),
+          item_code: s(row.item_code) || null,
+          name: productName,
+          description: s(row.description) || "",
+
+          stock_unit: normalizeStockUnit(row.stock_unit),
+          units_per_box: row.units_per_box === "" ? null : nInt(row.units_per_box),
+
+          current_stock: Math.max(0, n0(row.current_stock)),
+          current_stock_grams: Math.max(0, n0(row.current_stock_grams)),
+
+          selling_price: Math.max(0, n0(row.selling_price)),
+          selling_price_unit: normalizePriceUnit(row.selling_price_unit),
+
+          cost_price:
+            row.cost_price === ""
+              ? null
+              : Number.isFinite(Number(row.cost_price))
+              ? Number(row.cost_price)
+              : null,
+
+          reorder_level: row.reorder_level === "" ? null : Math.max(0, nInt(row.reorder_level) ?? 0),
+
+          is_active: String(row.is_active).toUpperCase() === "FALSE" ? false : true,
+          image_url: "",
+        };
+
+        // enforce unit rules
+        if (payload.stock_unit === "WEIGHT") {
+          payload.current_stock = 0;
+          payload.selling_price_unit = "KG";
+          payload.units_per_box = null;
+        } else if (payload.stock_unit === "BAGS") {
+          payload.current_stock_grams = 0;
+          payload.selling_price_unit = "BAG";
+          payload.units_per_box = null;
+        } else {
+          payload.current_stock_grams = 0;
+          payload.selling_price_unit = payload.selling_price_unit === "KG" ? "KG" : "PCS";
+        }
+
+        const { error } = await supabase.from("products").upsert(payload, { onConflict: "sku" });
+
+        if (error) {
+          fail++;
+          hardFailRows.push(i + 2);
+          continue;
+        }
+        ok++;
+      }
+
+      if (hardFailRows.length) {
+        toast.success(`Imported: ${ok} • Failed: ${fail} (rows: ${hardFailRows.slice(0, 8).join(", ")}${hardFailRows.length > 8 ? "…" : ""})`);
+      } else {
+        toast.success(`Imported: ${ok}`);
+      }
+
+      qc.invalidateQueries({ queryKey: ["products"], exact: false });
+      qc.invalidateQueries({ queryKey: ["product_categories_links"], exact: false });
+    } catch (err: any) {
+      toast.error(err?.message || "Import failed");
+    }
+  }
 
   const scrollToTop = () => {
     if (listRef.current) listRef.current.scrollTop = 0;
@@ -796,12 +1108,12 @@ export default function Stock() {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   };
 
+  // ✅ animated LOW pill + row pulse
   const Row = useCallback(
-    ({ r, index }: { r: (typeof rendered)[number]; index: number }) => {
+    ({ r }: { r: (typeof rendered)[number]; index: number }) => {
       const p = r.p;
       const ref = (p.item_code || p.sku || "-").toString();
 
-      // categories (optional)
       const catIds = r.catIds || [];
       const catNames = catIds
         .map((id: string) => categoryById.get(id)?.name)
@@ -811,30 +1123,43 @@ export default function Stock() {
 
       return (
         <div
-          className="group grid items-center gap-3 rounded-2xl border bg-white px-4 py-3 shadow-sm hover:shadow-md hover:border-slate-200 transition"
+          className={`group grid items-center gap-3 rounded-2xl border bg-white px-4 py-3 shadow-sm hover:shadow-md hover:border-slate-200 transition relative ${
+            r.low ? "ring-1 ring-amber-500/25" : ""
+          }`}
           style={{
-            gridTemplateColumns: "92px 1.3fr 0.9fr 0.7fr 0.7fr 96px",
+            gridTemplateColumns: "92px 1.3fr 0.9fr 0.7fr 0.7fr 128px",
             height: ROW_H - 10,
           }}
           title="Double click to edit"
           onDoubleClick={() => openEdit(p)}
         >
+          {/* soft pulse */}
+          {r.low ? (
+            <div className="pointer-events-none absolute inset-0 rounded-2xl overflow-hidden">
+              <div className="absolute inset-0 bg-amber-400/10 animate-[pulse_1.6s_ease-in-out_infinite]" />
+            </div>
+          ) : null}
+
           {/* Status + Ref */}
-          <div className="min-w-0">
+          <div className="min-w-0 relative">
             <div className="flex items-center gap-2">
-              <Pill tone={p.is_active ? "ok" : "bad"}>{p.is_active ? "ACTIVE" : "INACTIVE"}</Pill>
+              <Pill tone={(p as any).is_active ? "ok" : "bad"}>{(p as any).is_active ? "ACTIVE" : "INACTIVE"}</Pill>
+
               {r.low ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  LOW
-                </span>
+                <div className="relative inline-flex items-center">
+                  <span className="absolute -inset-1 rounded-full bg-amber-400/20 blur-sm animate-[ping_1.2s_cubic-bezier(0,0,0.2,1)_infinite]" />
+                  <span className="relative inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    LOW
+                  </span>
+                </div>
               ) : null}
             </div>
             <div className="mt-2 text-xs font-semibold text-slate-700 truncate">{ref}</div>
           </div>
 
           {/* Name */}
-          <div className="min-w-0">
+          <div className="min-w-0 relative">
             <div className="font-semibold text-slate-900 truncate">{p.name}</div>
             {p.description ? <div className="mt-0.5 text-xs text-slate-500 line-clamp-1">{p.description}</div> : null}
             <div className="mt-1 text-[11px] text-slate-500">
@@ -843,15 +1168,12 @@ export default function Stock() {
           </div>
 
           {/* Categories */}
-          <div className="min-w-0">
+          <div className="min-w-0 relative">
             {showCategories ? (
               catIds.length ? (
                 <div className="flex flex-wrap gap-1">
                   {catNames.map((nm) => (
-                    <span
-                      key={nm}
-                      className="inline-flex rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700"
-                    >
+                    <span key={nm} className="inline-flex rounded-full border bg-white px-2 py-0.5 text-[11px] text-slate-700">
                       {nm}
                     </span>
                   ))}
@@ -870,7 +1192,7 @@ export default function Stock() {
           </div>
 
           {/* Stock */}
-          <div className="text-right">
+          <div className="text-right relative">
             <div className="font-extrabold text-slate-900">{r.stock.primary}</div>
             <div className="text-[11px] text-slate-500">{r.stock.secondary}</div>
             {r.reorder ? (
@@ -884,29 +1206,60 @@ export default function Stock() {
           </div>
 
           {/* Price */}
-          <div className="text-right">
+          <div className="text-right relative">
             <div className="font-extrabold text-slate-900">
               Rs {money(p.selling_price)} <span className="text-xs text-slate-500">/ {r.priceUnit}</span>
             </div>
             <div className="text-[11px] text-slate-500">Cost: {money(p.cost_price)}</div>
           </div>
 
-          {/* Toggle */}
-          <div className="flex justify-end">
-            <Switch
-              checked={!!p.is_active}
-              onCheckedChange={(v) => activeM.mutate({ id: p.id, active: !!v })}
-              disabled={activeM.isPending}
-            />
+          {/* Actions */}
+          <div className="flex justify-end gap-2 relative">
+            <Button
+              variant="outline"
+              className="h-9 rounded-xl px-3"
+              onClick={(e) => {
+                e.stopPropagation();
+                openHistory(p);
+              }}
+              title="View stock movements"
+            >
+              <History className="h-4 w-4" />
+            </Button>
+
+            <Button
+              variant={r.low ? "default" : "outline"}
+              className={`h-9 rounded-xl px-3 ${r.low ? "shadow-sm" : ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                openStockUpdate(p);
+              }}
+              title="Manual stock update"
+            >
+              <ArrowUpRight className="h-4 w-4" />
+            </Button>
+
+            <div className="flex items-center pl-1">
+              <Switch
+                checked={!!(p as any).is_active}
+                onCheckedChange={(v) => activeM.mutate({ id: p.id, active: !!v })}
+                disabled={activeM.isPending}
+              />
+            </div>
           </div>
         </div>
       );
     },
-    [activeM, categoryById, showCategories, openEdit]
+    [activeM, categoryById, openEdit, showCategories]
   );
 
   return (
     <div className="space-y-5 pb-10">
+      {/* page-local styles for pulse */}
+      <style>{`
+        @keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }
+      `}</style>
+
       {/* HEADER */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
@@ -917,7 +1270,7 @@ export default function Stock() {
             <div>
               <div className="text-2xl font-semibold tracking-tight">Stock</div>
               <div className="text-xs text-muted-foreground">
-                Ultra-fast register • Low-stock alerts • Smooth scroll • Lightweight CSV export
+                Ultra-fast register • Low-stock pulse • Manual update • Excel import/export • Template XLSX
               </div>
             </div>
           </div>
@@ -925,18 +1278,8 @@ export default function Stock() {
           {/* KPIs */}
           <div className="grid gap-3 sm:grid-cols-3">
             <Stat icon={<Package className="h-4 w-4 text-muted-foreground" />} label="Total items" value={kpis.total} />
-            <Stat
-              icon={<AlertTriangle className="h-4 w-4 text-amber-700" />}
-              label="Low stock"
-              value={kpis.low}
-              tone="warn"
-            />
-            <Stat
-              icon={<X className="h-4 w-4 text-red-700" />}
-              label="Inactive"
-              value={kpis.inactive}
-              tone="bad"
-            />
+            <Stat icon={<AlertTriangle className="h-4 w-4 text-amber-700" />} label="Low stock" value={kpis.low} tone="warn" />
+            <Stat icon={<X className="h-4 w-4 text-red-700" />} label="Inactive" value={kpis.inactive} tone="bad" />
           </div>
         </div>
 
@@ -946,12 +1289,37 @@ export default function Stock() {
             {productsQ.isFetching ? "Refreshing…" : "Refresh"}
           </Button>
 
-          <Button variant="outline" onClick={downloadTemplateCsv}>
+          {/* Template XLSX */}
+          <Button variant="outline" onClick={downloadTemplateExcel} title="Download Excel template">
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Template XLSX
+          </Button>
+
+          {/* (Optional) Template CSV */}
+          <Button variant="outline" onClick={downloadTemplateCsv} title="Download CSV template">
             <Download className="h-4 w-4 mr-2" />
             Template CSV
           </Button>
 
-          <Button variant="outline" onClick={exportCsv} disabled={!rows.length}>
+          {/* Import */}
+          <Button
+            variant="outline"
+            onClick={() => document.getElementById("stock-import-file")?.click()}
+            title="Import Excel/CSV (template format)"
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Import
+          </Button>
+          <input id="stock-import-file" type="file" accept=".csv,.xlsx" className="hidden" onChange={handleImportFile} />
+
+          {/* Export XLSX */}
+          <Button variant="outline" onClick={exportExcel} disabled={!rows.length} title="Export Excel (.xlsx)">
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Export XLSX
+          </Button>
+
+          {/* (Optional) Export CSV */}
+          <Button variant="outline" onClick={exportCsv} disabled={!rows.length} title="Export CSV">
             <Download className="h-4 w-4 mr-2" />
             Export CSV
           </Button>
@@ -968,12 +1336,7 @@ export default function Stock() {
         <div className="grid gap-3 lg:grid-cols-[1fr_380px_auto] lg:items-center">
           <div className="relative">
             <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-            <Input
-              className="pl-9"
-              placeholder="Search: SKU, item code, name…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+            <Input className="pl-9" placeholder="Search: SKU, item code, name…" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2">
@@ -995,34 +1358,22 @@ export default function Stock() {
           </div>
 
           <div className="flex items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              className="h-10 rounded-xl"
-              onClick={() => toggleSort("name")}
-              title="Sort by name"
-            >
-              Name {sort.key === "name" ? (sort.dir === "asc" ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />) : null}
+            <Button variant="outline" className="h-10 rounded-xl" onClick={() => toggleSort("name")} title="Sort by name">
+              Name{" "}
+              {sort.key === "name" ? (sort.dir === "asc" ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />) : null}
             </Button>
-            <Button
-              variant="outline"
-              className="h-10 rounded-xl"
-              onClick={() => toggleSort("stock")}
-              title="Sort by stock"
-            >
-              Stock {sort.key === "stock" ? (sort.dir === "asc" ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />) : null}
+            <Button variant="outline" className="h-10 rounded-xl" onClick={() => toggleSort("stock")} title="Sort by stock">
+              Stock{" "}
+              {sort.key === "stock" ? (sort.dir === "asc" ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />) : null}
             </Button>
-            <Button
-              variant="outline"
-              className="h-10 rounded-xl"
-              onClick={() => toggleSort("price")}
-              title="Sort by price"
-            >
-              Price {sort.key === "price" ? (sort.dir === "asc" ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />) : null}
+            <Button variant="outline" className="h-10 rounded-xl" onClick={() => toggleSort("price")} title="Sort by price">
+              Price{" "}
+              {sort.key === "price" ? (sort.dir === "asc" ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />) : null}
             </Button>
           </div>
         </div>
 
-        {/* Category controls (optional, lazy) */}
+        {/* Category controls */}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 rounded-2xl border bg-white px-3 py-2">
@@ -1043,13 +1394,7 @@ export default function Stock() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="h-9 w-[220px]"
-              placeholder="Search categories…"
-              value={catQ}
-              onChange={(e) => setCatQ(e.target.value)}
-              disabled={categoriesQ.isLoading}
-            />
+            <Input className="h-9 w-[220px]" placeholder="Search categories…" value={catQ} onChange={(e) => setCatQ(e.target.value)} disabled={categoriesQ.isLoading} />
             <select
               className="h-9 rounded-xl border px-3 bg-white"
               value={filterCategoryId}
@@ -1096,14 +1441,14 @@ export default function Stock() {
           {/* Column labels */}
           <div
             className="mt-3 grid gap-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
-            style={{ gridTemplateColumns: "92px 1.3fr 0.9fr 0.7fr 0.7fr 96px" }}
+            style={{ gridTemplateColumns: "92px 1.3fr 0.9fr 0.7fr 0.7fr 128px" }}
           >
             <div>Status</div>
             <div>Description</div>
             <div>Categories</div>
             <div className="text-right">Stock</div>
             <div className="text-right">Price</div>
-            <div className="text-right">Active</div>
+            <div className="text-right">Actions</div>
           </div>
         </div>
 
@@ -1118,26 +1463,103 @@ export default function Stock() {
             </div>
           ) : (
             <div style={{ height: totalH, position: "relative" }}>
-              {/* top spacer */}
               {topPad > 0 ? <div style={{ height: topPad }} /> : null}
 
-              {/* visible rows */}
               <div className="space-y-3">
                 {slice.map((r, i) => (
                   <Row key={r.p.id} r={r} index={startIndex + i} />
                 ))}
               </div>
 
-              {/* bottom spacer */}
               {bottomPad > 0 ? <div style={{ height: bottomPad }} /> : null}
             </div>
           )}
         </div>
 
         <div className="border-t px-4 py-3 text-xs text-muted-foreground bg-white">
-          Smooth mode: virtualized list (fast). PCS/BAGS use <b>current_stock</b>; WEIGHT uses <b>current_stock_grams</b>.
+          Smooth mode: virtualized list (fast). PCS/BAGS use <b>current_stock</b>; WEIGHT uses <b>current_stock_grams</b>. Manual updates write to <b>stock_movements</b>.
         </div>
       </Card>
+
+      {/* STOCK HISTORY DRAWER */}
+      <DrawerShell
+        open={historyOpen}
+        onClose={() => {
+          setHistoryOpen(false);
+          setHistoryProduct(null);
+        }}
+        title={
+          <span className="inline-flex items-center gap-2">
+            <History className="h-4 w-4" />
+            {historyProduct?.name || "Stock History"}
+          </span>
+        }
+      >
+        {historyQ.isLoading ? (
+          <div className="rounded-2xl border bg-white p-4 text-sm text-muted-foreground">Loading history…</div>
+        ) : historyRows.length === 0 ? (
+          <div className="rounded-2xl border bg-white p-5 text-sm text-muted-foreground">No stock movements yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {historyRows.map((m) => (
+              <div key={m.id} className="rounded-2xl border bg-white p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Pill tone={m.movement_type === "IN" ? "ok" : m.movement_type === "OUT" ? "bad" : "warn"}>
+                        {m.movement_type}
+                      </Pill>
+                      <div className="text-xs text-slate-600">{fmtDateTime(m.movement_date)}</div>
+                    </div>
+
+                    <div className="mt-1 text-sm font-extrabold text-slate-900">
+                      Qty: {Number(m.quantity).toLocaleString(undefined, { maximumFractionDigits: 3 })}
+                    </div>
+
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Ref: <b className="text-slate-700">{m.reference || "—"}</b> • Source:{" "}
+                      <b className="text-slate-700">{m.source_table || "—"}</b>
+                      {m.source_id ? <> #{m.source_id}</> : null}
+                    </div>
+
+                    {m.notes ? <div className="mt-2 text-xs text-slate-600">{m.notes}</div> : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </DrawerShell>
+
+      {/* UPDATE STOCK DIALOG */}
+      <Dialog open={stockOpen} onOpenChange={setStockOpen}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Update Stock</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="text-sm font-semibold">{stockProduct?.name}</div>
+
+            <select className="w-full h-10 rounded-xl border px-3" value={stockType} onChange={(e) => setStockType(e.target.value as any)}>
+              <option value="IN">Stock In</option>
+              <option value="OUT">Stock Out</option>
+              <option value="ADJUSTMENT">Adjustment</option>
+            </select>
+
+            <Input placeholder="Quantity (e.g. 10)" inputMode="decimal" value={stockQty} onChange={(e) => setStockQty(e.target.value)} />
+            <Input placeholder="Notes (optional)" value={stockNotes} onChange={(e) => setStockNotes(e.target.value)} />
+
+            <Button className="w-full" onClick={applyStockUpdate}>
+              Apply
+            </Button>
+
+            <div className="text-[11px] text-muted-foreground">
+              This creates a <b>stock_movements</b> entry. Your trigger updates product stock automatically.
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* CREATE / EDIT DIALOG */}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -1153,11 +1575,7 @@ export default function Stock() {
               <Input placeholder="SKU (auto)" value={form.sku} readOnly className="bg-muted/30" />
 
               <div className="grid grid-cols-2 gap-2">
-                <Input
-                  placeholder="Item Code"
-                  value={form.item_code ?? ""}
-                  onChange={(e) => setForm({ ...form, item_code: e.target.value })}
-                />
+                <Input placeholder="Item Code" value={form.item_code ?? ""} onChange={(e) => setForm({ ...form, item_code: e.target.value })} />
                 <Input
                   placeholder={liveStockUnit === "WEIGHT" ? "Reorder Level (KG)" : "Reorder Level"}
                   inputMode="numeric"
@@ -1167,12 +1585,7 @@ export default function Stock() {
               </div>
 
               <Input placeholder="Name *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-
-              <Input
-                placeholder="Description"
-                value={form.description ?? ""}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
+              <Input placeholder="Description" value={form.description ?? ""} onChange={(e) => setForm({ ...form, description: e.target.value })} />
 
               {/* Categories multi-select */}
               <div className="space-y-2 rounded-2xl border bg-white p-3">
@@ -1202,9 +1615,7 @@ export default function Stock() {
                       );
                     })}
                     {(form.category_ids || []).length > 10 ? (
-                      <span className="text-[11px] text-muted-foreground">
-                        +{(form.category_ids || []).length - 10} more
-                      </span>
+                      <span className="text-[11px] text-muted-foreground">+{(form.category_ids || []).length - 10} more</span>
                     ) : null}
                   </div>
                 ) : (
@@ -1224,9 +1635,7 @@ export default function Stock() {
                           <label key={c.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
                             <input type="checkbox" checked={checked} onChange={() => toggleCategory(c.id)} />
                             <span className="font-medium">{c.name}</span>
-                            {c.description ? (
-                              <span className="text-xs text-muted-foreground line-clamp-1">{c.description}</span>
-                            ) : null}
+                            {c.description ? <span className="text-xs text-muted-foreground line-clamp-1">{c.description}</span> : null}
                           </label>
                         );
                       })}
@@ -1323,23 +1732,12 @@ export default function Stock() {
                   />
 
                   <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      placeholder="Stock Boxes"
-                      inputMode="numeric"
-                      value={String(form.current_stock_boxes ?? "")}
-                      onChange={(e) => setForm({ ...form, current_stock_boxes: e.target.value })}
-                    />
-                    <Input
-                      placeholder="Stock Units"
-                      inputMode="numeric"
-                      value={String(form.current_stock_units ?? "")}
-                      onChange={(e) => setForm({ ...form, current_stock_units: e.target.value })}
-                    />
+                    <Input placeholder="Stock Boxes" inputMode="numeric" value={String(form.current_stock_boxes ?? "")} onChange={(e) => setForm({ ...form, current_stock_boxes: e.target.value })} />
+                    <Input placeholder="Stock Units" inputMode="numeric" value={String(form.current_stock_units ?? "")} onChange={(e) => setForm({ ...form, current_stock_units: e.target.value })} />
                   </div>
 
                   <div className="text-[11px] text-muted-foreground">
-                    Preview: <b>{liveBoxes}</b> box + <b>{liveUnits}</b> unit @ <b>{liveUpb}</b> UPB = <b>{livePcs}</b>{" "}
-                    pcs (saved)
+                    Preview: <b>{liveBoxes}</b> box + <b>{liveUnits}</b> unit @ <b>{liveUpb}</b> UPB = <b>{livePcs}</b> pcs (saved)
                   </div>
                 </div>
               ) : null}
@@ -1348,18 +1746,8 @@ export default function Stock() {
                 <div className="space-y-2 rounded-2xl border bg-white p-3">
                   <div className="text-xs text-muted-foreground">WEIGHT Stock Entry</div>
                   <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      placeholder="Stock Kg"
-                      inputMode="numeric"
-                      value={String(form.current_stock_kg ?? "")}
-                      onChange={(e) => setForm({ ...form, current_stock_kg: e.target.value })}
-                    />
-                    <Input
-                      placeholder="Stock Grams"
-                      inputMode="numeric"
-                      value={String(form.current_stock_g ?? "")}
-                      onChange={(e) => setForm({ ...form, current_stock_g: e.target.value })}
-                    />
+                    <Input placeholder="Stock Kg" inputMode="numeric" value={String(form.current_stock_kg ?? "")} onChange={(e) => setForm({ ...form, current_stock_kg: e.target.value })} />
+                    <Input placeholder="Stock Grams" inputMode="numeric" value={String(form.current_stock_g ?? "")} onChange={(e) => setForm({ ...form, current_stock_g: e.target.value })} />
                   </div>
                   <div className="text-[11px] text-muted-foreground">
                     Preview: <b>{liveKg}</b> kg + <b>{liveG}</b> g = <b>{liveGrams}</b> grams (saved)
@@ -1370,12 +1758,7 @@ export default function Stock() {
               {liveStockUnit === "BAGS" ? (
                 <div className="space-y-2 rounded-2xl border bg-white p-3">
                   <div className="text-xs text-muted-foreground">BAGS Stock Entry</div>
-                  <Input
-                    placeholder="Stock Bags (e.g. 25)"
-                    inputMode="numeric"
-                    value={String(form.current_stock_bags ?? "")}
-                    onChange={(e) => setForm({ ...form, current_stock_bags: e.target.value })}
-                  />
+                  <Input placeholder="Stock Bags (e.g. 25)" inputMode="numeric" value={String(form.current_stock_bags ?? "")} onChange={(e) => setForm({ ...form, current_stock_bags: e.target.value })} />
                   <div className="text-[11px] text-muted-foreground">
                     Preview: <b>{liveBags}</b> bag(s) (saved)
                   </div>
@@ -1384,23 +1767,12 @@ export default function Stock() {
 
               <div className="grid grid-cols-2 gap-2">
                 <Input
-                  placeholder={
-                    liveStockUnit === "WEIGHT"
-                      ? "Selling Price / KG *"
-                      : liveStockUnit === "BAGS"
-                      ? "Selling Price / BAG *"
-                      : "Selling Price / PCS *"
-                  }
+                  placeholder={liveStockUnit === "WEIGHT" ? "Selling Price / KG *" : liveStockUnit === "BAGS" ? "Selling Price / BAG *" : "Selling Price / PCS *"}
                   inputMode="decimal"
                   value={String(form.selling_price ?? "")}
                   onChange={(e) => setForm({ ...form, selling_price: e.target.value })}
                 />
-                <Input
-                  placeholder="Cost Price"
-                  inputMode="decimal"
-                  value={String(form.cost_price ?? "")}
-                  onChange={(e) => setForm({ ...form, cost_price: e.target.value })}
-                />
+                <Input placeholder="Cost Price" inputMode="decimal" value={String(form.cost_price ?? "")} onChange={(e) => setForm({ ...form, cost_price: e.target.value })} />
               </div>
 
               <div className="flex items-center gap-2 pt-1">
@@ -1423,4 +1795,3 @@ export default function Stock() {
     </div>
   );
 }
-

@@ -1,25 +1,27 @@
 // src/components/layout/AppHeader.tsx
-import {
-  Bell,
-  Search,
-  Moon,
-  Sun,
-  Menu,
-  Package,
-  AlertTriangle,
-  CheckCircle2,
-  X,
-  FileText,
-  Users,
-  CornerDownLeft,
-  Command,
-} from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+
+import {
+  AlertTriangle,
+  Bell,
+  CheckCircle2,
+  Command,
+  CornerDownLeft,
+  FileText,
+  Menu,
+  Moon,
+  Package,
+  Search,
+  Sun,
+  Users,
+  X,
+} from "lucide-react";
 
 const THEME_KEY = "rp_theme";
 
@@ -95,10 +97,31 @@ function Kbd({ children }: { children: React.ReactNode }) {
   );
 }
 
+function Pill({
+  tone = "neutral",
+  children,
+}: {
+  tone?: "neutral" | "danger" | "success";
+  children: React.ReactNode;
+}) {
+  const cls =
+    tone === "danger"
+      ? "bg-destructive/10 text-destructive border-destructive/20"
+      : tone === "success"
+      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20"
+      : "bg-muted/40 text-muted-foreground border-border/60";
+  return (
+    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold", cls)}>
+      {children}
+    </span>
+  );
+}
+
 export function AppHeader() {
   const navigate = useNavigate();
 
   const [isDark, setIsDark] = useState<boolean>(() => getInitialDark());
+
   const [notifyOpen, setNotifyOpen] = useState(false);
 
   const [q, setQ] = useState("");
@@ -142,7 +165,7 @@ export function AppHeader() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Cmd/Ctrl + K focus search
+  // Cmd/Ctrl + K
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -177,10 +200,7 @@ export function AppHeader() {
 
   const toggleTheme = () => setIsDark((v) => !v);
   const toggleSidebar = () => window.dispatchEvent(new Event("rp:toggle-sidebar"));
-  const themeIcon = useMemo(
-    () => (isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />),
-    [isDark]
-  );
+  const themeIcon = useMemo(() => (isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />), [isDark]);
 
   // ----------------------------
   // Notifications: Low stock
@@ -328,17 +348,13 @@ export function AppHeader() {
     setSearchOpen(false);
     setNotifyOpen(false);
 
-    if (hit.kind === "invoice") {
-      navigate(`/invoices/${hit.id}`);
-      return;
-    }
+    if (hit.kind === "invoice") return navigate(`/invoices/${hit.id}`);
     if (hit.kind === "customer") {
       const term = q.trim();
-      navigate(`/customers?focus=${encodeURIComponent(String(hit.id))}&q=${encodeURIComponent(term)}`);
-      return;
+      return navigate(`/customers?focus=${encodeURIComponent(String(hit.id))}&q=${encodeURIComponent(term)}`);
     }
     const term = q.trim();
-    navigate(`/stock?q=${encodeURIComponent(term)}`);
+    return navigate(`/stock?q=${encodeURIComponent(term)}`);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -362,7 +378,7 @@ export function AppHeader() {
 
       <div className="h-16 flex items-center justify-between px-3 sm:px-4 md:px-6">
         {/* Left */}
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           <button
             type="button"
             onClick={toggleSidebar}
@@ -372,8 +388,8 @@ export function AppHeader() {
             <Menu className="h-5 w-5" />
           </button>
 
-          {/* Search */}
-          <div className="relative w-full max-w-[560px] overflow-visible" ref={searchRef}>
+          {/* Search (wider) */}
+          <div className="relative w-full max-w-[720px] lg:max-w-[820px] overflow-visible" ref={searchRef}>
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               ref={inputRef}
@@ -402,13 +418,13 @@ export function AppHeader() {
               </Kbd>
             </div>
 
-            {/* Dropdown (NOT clipped anymore) */}
+            {/* Search dropdown (correct position + separate from notifications) */}
             <div
               className={cn(
                 "absolute left-0 right-0 mt-2 origin-top rounded-2xl overflow-hidden",
                 "border border-border/60",
-                "bg-background/90 backdrop-blur-xl",
-                "shadow-[0_24px_80px_rgba(2,6,23,0.18)]",
+                "bg-background/92 backdrop-blur-xl",
+                "shadow-[0_28px_90px_rgba(2,6,23,0.20)]",
                 "transition-all duration-200",
                 "z-[60]",
                 searchOpen ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 -translate-y-1"
@@ -418,7 +434,11 @@ export function AppHeader() {
             >
               <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3">
                 <div className="text-xs text-muted-foreground">
-                  {qDebounced.trim().length < 2 ? "Type at least 2 characters…" : searchQ.isFetching ? "Searching…" : "Quick results"}
+                  {qDebounced.trim().length < 2
+                    ? "Type at least 2 characters…"
+                    : searchQ.isFetching
+                    ? "Searching…"
+                    : "Quick results"}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -426,6 +446,7 @@ export function AppHeader() {
                     <CornerDownLeft className="h-3.5 w-3.5" />
                     Enter
                   </Kbd>
+
                   {q.length > 0 ? (
                     <button
                       type="button"
@@ -611,7 +632,7 @@ export function AppHeader() {
             {themeIcon}
           </Button>
 
-          {/* Notifications */}
+          {/* Notifications (SOLID WHITE background) */}
           <div className="relative" ref={notifyRef}>
             <Button
               variant="ghost"
@@ -623,59 +644,94 @@ export function AppHeader() {
               aria-expanded={notifyOpen}
             >
               <Bell className="h-5 w-5" />
-              {showDot ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-destructive shadow-[0_0_12px_rgba(220,38,38,0.35)]" /> : null}
+              {showDot ? (
+                <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-destructive shadow-[0_0_12px_rgba(220,38,38,0.35)]" />
+              ) : null}
             </Button>
 
             <div
               className={cn(
-                "absolute right-0 mt-2 w-[min(92vw,390px)] origin-top-right rounded-2xl overflow-hidden",
-                "border border-border/60",
-                "bg-background/92 backdrop-blur-xl",
-                "shadow-[0_24px_80px_rgba(2,6,23,0.18)]",
+                "absolute right-0 mt-2 w-[min(92vw,420px)] origin-top-right rounded-2xl overflow-hidden",
+                "border border-border/70",
+                "bg-white dark:bg-slate-950", // ✅ solid background
+                "backdrop-blur-0", // ✅ no glass blur
+                "shadow-[0_30px_95px_rgba(2,6,23,0.22)]",
                 "transition-all duration-200",
-                "z-[60]",
-                notifyOpen ? "opacity-100 scale-100 translate-y-0" : "pointer-events-none opacity-0 scale-[0.98] -translate-y-1"
+                "z-[70]",
+                notifyOpen ? "opacity-100 scale-100 translate-y-0" : "pointer-events-none opacity-0 scale-[0.985] -translate-y-1"
               )}
               role="dialog"
               aria-label="Notifications panel"
             >
-              <div className="p-4 border-b border-border/60 flex items-center justify-between gap-3">
+              {/* Red accent line */}
+              <div className="h-[3px] w-full bg-[var(--rp-accent)]" />
+
+              <div className="p-4 border-b border-border/60 flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold">Notifications</div>
-                  <div className="text-xs text-muted-foreground">{lowCount > 0 ? `${lowCount} low stock alert${lowCount === 1 ? "" : "s"}` : "No alerts"}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm font-semibold">Notifications</div>
+                    {lowCount > 0 ? <Pill tone="danger">{lowCount} Low stock</Pill> : <Pill tone="success">All good</Pill>}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {lowCount > 0 ? "Items at or below reorder level." : "No alerts right now."}
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setNotifyOpen(false)}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60 active:scale-[0.98] transition"
-                  aria-label="Close notifications"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl"
+                    onClick={() => lowStockQ.refetch()}
+                    disabled={lowStockQ.isFetching}
+                    title="Refresh"
+                  >
+                    {lowStockQ.isFetching ? "…" : "Refresh"}
+                  </Button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNotifyOpen(false)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/60 active:scale-[0.98] transition"
+                    aria-label="Close notifications"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
 
               <div className="p-3 max-h-[380px] overflow-auto rp-scroll">
                 {lowStockQ.isLoading ? (
-                  <div className="p-3 rounded-xl border border-border/60 bg-muted/20 text-sm text-muted-foreground flex items-center gap-2">
+                  <div className="p-3 rounded-2xl border border-border/70 bg-slate-50 dark:bg-slate-900 text-sm text-muted-foreground flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-pulse" />
                     Loading alerts…
                   </div>
                 ) : lowCount === 0 ? (
-                  <div className="p-3 rounded-xl border border-border/60 bg-muted/20 flex items-start gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 mt-0.5" />
-                    <div>
-                      <div className="text-sm font-semibold">All good</div>
-                      <div className="text-xs text-muted-foreground">No low stock items at the moment.</div>
+                  <div className="p-4 rounded-2xl border border-border/70 bg-slate-50 dark:bg-slate-900 flex items-start gap-3">
+                    <div className="h-10 w-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center shrink-0">
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-300" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">Everything looks fine</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">Stock levels are above reorder points.</div>
+                      <div className="mt-3">
+                        <Button asChild variant="outline" size="sm" className="rounded-xl">
+                          <Link to="/stock">Open Stock</Link>
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ) : (
                   <>
-                    <div className="p-3 rounded-xl border border-border/60 bg-destructive/5 flex items-start gap-3 mb-3">
-                      <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
+                    <div className="mb-3 p-3 rounded-2xl border border-destructive/25 bg-destructive/5 flex items-start gap-3">
+                      <div className="h-10 w-10 rounded-2xl bg-destructive/10 flex items-center justify-center shrink-0">
+                        <AlertTriangle className="h-5 w-5 text-destructive" />
+                      </div>
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold">Low stock detected</div>
-                        <div className="text-xs text-muted-foreground">Items at or below reorder level. Please restock soon.</div>
+                        <div className="text-sm font-semibold">Action required</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          These items need restocking. Open Stock to create your purchase plan.
+                        </div>
                       </div>
                     </div>
 
@@ -683,33 +739,63 @@ export function AppHeader() {
                       {(lowStockQ.data ?? []).map((p) => {
                         const code = String(p.sku || p.item_code || `#${p.id}`);
                         const name = String(p.name || "Item");
+                        const onHand = n(p.current_stock);
+                        const reorder = n(p.reorder_level);
+
                         return (
-                          <div key={String(p.id)} className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/50 p-3">
-                            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                              <Package className="h-5 w-5 text-primary" />
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm font-semibold truncate">
-                                {code} • {name}
+                          <div
+                            key={String(p.id)}
+                            className="rounded-2xl border border-border/70 bg-white dark:bg-slate-950 p-3 hover:bg-slate-50 dark:hover:bg-slate-900 transition"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="h-10 w-10 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
+                                <Package className="h-5 w-5 text-primary" />
                               </div>
-                              <div className="text-xs text-muted-foreground">
-                                On hand: <span className="font-semibold tabular-nums">{n(p.current_stock)}</span> • Reorder:{" "}
-                                <span className="font-semibold tabular-nums">{n(p.reorder_level)}</span>
-                              </div>
-                            </div>
 
-                            <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-semibold text-destructive">
-                              Low
-                            </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-semibold truncate">
+                                  <span className="font-extrabold">{code}</span>{" "}
+                                  <span className="text-muted-foreground font-semibold">•</span>{" "}
+                                  <span className="font-semibold">{name}</span>
+                                </div>
+
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  <span>
+                                    On hand: <span className="font-semibold tabular-nums text-foreground">{onHand}</span>
+                                  </span>
+                                  <span className="opacity-60">•</span>
+                                  <span>
+                                    Reorder: <span className="font-semibold tabular-nums text-foreground">{reorder}</span>
+                                  </span>
+                                </div>
+
+                                <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-destructive/70"
+                                    style={{
+                                      width: `${Math.max(6, Math.min(100, (onHand / Math.max(1, reorder)) * 100))}%`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+
+                              <Pill tone="danger">Low</Pill>
+                            </div>
                           </div>
                         );
                       })}
                     </div>
 
-                    <div className="mt-3 flex justify-end">
-                      <Button asChild variant="outline" className="rounded-xl">
-                        <Link to="/stock">Open Stock</Link>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={() => {
+                          setNotifyOpen(false);
+                          navigate("/stock");
+                        }}
+                      >
+                        Open Stock
                       </Button>
                     </div>
                   </>
@@ -734,6 +820,11 @@ export function AppHeader() {
               background: rgba(2,6,23,.55);
               box-shadow: 0 26px 80px rgba(0,0,0,.40);
             }
+
+            /* Accent (dark red) */
+            .rp-header{ --rp-accent: rgba(120, 8, 8, .85); }
+            :root.dark .rp-header{ --rp-accent: rgba(255, 90, 90, .70); }
+
             @keyframes livePulse {
               0% { transform: scale(1); opacity: .9; }
               50% { transform: scale(1.35); opacity: .35; }
@@ -747,18 +838,24 @@ export function AppHeader() {
               background: rgba(34, 197, 94, 0.25);
               animation: livePulse 2s ease-in-out infinite;
             }
+
+            /* Search red border always visible + focus stronger */
             .rp-search{
               transition: box-shadow .2s ease, border-color .2s ease, background .2s ease;
+              border-color: rgba(120, 8, 8, .22);
             }
             .rp-search:focus{
-              border-color: rgba(120, 8, 8, .35);
+              border-color: var(--rp-accent);
               box-shadow:
                 0 0 0 1px rgba(120, 8, 8, .12),
                 0 18px 52px rgba(2,6,23,.10);
-              background: rgba(255,255,255,.70);
+              background: rgba(255,255,255,.74);
+            }
+            :root.dark .rp-search{
+              border-color: rgba(255, 90, 90, .18);
             }
             :root.dark .rp-search:focus{
-              border-color: rgba(255, 90, 90, .28);
+              border-color: var(--rp-accent);
               background: rgba(2,6,23,.35);
               box-shadow:
                 0 0 0 1px rgba(255, 90, 90, .10),

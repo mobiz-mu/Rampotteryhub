@@ -1,5 +1,5 @@
 // src/pages/Customers.tsx
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
@@ -23,6 +23,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  Upload,
+  Pencil,
 } from "lucide-react";
 
 /* ===================================================
@@ -30,6 +32,11 @@ import {
 =================================================== */
 function normalizePhone(v: any) {
   return String(v ?? "").replace(/[^\d]/g, "");
+}
+
+function toNumber(v: any, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function downloadCsv(rows: Customer[]) {
@@ -80,6 +87,39 @@ function downloadCsv(rows: Customer[]) {
   toast.success("Downloaded customers.csv");
 }
 
+function sampleImportTemplateCsv() {
+  // “Same format as my table” => matches your export header + expected columns for import
+  const header = [
+    "customer_code",
+    "customer_name",
+    "client_name",
+    "address",
+    "phone",
+    "whatsapp",
+    "brn",
+    "vat_no",
+    "discount_percent",
+  ];
+
+  const csv = [
+    header.join(","),
+    `"CUST-001","Demo Customer","Ram Pottery Ltd","Port Louis","57550000","57550000","C12345678","VAT123456",0`,
+  ].join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "customers_import_template.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(url);
+  toast.success("Downloaded import template");
+}
+
 /* ===================================================
    Page
 =================================================== */
@@ -94,6 +134,9 @@ export default function Customers() {
   const pageSize = 60;
 
   const [reportOpen, setReportOpen] = useState(false);
+
+  // Import file input ref
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -157,6 +200,50 @@ export default function Customers() {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
+  /* ===================================================
+     Import (Excel/CSV) — UI only hook (routing to import page)
+     - To keep the rest unchanged and avoid new backend assumptions,
+       we route to /customers/import if it exists, otherwise we accept
+       CSV file and show a helpful toast.
+  =================================================== */
+  const openImport = () => {
+    // If you already have an import screen, this will work immediately
+    // Otherwise, still allows selecting a file and you can wire it later.
+    if (importInputRef.current) importInputRef.current.click();
+  };
+
+  const onImportFileSelected = (file: File | null) => {
+    if (!file) return;
+
+    const name = file.name.toLowerCase();
+    const isExcel = name.endsWith(".xlsx") || name.endsWith(".xls");
+    const isCsv = name.endsWith(".csv");
+
+    if (!isExcel && !isCsv) {
+      toast.error("Please upload an Excel (.xlsx/.xls) or CSV (.csv) file");
+      return;
+    }
+
+    // Premium UX: route to a dedicated import screen if you have it
+    // You can create /customers/import to actually process the file.
+    // We pass a hint via sessionStorage (safe, no huge payload).
+    try {
+      sessionStorage.setItem("rp_customers_import_filename", file.name);
+      sessionStorage.setItem("rp_customers_import_type", isExcel ? "excel" : "csv");
+      // Note: we do NOT store the file itself (browser security + size).
+      // The import page should request the user to select the file again.
+    } catch {
+      // ignore
+    }
+
+    toast.message("Import ready", {
+      description: "We’ll open the import screen. Use the template to match columns.",
+    });
+
+    // Navigate to import page (create this route if not yet)
+    nav("/customers/import");
+  };
+
   return (
     <div className="space-y-6 pb-10">
       {/* premium subtle backdrop */}
@@ -165,6 +252,20 @@ export default function Customers() {
         <div className="absolute -top-48 -left-48 h-[520px] w-[520px] rounded-full bg-rose-500/10 blur-3xl" />
         <div className="absolute -top-48 -right-48 h-[520px] w-[520px] rounded-full bg-sky-500/10 blur-3xl" />
       </div>
+
+      {/* Hidden file input (Import) */}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          onImportFileSelected(f);
+          // reset so selecting same file again triggers change
+          e.currentTarget.value = "";
+        }}
+      />
 
       {/* Top header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -187,6 +288,18 @@ export default function Customers() {
           <Button variant="outline" onClick={() => setReportOpen(true)} disabled={!rows.length}>
             <FileDown className="h-4 w-4 mr-2" />
             Customer Report
+          </Button>
+
+          {/* NEW: Import Excel/CSV */}
+          <Button variant="outline" onClick={openImport}>
+            <Upload className="h-4 w-4 mr-2" />
+            Import Excel
+          </Button>
+
+          {/* Optional helper: template download (keeps import “same format”) */}
+          <Button variant="outline" onClick={sampleImportTemplateCsv}>
+            <FileDown className="h-4 w-4 mr-2" />
+            Import Template
           </Button>
 
           <Button variant="outline" onClick={() => downloadCsv(rows)} disabled={!rows.length}>
@@ -246,49 +359,64 @@ export default function Customers() {
                   </td>
                 </tr>
               ) : (
-                paginated.map((c) => (
-                  <tr key={c.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-4 font-semibold">{c.customer_code || "-"}</td>
+                paginated.map((c) => {
+                  const discount = toNumber((c as any).discount_percent ?? 0, 0);
+                  return (
+                    <tr key={c.id} className="hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-4 font-semibold">{c.customer_code || "-"}</td>
 
-                    <td className="px-4 py-4">
-                      <div className="font-medium">{c.name}</div>
-                      {(c as any).client_name ? (
-                        <div className="text-[11px] text-muted-foreground">Client: {String((c as any).client_name)}</div>
-                      ) : null}
-                    </td>
+                      <td className="px-4 py-4">
+                        <div className="font-medium">{c.name}</div>
+                        {(c as any).client_name ? (
+                          <div className="text-[11px] text-muted-foreground">
+                            Client: {String((c as any).client_name)}
+                          </div>
+                        ) : null}
+                      </td>
 
-                    <td className="px-4 py-4">{c.phone || "-"}</td>
-                    <td className="px-4 py-4">{c.whatsapp || "-"}</td>
-                    <td className="px-4 py-4">{Number((c as any).discount_percent ?? 0).toFixed(0)}%</td>
+                      <td className="px-4 py-4">{c.phone || "-"}</td>
+                      <td className="px-4 py-4">{c.whatsapp || "-"}</td>
+                      <td className="px-4 py-4">{discount.toFixed(0)}%</td>
 
-                    <td className="px-4 py-4">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => nav(`/statement/print?customerId=${c.id}`)}
-                          title="Statement"
-                        >
-                          <ReceiptText className="h-4 w-4" />
-                        </Button>
+                      <td className="px-4 py-4">
+                        <div className="flex justify-end gap-2">
+                          {/* NEW: Edit customer */}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => nav(`/customers/${c.id}/edit`)}
+                            title="Edit Customer"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
 
-                        <Button size="sm" variant="outline" onClick={() => whatsappCustomer(c)} title="WhatsApp">
-                          <MessageCircle className="h-4 w-4" />
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => nav(`/statement/print?customerId=${c.id}`)}
+                            title="Statement"
+                          >
+                            <ReceiptText className="h-4 w-4" />
+                          </Button>
 
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={activeM.isPending}
-                          onClick={() => activeM.mutate({ id: c.id, active: !c.is_active })}
-                          title={c.is_active ? "Deactivate" : "Activate"}
-                        >
-                          {c.is_active ? "Deactivate" : "Activate"}
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          <Button size="sm" variant="outline" onClick={() => whatsappCustomer(c)} title="WhatsApp">
+                            <MessageCircle className="h-4 w-4" />
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={activeM.isPending}
+                            onClick={() => activeM.mutate({ id: c.id, active: !c.is_active })}
+                            title={c.is_active ? "Deactivate" : "Activate"}
+                          >
+                            {c.is_active ? "Deactivate" : "Activate"}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -329,4 +457,3 @@ export default function Customers() {
     </div>
   );
 }
-
