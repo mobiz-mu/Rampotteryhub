@@ -777,3 +777,24 @@ html, body{
 .rpdoc-logoImg{
   margin-top: -2mm !important;
 }
+
+
+/* ===========================
+   FIX: RED LINE + SIGNATURE GAP
+   - footer should NOT stretch
+   - signatures should NOT be pushed down by auto margins
+=========================== */
+
+.rpdoc-footerRegion{
+  flex: 0 0 auto !important;        /* STOP stretching footer region */
+  min-height: 0 !important;
+}
+
+.rpdoc-signaturesWrap{
+  margin-top: 0 !important;         /* STOP pushing signatures to bottom */
+}
+
+.rpdoc-signatures{
+  margin-top: 0 !important;         /* remove auto/big margins */
+  padding-top: 3mm !important;      /* small clean spacing */
+}

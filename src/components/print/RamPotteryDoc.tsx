@@ -29,20 +29,18 @@ export type RamPotteryDocItem = {
   sn: number;
   item_code?: string;
 
-  // UOM
   uom?: string;
-  box?: string; // legacy
+  box?: string;
 
-  // qty fields
-  box_qty?: number | string | null;   // BOX (int), KG (decimal kg)
-  pcs_qty?: number | string | null;   // PCS (int)
-  grams_qty?: number | string | null; // G (int)
-  bags_qty?: number | string | null;  // BAG (int)
+  box_qty?: number | string | null;
+  pcs_qty?: number | string | null;
+  grams_qty?: number | string | null;
+  bags_qty?: number | string | null;
 
   unit_per_box?: string | number;
   units_per_box?: string | number;
 
-  total_qty?: string | number; // stored in DB (for printing in TOTAL QTY col)
+  total_qty?: string | number;
   description?: string;
 
   unit_price_excl_vat?: number;
@@ -92,9 +90,12 @@ export type RamPotteryDocProps = {
   preparedBy?: string | null;
   deliveredBy?: string | null;
 
-  /** optional: keep compatibility with your callers */
   showFooterBar?: boolean;
 };
+
+/** ✅ REQUIRED PAGINATION */
+const PAGE1_ROWS = 10; // page 1 table height
+const PAGE_N_ROWS = 20; // page 2+ table height
 
 function n2(v: any) {
   const x = Number(v ?? 0);
@@ -118,14 +119,6 @@ function normUom(it: RamPotteryDocItem): "BOX" | "PCS" | "KG" | "G" | "BAG" {
   if (raw === "BAG" || raw === "BAGS") return "BAG";
   return "BOX";
 }
-
-/** qty input:
- *  - BOX/KG => box_qty
- *  - PCS    => pcs_qty
- *  - G      => grams_qty
- *  - BAG    => bags_qty (or fallback to box_qty because InvoiceCreate sends bag count in box_qty)
- *  - fallback => total_qty
- */
 
 function qtyInput(it: RamPotteryDocItem): number | null {
   const u = normUom(it);
@@ -152,26 +145,20 @@ function qtyInput(it: RamPotteryDocItem): number | null {
     const v = (it as any).bags_qty;
     if (v !== null && v !== undefined && v !== "") return n2(v);
 
-    // ✅ IMPORTANT: InvoiceCreate passes BAG count in box_qty
+    // ✅ InvoiceCreate passes BAG count in box_qty
     const bx = it.box_qty;
     if (bx !== null && bx !== undefined && bx !== "") return n2(bx);
 
     return fallbackTotal();
   }
 
-  // BOX or KG
   const v = it.box_qty;
   if (v === null || v === undefined || v === "") return fallbackTotal();
   return n2(v);
 }
 
-/** units per box:
- *  - BOX => units_per_box
- *  - BAG => units_per_box (kg per bag, default 25)
- */
 function upb(it: RamPotteryDocItem): number | null {
   const u = normUom(it);
-
   if (u !== "BOX" && u !== "BAG") return null;
 
   const v = it.units_per_box ?? it.unit_per_box;
@@ -180,16 +167,12 @@ function upb(it: RamPotteryDocItem): number | null {
   const num = n2(v);
   if (!Number.isFinite(num) || num <= 0) return u === "BAG" ? 25 : null;
 
-  // BAG can be 25 (int), BOX is int
   return Math.max(1, Math.trunc(num));
 }
 
-
-/** display qty nicely */
 function fmtQty(uom: "BOX" | "PCS" | "KG" | "G" | "BAG", v: number | null) {
   if (v === null) return "";
-  if (uom === "KG") return String(Number(v.toFixed(3))); // trims zeros
-  // BOX / PCS / G / BAG are integers
+  if (uom === "KG") return String(Number(v.toFixed(3)));
   return String(Math.trunc(v));
 }
 
@@ -248,7 +231,10 @@ function TableHeader() {
   );
 }
 
-function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
+function ItemsTable({ items, minRows = 0 }: { items: RamPotteryDocItem[]; minRows?: number }) {
+  const rowCount = (items || []).length;
+  const pad = Math.max(0, (minRows || 0) - rowCount);
+
   return (
     <table className="rpdoc-table">
       <colgroup>
@@ -279,17 +265,10 @@ function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
             <tr key={idx}>
               <td>{it.sn}</td>
               <td>{txt(it.item_code)}</td>
-
-              {/* ✅ shows "10 PCS" / "2 BOX" / "1.25 KG" / "500 G" / "3 BAG" */}
               <td>{qtyText ? `${qtyText} ${u}` : ""}</td>
-
               <td>{u === "BOX" || u === "BAG" ? unitPerBoxText : ""}</td>
-
-              {/* ✅ TOTAL QTY from DB (already correct based on your CN create logic) */}
               <td>{txt(it.total_qty)}</td>
-
               <td className="rpdoc-desc">{txt(it.description)}</td>
-
               <td>{money(it.unit_price_excl_vat)}</td>
               <td>{money(it.unit_vat)}</td>
               <td>{money(it.unit_price_incl_vat)}</td>
@@ -297,6 +276,21 @@ function ItemsTable({ items }: { items: RamPotteryDocItem[] }) {
             </tr>
           );
         })}
+
+        {Array.from({ length: pad }).map((_, i) => (
+          <tr key={`pad-${i}`}>
+            <td>&nbsp;</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td className="rpdoc-desc"></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+        ))}
       </tbody>
     </table>
   );
@@ -349,7 +343,6 @@ function NotesTotals({ totals }: { totals: Totals }) {
           <span>{money(n2(totals?.total_amount) + n2(totals?.previous_balance))}</span>
         </div>
 
-        {/* ✅ ALWAYS BLANK */}
         <div className="rpdoc-totalRow">
           <span>AMOUNT PAID</span>
           <span></span>
@@ -365,7 +358,14 @@ function NotesTotals({ totals }: { totals: Totals }) {
 
 function Signatures({ preparedBy, deliveredBy }: { preparedBy: string; deliveredBy: string }) {
   return (
-    <div className="rpdoc-signatures">
+    <div
+      className="rpdoc-signatures"
+      style={{
+        marginTop: 0,
+        paddingTop: 2,
+        paddingBottom: 0,
+      }}
+    >
       <div className="rpdoc-sig">
         <div className="rpdoc-sigLine" />
         <div className="rpdoc-sigTitle">Signature</div>
@@ -385,6 +385,69 @@ function Signatures({ preparedBy, deliveredBy }: { preparedBy: string; delivered
       </div>
     </div>
   );
+}
+
+/**
+ * ✅ FIXED FOOTER
+ * Notes+Totals under table, then red line, then signing space (SHRINKABLE),
+ * then signatures fully visible at bottom (no clipping).
+ */
+function FooterArea({
+  totals,
+  preparedBy,
+  deliveredBy,
+}: {
+  totals: Totals;
+  preparedBy: string;
+  deliveredBy: string;
+}) {
+  return (
+    <div
+      style={{
+        marginTop: "3mm",
+        flex: "1 1 auto",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
+      {/* Notes + totals (always visible) */}
+      <NotesTotals totals={totals} />
+
+      {/* Thin red line (always visible) */}
+      <div
+        style={{
+          height: "1px",
+          background: "#c1121f",
+          width: "100%",
+          marginTop: "6px",
+          marginBottom: "0px",
+          flex: "0 0 auto",
+        }}
+      />
+
+      {/* Signing space: shrinkable so it never clips signatures */}
+      <div
+        style={{
+          flex: "1 1 12mm", // ✅ can grow, but can also shrink
+          minHeight: "10mm",
+          maxHeight: "18mm",
+        }}
+      />
+
+      {/* Signatures always visible */}
+      <div style={{ flex: "0 0 auto" }}>
+        <Signatures preparedBy={preparedBy} deliveredBy={deliveredBy} />
+      </div>
+    </div>
+  );
+}
+
+/** chunk helper */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 export default function RamPotteryDoc(props: RamPotteryDocProps) {
@@ -432,30 +495,16 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   const taglineBottom = company?.taglineBottom || "PRODUCTS AND OTHER RELIGIOUS ITEMS";
 
   const docItems = useMemo(() => (items || []).map((x, i) => ({ ...x, sn: x?.sn ?? i + 1 })), [items]);
-
-  // ✅ Pagination rules:
-  // <=7  : page1 items + footer
-  // 8-14 : page1 items only, page2 footer only
-  // >=15 : page1 first 15, page2 remaining + footer
   const count = docItems.length;
 
-  const page1Items = useMemo(() => {
-    if (count <= 14) return docItems;
-    return docItems.slice(0, 15);
-  }, [count, docItems]);
+  // Page 1: 10 rows; Page 2+: 20 rows each
+  const page1Items = useMemo(() => docItems.slice(0, PAGE1_ROWS), [docItems]);
+  const rest = useMemo(() => (count > PAGE1_ROWS ? docItems.slice(PAGE1_ROWS) : []), [count, docItems]);
+  const restPages = useMemo(() => chunk(rest, PAGE_N_ROWS), [rest]);
 
-  const page2Items = useMemo(() => {
-    if (count <= 14) return [];
-    return docItems.slice(15);
-  }, [count, docItems]);
+  const totalPages = 1 + restPages.length;
 
-  const hasPage2 = count >= 8;
-  const totalPages = hasPage2 ? 2 : 1;
-
-  const poLabel =
-    variant === "QUOTATION"
-      ? txt(purchaseOrderLabel) || "VALID UNTIL:"
-      : "PO. No :";
+  const poLabel = variant === "QUOTATION" ? txt(purchaseOrderLabel) || "VALID UNTIL:" : "PO. No :";
 
   const HeaderBlock = (
     <div className="rpdoc-header">
@@ -498,100 +547,74 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   );
 
   const BoxesBlock = (
-  <div className="rpdoc-boxes">
-    <div className="rpdoc-box">
-      <div className="rpdoc-boxHead">CUSTOMER DETAILS</div>
+    <div className="rpdoc-boxes">
+      <div className="rpdoc-box">
+        <div className="rpdoc-boxHead">CUSTOMER DETAILS</div>
 
-      <div className="rpdoc-boxBody">
-        {/* Name */}
-        <div className="rpdoc-kv">
-          <div className="k">Name:</div>
-          <div className="v">{txt(customer?.name)}</div>
+        <div className="rpdoc-boxBody">
+          <div className="rpdoc-kv">
+            <div className="k">Name:</div>
+            <div className="v">{txt(customer?.name)}</div>
+          </div>
+
+          <div className="rpdoc-kv">
+            <div className="k">Address:</div>
+            <div className="v">{txt(customer?.address)}</div>
+          </div>
+
+          <div className="rpdoc-kv">
+            <div className="k">Tel:</div>
+            <div className="v">{txt(customer?.phone)}</div>
+          </div>
+
+          <div className="rpdoc-kv">
+            <div className="k">BRN:</div>
+            <div className="v rpdoc-nowrap">{txt(customer?.brn)}</div>
+          </div>
+
+          <div className="rpdoc-kv">
+            <div className="k">VAT NO:</div>
+            <div className="v rpdoc-nowrap">{txt(customer?.vat_no)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rpdoc-box">
+        <div className="rpdoc-boxHead">
+          BRN: {txt(company?.brn) || "-"}
+          <span className="rpdoc-dot">•</span>
+          VAT NO: {txt(company?.vat_no) || "-"}
         </div>
 
-        {/* Address */}
-        <div className="rpdoc-kv">
-          <div className="k">Address:</div>
-          <div className="v">{txt(customer?.address)}</div>
-        </div>
+        <div className="rpdoc-boxBody">
+          <div className="rpdoc-kv">
+            <div className="k">{docNoLabel}</div>
+            <div className="v">{txt(docNoValue)}</div>
+          </div>
 
-        {/* Tel */}
-        <div className="rpdoc-kv">
-          <div className="k">Tel:</div>
-          <div className="v">{txt(customer?.phone)}</div>
-        </div>
+          <div className="rpdoc-kv">
+            <div className="k">{dateLabel}</div>
+            <div className="v">{txt(dateValue)}</div>
+          </div>
 
-        {/* BRN only (single line) */}
-        <div className="rpdoc-kv">
-          <div className="k">BRN:</div>
-          <div className="v rpdoc-nowrap">{txt(customer?.brn)}</div>
-        </div>
+          <div className="rpdoc-kv">
+            <div className="k">{poLabel}</div>
+            <div className="v">{txt(purchaseOrderValue)}</div>
+          </div>
 
-        {/* VAT appears once under BRN */}
-        <div className="rpdoc-kv">
-          <div className="k">VAT NO:</div>
-          <div className="v rpdoc-nowrap">{txt(customer?.vat_no)}</div>
+          <div className="rpdoc-kv">
+            <div className="k">Sales Rep :</div>
+            <div className="v">{txt(salesRepName)}</div>
+          </div>
+
+          <div className="rpdoc-kv">
+            <div className="k">Tel:</div>
+            <div className="v">{txt(salesRepPhone)}</div>
+          </div>
         </div>
       </div>
     </div>
-
-    <div className="rpdoc-box">
-      <div className="rpdoc-boxHead">
-        BRN: {txt(company?.brn) || "-"}
-        <span className="rpdoc-dot">•</span>
-        VAT NO: {txt(company?.vat_no) || "-"}
-      </div>
-
-      <div className="rpdoc-boxBody">
-        <div className="rpdoc-kv">
-          <div className="k">{docNoLabel}</div>
-          <div className="v">{txt(docNoValue)}</div>
-        </div>
-
-        <div className="rpdoc-kv">
-          <div className="k">{dateLabel}</div>
-          <div className="v">{txt(dateValue)}</div>
-        </div>
-
-        <div className="rpdoc-kv">
-          <div className="k">{poLabel}</div>
-          <div className="v">{txt(purchaseOrderValue)}</div>
-        </div>
-
-        <div className="rpdoc-kv">
-          <div className="k">Sales Rep :</div>
-          <div className="v">{txt(salesRepName)}</div>
-        </div>
-
-        <div className="rpdoc-kv">
-          <div className="k">Tel:</div>
-          <div className="v">{txt(salesRepPhone)}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-);
-
-
-  // Page 1 footer only when <=7
-  const Page1Footer = count <= 7 ? (
-    <div className="rpdoc-footerRegion">
-      <NotesTotals totals={totals} />
-      <div className="rpdoc-signaturesWrap">
-        <Signatures preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
-      </div>
-    </div>
-  ) : null;
-
-  // Page 2 footer always when page2 exists
-  const Page2Footer = hasPage2 ? (
-    <div className="rpdoc-footerRegion rpdoc-footerInline">
-      <NotesTotals totals={totals} />
-      <div className="rpdoc-signaturesWrap">
-        <Signatures preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
-      </div>
-    </div>
-  ) : null;
+  );
 
   const Page1 = (
     <section className="rpdoc-page">
@@ -602,40 +625,37 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
         {BoxesBlock}
 
         <div className="rpdoc-tableWrap">
-          <ItemsTable items={page1Items} />
+          <ItemsTable items={page1Items} minRows={PAGE1_ROWS} />
         </div>
 
-        {Page1Footer}
+        <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
       </div>
     </section>
   );
 
-  const Page2 = hasPage2 ? (
-    <section className="rpdoc-page">
-      <div className="rpdoc-pageNumber">Page 2 / {totalPages}</div>
+  const OtherPages = restPages.map((chunkItems, i) => {
+    const pageNo = i + 2;
+    return (
+      <section className="rpdoc-page" key={`p-${pageNo}`}>
+        <div className="rpdoc-pageNumber">
+          Page {pageNo} / {totalPages}
+        </div>
 
-      <div className="rpdoc-frame">
-        {/* 8-14: footer only */}
-        {count <= 14 ? (
-          Page2Footer
-        ) : (
-          <>
-            {/* >=15: remaining items + footer */}
-            <div className="rpdoc-tableWrap">
-              <ItemsTable items={page2Items} />
-            </div>
-            {Page2Footer}
-          </>
-        )}
-      </div>
-    </section>
-  ) : null;
+        <div className="rpdoc-frame">
+          <div className="rpdoc-tableWrap">
+            <ItemsTable items={chunkItems} minRows={PAGE_N_ROWS} />
+          </div>
+
+          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+        </div>
+      </section>
+    );
+  });
 
   return (
     <div className="rpdoc-pages" id="rpdoc-root">
       {Page1}
-      {Page2}
+      {OtherPages}
     </div>
   );
 }
-

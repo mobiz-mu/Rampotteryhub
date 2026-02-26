@@ -241,6 +241,15 @@ export default function App() {
                    }
                  />
 
+                 <Route
+                    path="customers/:id/edit"
+                    element={
+                       <RequirePermission perm="customers.view">
+                          <CustomersNew />
+                        </RequirePermission>
+                   }
+                 />
+                
                 <Route
                   path="suppliers"
                   element={

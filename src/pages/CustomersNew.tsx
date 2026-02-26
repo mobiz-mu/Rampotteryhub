@@ -1,7 +1,7 @@
 // src/pages/CustomersNew.tsx
-import React, { useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import React, { useMemo, useRef, useState, useEffect } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Card } from "@/components/ui/card";
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
-import { ArrowLeft, Save, UserPlus } from "lucide-react";
+import { ArrowLeft, Save, UserPlus, Pencil } from "lucide-react";
 
 function n(v: any) {
   const x = Number(v ?? 0);
@@ -20,7 +20,7 @@ function digitsOnly(v: any) {
 }
 function normalizeMuPhone(raw: any) {
   const d = digitsOnly(raw);
-  if (d.length === 8) return d; // keep local; you store local numbers in DB
+  if (d.length === 8) return d; // keep local
   if (d.startsWith("230") && d.length === 11) return d.slice(3);
   return d;
 }
@@ -28,6 +28,10 @@ function normalizeMuPhone(raw: any) {
 export default function CustomersNew() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { id } = useParams();
+
+  const customerId = Number(id);
+  const isEdit = Number.isFinite(customerId) && customerId > 0;
 
   // form state
   const [customer_code, setCustomerCode] = useState("");
@@ -49,7 +53,46 @@ export default function CustomersNew() {
 
   const canSave = useMemo(() => name.trim().length > 0, [name]);
 
-  const createM = useMutation({
+  // Load customer when editing
+  const customerQ = useQuery({
+    queryKey: ["customer", customerId],
+    enabled: isEdit,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("customers").select("*").eq("id", customerId).single();
+      if (error) throw error;
+      return data as any;
+    },
+    staleTime: 30_000,
+  });
+
+  // Prefill when data arrives (edit mode)
+  useEffect(() => {
+    if (!isEdit) return;
+
+    if (customerQ.isSuccess && customerQ.data) {
+      const c: any = customerQ.data;
+
+      setCustomerCode(c.customer_code ?? "");
+      setName(c.name ?? "");
+      setClientName(c.client_name ?? "");
+
+      setPhone(c.phone ?? "");
+      setWhatsapp(c.whatsapp ?? "");
+      setEmail(c.email ?? "");
+      setAddress(c.address ?? "");
+
+      setBrn(c.brn ?? "");
+      setVatNo(c.vat_no ?? "");
+
+      setDiscountPercent(String(n(c.discount_percent ?? 0)));
+      setOpeningBalance(String(n(c.opening_balance ?? 0)));
+
+      // focus name after prefill
+      setTimeout(() => nameRef.current?.focus(), 0);
+    }
+  }, [isEdit, customerQ.isSuccess, customerQ.data]);
+
+  const saveM = useMutation({
     mutationFn: async () => {
       const payload: any = {
         customer_code: customer_code.trim() || null,
@@ -66,23 +109,37 @@ export default function CustomersNew() {
 
         discount_percent: n(discount_percent),
         opening_balance: n(opening_balance),
-
-        is_active: true,
       };
 
-      const { data, error } = await supabase.from("customers").insert(payload).select("id").single();
-      if (error) throw error;
-      return data;
+      if (isEdit) {
+        const { data, error } = await supabase
+          .from("customers")
+          .update(payload)
+          .eq("id", customerId)
+          .select("id")
+          .single();
+        if (error) throw error;
+        return { mode: "edit", row: data };
+      } else {
+        const { data, error } = await supabase
+          .from("customers")
+          .insert({ ...payload, is_active: true })
+          .select("id")
+          .single();
+        if (error) throw error;
+        return { mode: "create", row: data };
+      }
     },
-    onSuccess: async (row: any) => {
-      toast.success("Customer created");
+    onSuccess: async (res: any) => {
+      toast.success(res?.mode === "edit" ? "Customer updated" : "Customer created");
       await qc.invalidateQueries({ queryKey: ["customers"], exact: false });
-      // go back to list (or to a customer view page later if you add it)
+      if (isEdit) qc.invalidateQueries({ queryKey: ["customer", customerId], exact: true });
       nav("/customers");
-      // optional: if you want to open a future detail page: nav(`/customers/${row.id}`);
     },
-    onError: (e: any) => toast.error(e?.message || "Failed to create customer"),
+    onError: (e: any) => toast.error(e?.message || (isEdit ? "Failed to update customer" : "Failed to create customer")),
   });
+
+  const busy = saveM.isPending || (isEdit && customerQ.isLoading);
 
   return (
     <div className="space-y-6 pb-10">
@@ -97,38 +154,47 @@ export default function CustomersNew() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-2xl bg-primary/10 border border-white/30 dark:border-white/10 flex items-center justify-center">
-            <UserPlus className="h-5 w-5 text-primary" />
+            {isEdit ? <Pencil className="h-5 w-5 text-primary" /> : <UserPlus className="h-5 w-5 text-primary" />}
           </div>
           <div>
-            <div className="text-2xl font-semibold tracking-tight">New Customer</div>
-            <div className="text-xs text-muted-foreground">Create customer profile (VAT/BRN/WhatsApp/Discount)</div>
+            <div className="text-2xl font-semibold tracking-tight">{isEdit ? "Edit Customer" : "New Customer"}</div>
+            <div className="text-xs text-muted-foreground">
+              {isEdit ? "Update customer profile (VAT/BRN/WhatsApp/Discount)" : "Create customer profile (VAT/BRN/WhatsApp/Discount)"}
+            </div>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => nav(-1)} disabled={createM.isPending}>
+          <Button variant="outline" onClick={() => nav(-1)} disabled={busy}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Button>
 
           <Button
             className="gradient-primary shadow-glow text-primary-foreground"
-            onClick={() => createM.mutate()}
-            disabled={!canSave || createM.isPending}
+            onClick={() => saveM.mutate()}
+            disabled={!canSave || busy || (isEdit && !!customerQ.error)}
           >
             <Save className="h-4 w-4 mr-2" />
-            {createM.isPending ? "Saving..." : "Save Customer"}
+            {busy ? "Saving..." : isEdit ? "Save Changes" : "Save Customer"}
           </Button>
         </div>
       </div>
+
+      {isEdit && customerQ.isError ? (
+        <Card className="p-4 border-white/30 bg-white/85 dark:bg-slate-950/40 dark:border-white/10">
+          <div className="text-sm text-rose-600 font-semibold">Could not load this customer.</div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {(customerQ.error as any)?.message || "Unknown error"}
+          </div>
+        </Card>
+      ) : null}
 
       <Card className="p-5 sm:p-6 border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.35)] dark:bg-slate-950/40 dark:border-white/10">
         <div className="grid gap-5 lg:grid-cols-2">
           {/* Left: identity */}
           <div className="space-y-4">
-            <div className="text-[11px] font-extrabold tracking-[0.14em] uppercase text-muted-foreground">
-              Identity
-            </div>
+            <div className="text-[11px] font-extrabold tracking-[0.14em] uppercase text-muted-foreground">Identity</div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -137,6 +203,7 @@ export default function CustomersNew() {
                   placeholder="e.g. CUST400"
                   value={customer_code}
                   onChange={(e) => setCustomerCode(e.target.value)}
+                  disabled={busy}
                 />
                 <div className="mt-1 text-[11px] text-muted-foreground">Optional</div>
               </div>
@@ -147,6 +214,7 @@ export default function CustomersNew() {
                   placeholder="e.g. Shop name / client name"
                   value={client_name}
                   onChange={(e) => setClientName(e.target.value)}
+                  disabled={busy}
                 />
                 <div className="mt-1 text-[11px] text-muted-foreground">Optional</div>
               </div>
@@ -161,8 +229,9 @@ export default function CustomersNew() {
                 placeholder="Customer full name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                disabled={busy}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && canSave && !createM.isPending) createM.mutate();
+                  if (e.key === "Enter" && canSave && !busy) saveM.mutate();
                 }}
               />
             </div>
@@ -173,6 +242,7 @@ export default function CustomersNew() {
                 placeholder="Street, City, Mauritius"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
+                disabled={busy}
               />
             </div>
           </div>
@@ -186,11 +256,7 @@ export default function CustomersNew() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <div className="text-xs font-semibold mb-1">Phone</div>
-                <Input
-                  placeholder="e.g. 57850062"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                />
+                <Input placeholder="e.g. 57850062" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
               </div>
               <div>
                 <div className="text-xs font-semibold mb-1">WhatsApp</div>
@@ -198,6 +264,7 @@ export default function CustomersNew() {
                   placeholder="e.g. 57850062"
                   value={whatsapp}
                   onChange={(e) => setWhatsapp(e.target.value)}
+                  disabled={busy}
                 />
               </div>
             </div>
@@ -208,17 +275,18 @@ export default function CustomersNew() {
                 placeholder="email@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={busy}
               />
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <div className="text-xs font-semibold mb-1">BRN</div>
-                <Input placeholder="BRN" value={brn} onChange={(e) => setBrn(e.target.value)} />
+                <Input placeholder="BRN" value={brn} onChange={(e) => setBrn(e.target.value)} disabled={busy} />
               </div>
               <div>
                 <div className="text-xs font-semibold mb-1">VAT No</div>
-                <Input placeholder="VAT number" value={vat_no} onChange={(e) => setVatNo(e.target.value)} />
+                <Input placeholder="VAT number" value={vat_no} onChange={(e) => setVatNo(e.target.value)} disabled={busy} />
               </div>
             </div>
 
@@ -229,6 +297,7 @@ export default function CustomersNew() {
                   inputMode="decimal"
                   placeholder="0"
                   value={discount_percent}
+                  disabled={busy}
                   onChange={(e) => {
                     const v = e.target.value;
                     if (/^\d*([.]\d{0,2})?$/.test(v)) setDiscountPercent(v);
@@ -243,6 +312,7 @@ export default function CustomersNew() {
                   inputMode="decimal"
                   placeholder="0"
                   value={opening_balance}
+                  disabled={busy}
                   onChange={(e) => {
                     const v = e.target.value;
                     if (/^\d*([.]\d{0,2})?$/.test(v)) setOpeningBalance(v);
@@ -253,7 +323,13 @@ export default function CustomersNew() {
             </div>
 
             <div className="text-[11px] text-muted-foreground">
-              Save will insert into <b>public.customers</b> with <b>is_active = true</b>.
+              Save will {isEdit ? "update" : "insert into"} <b>public.customers</b>
+              {isEdit ? "." : " with "}
+              {!isEdit ? (
+                <>
+                  <b>is_active = true</b>.
+                </>
+              ) : null}
             </div>
           </div>
         </div>
