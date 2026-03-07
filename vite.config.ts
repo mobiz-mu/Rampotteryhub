@@ -33,58 +33,34 @@ export default defineConfig(({ mode }) => ({
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
 
-          if (
-            id.includes("react-dom") ||
-            id.includes("react-router-dom") ||
-            id.match(/node_modules\/react\//)
-          ) {
-            return "react-vendor";
+          if (id.includes("@supabase/supabase-js")) {
+            return "supabase";
           }
 
           if (id.includes("@tanstack/react-query")) {
-            return "query-vendor";
+            return "react-query";
           }
 
-          if (id.includes("@supabase/supabase-js")) {
-            return "supabase-vendor";
-          }
-
-          if (
-            id.includes("@radix-ui/") ||
-            id.includes("cmdk") ||
-            id.includes("vaul")
-          ) {
-            return "ui-vendor";
+          if (id.includes("xlsx")) {
+            return "xlsx";
           }
 
           if (
             id.includes("html2pdf.js") ||
             id.includes("html2canvas") ||
             id.includes("jspdf") ||
-            id.includes("jspdf-autotable") ||
-            id.includes("qrcode.react") ||
-            id.includes("dompurify")
+            id.includes("jspdf-autotable")
           ) {
-            return "print-vendor";
-          }
-
-          if (id.includes("xlsx")) {
-            return "xlsx-vendor";
+            return "print";
           }
 
           if (id.includes("recharts")) {
-            return "charts-vendor";
+            return "charts";
           }
 
-          if (
-            id.includes("react-hook-form") ||
-            id.includes("@hookform/resolvers") ||
-            id.includes("zod")
-          ) {
-            return "forms-vendor";
+          if (id.includes("@radix-ui/")) {
+            return "radix";
           }
-
-          return "vendor";
         },
       },
     },
