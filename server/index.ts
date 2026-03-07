@@ -253,6 +253,13 @@ async function insertStockMovements(opts: {
 const app = express();
 app.use(express.json());
 
+/* =========================
+   Health check
+========================= */
+app.get("/api/health", (_req, res) => {
+  return res.status(200).json({ ok: true, service: "ram-pottery-api" });
+});
+
 app.use(
   cors({
   origin: [

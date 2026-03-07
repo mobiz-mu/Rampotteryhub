@@ -6,6 +6,7 @@ type Party = {
   name?: string | null;
   address?: string | null;
   phone?: string | null;
+  whatsapp?: string | null;   // ✅ ADD THIS
   brn?: string | null;
   vat_no?: string | null;
   customer_code?: string | null;
@@ -108,6 +109,18 @@ function money(v: any) {
 }
 function txt(v: any) {
   return String(v ?? "").trim();
+}
+
+function customerPhones(customer: Party) {
+  const phone = txt(customer?.phone);
+  const whatsapp = txt(customer?.whatsapp);
+
+  if (phone && whatsapp) {
+    if (phone === whatsapp) return phone;
+    return `${phone} / ${whatsapp}`;
+  }
+
+  return phone || whatsapp || "";
 }
 
 /** normalize uom to BOX/PCS/KG/G/BAG */
@@ -564,7 +577,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
 
           <div className="rpdoc-kv">
             <div className="k">Tel:</div>
-            <div className="v">{txt(customer?.phone)}</div>
+            <div className="v">{customerPhones(customer)}</div>
           </div>
 
           <div className="rpdoc-kv">

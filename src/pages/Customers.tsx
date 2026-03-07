@@ -25,6 +25,11 @@ import {
   Search,
   Upload,
   Pencil,
+  MapPin,
+  Phone,
+  BadgePercent,
+  UserRound,
+  FileSpreadsheet,
 } from "lucide-react";
 
 /* ===================================================
@@ -37,6 +42,18 @@ function normalizePhone(v: any) {
 function toNumber(v: any, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function initials(name: any) {
+  const parts = String(name ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "CU";
+  return parts
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() || "")
+    .join("");
 }
 
 function downloadCsv(rows: Customer[]) {
@@ -88,7 +105,6 @@ function downloadCsv(rows: Customer[]) {
 }
 
 function sampleImportTemplateCsv() {
-  // “Same format as my table” => matches your export header + expected columns for import
   const header = [
     "customer_code",
     "customer_name",
@@ -120,6 +136,41 @@ function sampleImportTemplateCsv() {
   toast.success("Downloaded import template");
 }
 
+function StatCard({
+  icon,
+  label,
+  value,
+  tone = "default",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  tone?: "default" | "blue" | "green" | "amber";
+}) {
+  const toneCls =
+    tone === "blue"
+      ? "border-sky-200/70 bg-sky-50/70"
+      : tone === "green"
+      ? "border-emerald-200/70 bg-emerald-50/70"
+      : tone === "amber"
+      ? "border-amber-200/70 bg-amber-50/70"
+      : "border-slate-200/70 bg-white/80";
+
+  return (
+    <Card className={`rounded-[24px] border p-4 shadow-[0_16px_40px_-28px_rgba(0,0,0,.22)] ${toneCls}`}>
+      <div className="flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
+          <div className="text-2xl font-extrabold tracking-tight text-slate-950">{value}</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 /* ===================================================
    Page
 =================================================== */
@@ -135,10 +186,8 @@ export default function Customers() {
 
   const [reportOpen, setReportOpen] = useState(false);
 
-  // Import file input ref
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Debounce search
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
     return () => clearTimeout(t);
@@ -157,7 +206,6 @@ export default function Customers() {
 
   const rows = (customersQ.data || []) as Customer[];
 
-  // keep page valid when list changes
   useEffect(() => {
     setPage(0);
   }, [debouncedQ]);
@@ -167,8 +215,7 @@ export default function Customers() {
 
   useEffect(() => {
     if (page !== safePage) setPage(safePage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageCount]);
+  }, [page, safePage]);
 
   const paginated = useMemo(() => {
     const start = safePage * pageSize;
@@ -181,6 +228,15 @@ export default function Customers() {
     const end = Math.min(rows.length, (safePage + 1) * pageSize);
     return `Showing ${start}–${end} of ${rows.length}`;
   }, [rows.length, safePage]);
+
+  const totalCustomers = rows.length;
+  const totalWithAddress = useMemo(() => rows.filter((c) => String(c.address ?? "").trim()).length, [rows]);
+  const totalWithWhatsapp = useMemo(() => rows.filter((c) => String(c.whatsapp ?? "").trim()).length, [rows]);
+  const avgDiscount = useMemo(() => {
+    if (!rows.length) return 0;
+    const total = rows.reduce((sum, c) => sum + toNumber((c as any).discount_percent ?? 0, 0), 0);
+    return Math.round(total / rows.length);
+  }, [rows]);
 
   const activeM = useMutation({
     mutationFn: ({ id, active }: { id: number; active: boolean }) => setCustomerActive(id, active),
@@ -200,15 +256,7 @@ export default function Customers() {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  /* ===================================================
-     Import (Excel/CSV) — UI only hook (routing to import page)
-     - To keep the rest unchanged and avoid new backend assumptions,
-       we route to /customers/import if it exists, otherwise we accept
-       CSV file and show a helpful toast.
-  =================================================== */
   const openImport = () => {
-    // If you already have an import screen, this will work immediately
-    // Otherwise, still allows selecting a file and you can wire it later.
     if (importInputRef.current) importInputRef.current.click();
   };
 
@@ -224,14 +272,9 @@ export default function Customers() {
       return;
     }
 
-    // Premium UX: route to a dedicated import screen if you have it
-    // You can create /customers/import to actually process the file.
-    // We pass a hint via sessionStorage (safe, no huge payload).
     try {
       sessionStorage.setItem("rp_customers_import_filename", file.name);
       sessionStorage.setItem("rp_customers_import_type", isExcel ? "excel" : "csv");
-      // Note: we do NOT store the file itself (browser security + size).
-      // The import page should request the user to select the file again.
     } catch {
       // ignore
     }
@@ -240,20 +283,19 @@ export default function Customers() {
       description: "We’ll open the import screen. Use the template to match columns.",
     });
 
-    // Navigate to import page (create this route if not yet)
     nav("/customers/import");
   };
 
   return (
     <div className="space-y-6 pb-10">
-      {/* premium subtle backdrop */}
+      {/* Premium background */}
       <div className="pointer-events-none fixed inset-0 -z-10">
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-50 via-white to-slate-50 dark:from-slate-950 dark:via-slate-950 dark:to-slate-950" />
-        <div className="absolute -top-48 -left-48 h-[520px] w-[520px] rounded-full bg-rose-500/10 blur-3xl" />
-        <div className="absolute -top-48 -right-48 h-[520px] w-[520px] rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-950 dark:to-slate-950" />
+        <div className="absolute -top-40 -left-32 h-[420px] w-[420px] rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="absolute top-0 right-0 h-[360px] w-[360px] rounded-full bg-indigo-500/10 blur-3xl" />
       </div>
 
-      {/* Hidden file input (Import) */}
+      {/* Hidden file input */}
       <input
         ref={importInputRef}
         type="file"
@@ -262,187 +304,257 @@ export default function Customers() {
         onChange={(e) => {
           const f = e.target.files?.[0] ?? null;
           onImportFileSelected(f);
-          // reset so selecting same file again triggers change
           e.currentTarget.value = "";
         }}
       />
 
-      {/* Top header */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-2xl bg-primary/10 border border-white/30 dark:border-white/10 flex items-center justify-center">
-            <Users className="h-5 w-5 text-primary" />
+      {/* Header */}
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 space-y-4">
+          <div className="flex items-start gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[22px] border border-white/40 bg-white/75 shadow-sm backdrop-blur">
+              <Users className="h-7 w-7 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-4xl font-extrabold tracking-tight text-slate-950">Customers</div>
+              <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                Premium customer register • faster access • clean business profile view • statements • import/export
+              </div>
+            </div>
           </div>
-          <div>
-            <div className="text-2xl font-semibold tracking-tight">Customers</div>
-            <div className="text-xs text-muted-foreground">Fast register • CSV export • Statements • Reporting</div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard icon={<Users className="h-4 w-4 text-slate-700" />} label="Total Customers" value={totalCustomers} />
+            <StatCard icon={<MapPin className="h-4 w-4 text-sky-700" />} label="With Address" value={totalWithAddress} tone="blue" />
+            <StatCard icon={<MessageCircle className="h-4 w-4 text-emerald-700" />} label="With WhatsApp" value={totalWithWhatsapp} tone="green" />
+            <StatCard icon={<BadgePercent className="h-4 w-4 text-amber-700" />} label="Avg Discount" value={`${avgDiscount}%`} tone="amber" />
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => customersQ.refetch()} disabled={customersQ.isFetching}>
-            <RefreshCw className="h-4 w-4 mr-2" />
+        <div className="flex flex-wrap gap-2 xl:max-w-[620px] xl:justify-end">
+          <Button variant="outline" onClick={() => customersQ.refetch()} disabled={customersQ.isFetching} className="h-12 rounded-2xl">
+            <RefreshCw className={`mr-2 h-4 w-4 ${customersQ.isFetching ? "animate-spin" : ""}`} />
             {customersQ.isFetching ? "Refreshing…" : "Refresh"}
           </Button>
 
-          <Button variant="outline" onClick={() => setReportOpen(true)} disabled={!rows.length}>
-            <FileDown className="h-4 w-4 mr-2" />
+          <Button variant="outline" onClick={() => setReportOpen(true)} disabled={!rows.length} className="h-12 rounded-2xl">
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
             Customer Report
           </Button>
 
-          {/* NEW: Import Excel/CSV */}
-          <Button variant="outline" onClick={openImport}>
-            <Upload className="h-4 w-4 mr-2" />
+          <Button variant="outline" onClick={openImport} className="h-12 rounded-2xl">
+            <Upload className="mr-2 h-4 w-4" />
             Import Excel
           </Button>
 
-          {/* Optional helper: template download (keeps import “same format”) */}
-          <Button variant="outline" onClick={sampleImportTemplateCsv}>
-            <FileDown className="h-4 w-4 mr-2" />
+          <Button variant="outline" onClick={sampleImportTemplateCsv} className="h-12 rounded-2xl">
+            <FileDown className="mr-2 h-4 w-4" />
             Import Template
           </Button>
 
-          <Button variant="outline" onClick={() => downloadCsv(rows)} disabled={!rows.length}>
-            <FileDown className="h-4 w-4 mr-2" />
+          <Button variant="outline" onClick={() => downloadCsv(rows)} disabled={!rows.length} className="h-12 rounded-2xl">
+            <FileDown className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
 
-          <Button className="gradient-primary shadow-glow text-primary-foreground" onClick={() => nav("/customers/new")}>
-            <Plus className="h-4 w-4 mr-2" />
+          <Button className="h-12 rounded-2xl gradient-primary px-5 shadow-glow text-primary-foreground" onClick={() => nav("/customers/new")}>
+            <Plus className="mr-2 h-4 w-4" />
             New Customer
           </Button>
         </div>
       </div>
 
-      {/* Search */}
-      <Card className="p-4 border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.35)] dark:bg-slate-950/40 dark:border-white/10">
-        <div className="relative">
-          <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-          <Input
-            className="pl-9 bg-white/90 dark:bg-slate-950/50"
-            placeholder="Search customer, code, phone, WhatsApp, BRN, VAT…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-        </div>
-        <div className="mt-2 text-[11px] text-muted-foreground">
-          {customersQ.isLoading ? "Loading…" : `${rows.length} customer(s) found`}
+      {/* Search / Filter Bar */}
+      <Card className="rounded-[30px] border-white/35 bg-white/82 p-5 shadow-[0_18px_48px_-28px_rgba(0,0,0,.24)] backdrop-blur">
+        <div className="grid gap-4 xl:grid-cols-[1fr_auto] xl:items-center">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-13 rounded-2xl border-white/30 bg-white pl-11 text-base shadow-sm"
+              placeholder="Search customer, code, phone, WhatsApp, BRN, VAT…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+
+          <div className="text-sm text-slate-500">
+            {customersQ.isLoading ? "Loading…" : `${rows.length} customer(s) found`}
+          </div>
         </div>
       </Card>
 
-      {/* Table */}
-      <Card className="overflow-hidden border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.35)] dark:bg-slate-950/40 dark:border-white/10">
-        <div className="overflow-auto max-h-[68vh]">
-          <table className="w-full min-w-[980px] text-sm">
-            <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border/40">
-              <tr>
-                <th className="px-4 py-3 text-left font-semibold">Code</th>
-                <th className="px-4 py-3 text-left font-semibold">Customer</th>
-                <th className="px-4 py-3 text-left font-semibold">Phone</th>
-                <th className="px-4 py-3 text-left font-semibold">WhatsApp</th>
-                <th className="px-4 py-3 text-left font-semibold">Discount</th>
-                <th className="px-4 py-3 text-right font-semibold">Actions</th>
-              </tr>
-            </thead>
+      {/* Register */}
+      <Card className="overflow-hidden rounded-[30px] border-white/35 bg-white/84 shadow-[0_22px_60px_-30px_rgba(0,0,0,.28)] backdrop-blur">
+        <div className="sticky top-0 z-20 border-b border-slate-200/70 bg-white/92 px-5 py-4 backdrop-blur">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-[30px] font-extrabold tracking-tight text-slate-950">Customer Register</div>
+              <div className="text-sm text-muted-foreground">{showing}</div>
+            </div>
+          </div>
 
-            <tbody className="divide-y divide-border/30">
-              {customersQ.isLoading ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-10 text-muted-foreground">
-                    Loading customers…
-                  </td>
-                </tr>
-              ) : paginated.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-10 text-muted-foreground">
-                    No customers found.
-                  </td>
-                </tr>
-              ) : (
-                paginated.map((c) => {
-                  const discount = toNumber((c as any).discount_percent ?? 0, 0);
-                  return (
-                    <tr key={c.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-4 font-semibold">{c.customer_code || "-"}</td>
+          <div className="mt-4 hidden grid-cols-[120px_1.25fr_1fr_.8fr_.8fr_.55fr_220px] gap-4 border-t border-slate-100 pt-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:grid">
+            <div>Code</div>
+            <div>Customer</div>
+            <div>Address</div>
+            <div>Phone</div>
+            <div>WhatsApp</div>
+            <div>Discount</div>
+            <div className="text-right">Actions</div>
+          </div>
+        </div>
 
-                      <td className="px-4 py-4">
-                        <div className="font-medium">{c.name}</div>
-                        {(c as any).client_name ? (
-                          <div className="text-[11px] text-muted-foreground">
-                            Client: {String((c as any).client_name)}
+        <div className="max-h-[70vh] overflow-auto bg-gradient-to-b from-slate-50/45 to-white px-4 py-4 sm:px-5">
+          {customersQ.isLoading ? (
+            <div className="rounded-[24px] border bg-white p-8 text-sm text-muted-foreground">Loading customers…</div>
+          ) : paginated.length === 0 ? (
+            <div className="rounded-[24px] border bg-white p-10 text-center">
+              <div className="text-base font-bold text-slate-800">No customers found</div>
+              <div className="mt-1 text-sm text-slate-500">Try another keyword or clear the search.</div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {paginated.map((c) => {
+                const discount = toNumber((c as any).discount_percent ?? 0, 0);
+                return (
+                  <div
+                    key={c.id}
+                    className="group rounded-[26px] border border-slate-200/85 bg-white px-5 py-4 shadow-[0_14px_36px_-26px_rgba(15,23,42,.22)] transition-all duration-200 hover:-translate-y-[1px] hover:shadow-[0_18px_42px_-24px_rgba(15,23,42,.26)]"
+                  >
+                    <div className="grid gap-4 xl:grid-cols-[120px_1.25fr_1fr_.8fr_.8fr_.55fr_220px] xl:items-center">
+                      {/* Code */}
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Code</div>
+                        <div className="font-extrabold tracking-[0.12em] text-primary">{c.customer_code || "-"}</div>
+                      </div>
+
+                      {/* Customer */}
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Customer</div>
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-sm font-extrabold text-slate-700 ring-1 ring-slate-200">
+                            {initials(c.name)}
                           </div>
-                        ) : null}
-                      </td>
-
-                      <td className="px-4 py-4">{c.phone || "-"}</td>
-                      <td className="px-4 py-4">{c.whatsapp || "-"}</td>
-                      <td className="px-4 py-4">{discount.toFixed(0)}%</td>
-
-                      <td className="px-4 py-4">
-                        <div className="flex justify-end gap-2">
-                          {/* NEW: Edit customer */}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => nav(`/customers/${c.id}/edit`)}
-                            title="Edit Customer"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => nav(`/statement/print?customerId=${c.id}`)}
-                            title="Statement"
-                          >
-                            <ReceiptText className="h-4 w-4" />
-                          </Button>
-
-                          <Button size="sm" variant="outline" onClick={() => whatsappCustomer(c)} title="WhatsApp">
-                            <MessageCircle className="h-4 w-4" />
-                          </Button>
-
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={activeM.isPending}
-                            onClick={() => activeM.mutate({ id: c.id, active: !c.is_active })}
-                            title={c.is_active ? "Deactivate" : "Activate"}
-                          >
-                            {c.is_active ? "Deactivate" : "Activate"}
-                          </Button>
+                          <div className="min-w-0">
+                            <div className="truncate text-[17px] font-extrabold tracking-tight text-slate-950">{c.name}</div>
+                            {(c as any).client_name ? (
+                              <div className="mt-1 text-xs text-slate-500">Client: {String((c as any).client_name)}</div>
+                            ) : (
+                              <div className="mt-1 text-xs text-slate-400">No client alias</div>
+                            )}
+                          </div>
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                      </div>
+
+                      {/* Address */}
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Address</div>
+                        <div className="flex items-start gap-2">
+                          <MapPin className="mt-[2px] h-4 w-4 shrink-0 text-slate-400" />
+                          <div className="line-clamp-2 text-sm leading-snug text-slate-600">{c.address || "-"}</div>
+                        </div>
+                      </div>
+
+                      {/* Phone */}
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Phone</div>
+                        <div className="flex items-center gap-2 text-sm text-slate-700">
+                          <Phone className="h-4 w-4 text-slate-400" />
+                          <span className="font-medium">{c.phone || "-"}</span>
+                        </div>
+                      </div>
+
+                      {/* WhatsApp */}
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">WhatsApp</div>
+                        <div className="flex items-center gap-2 text-sm text-slate-700">
+                          <MessageCircle className="h-4 w-4 text-emerald-500" />
+                          <span className="font-medium">{c.whatsapp || "-"}</span>
+                        </div>
+                      </div>
+
+                      {/* Discount */}
+                      <div className="min-w-0 xl:text-center">
+                        <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Discount</div>
+                        <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
+                          {discount.toFixed(0)}%
+                        </span>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-10 w-10 rounded-2xl"
+                          onClick={() => nav(`/customers/${c.id}/edit`)}
+                          title="Edit Customer"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-10 w-10 rounded-2xl"
+                          onClick={() => nav(`/statement/print?customerId=${c.id}`)}
+                          title="Statement"
+                        >
+                          <ReceiptText className="h-4 w-4" />
+                        </Button>
+
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-10 w-10 rounded-2xl"
+                          onClick={() => whatsappCustomer(c)}
+                          title="WhatsApp"
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="rounded-2xl px-4"
+                          disabled={activeM.isPending}
+                          onClick={() => activeM.mutate({ id: c.id, active: !c.is_active })}
+                          title={c.is_active ? "Deactivate" : "Activate"}
+                        >
+                          {c.is_active ? "Deactivate" : "Activate"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-border/40 text-xs text-muted-foreground">
+        <div className="flex items-center justify-between border-t border-slate-200/70 bg-white px-5 py-4 text-sm text-slate-500">
           <div>{showing}</div>
 
           <div className="flex items-center gap-2">
             <Button
               size="icon"
               variant="outline"
+              className="rounded-xl"
               disabled={safePage === 0}
               onClick={() => setPage((p) => Math.max(0, p - 1))}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
 
-            <div className="px-2">
-              Page <b>{safePage + 1}</b> / {pageCount}
+            <div className="px-2 text-sm">
+              Page <b className="text-slate-900">{safePage + 1}</b> / <b className="text-slate-900">{pageCount}</b>
             </div>
 
             <Button
               size="icon"
               variant="outline"
+              className="rounded-xl"
               disabled={safePage >= pageCount - 1}
               onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             >

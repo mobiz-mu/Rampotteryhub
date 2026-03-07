@@ -1,3 +1,4 @@
+
 // src/pages/InvoicePrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -39,6 +40,10 @@ function fmtDDMMYYYY(v: any) {
     return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
   }
   return s;
+}
+
+function txt(v: any) {
+  return String(v ?? "").trim();
 }
 
 /** Wait until images inside an element finish loading */
@@ -85,10 +90,9 @@ export default function InvoicePrint() {
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  // ✅ Root that contains ONLY the A4 document pages
+  // document root
   const docRootRef = useRef<HTMLDivElement | null>(null);
 
-  // Prevent spamming print while preparing
   const [printPreparing, setPrintPreparing] = useState(false);
 
   useEffect(() => {
@@ -115,7 +119,7 @@ export default function InvoicePrint() {
   }, [isPublicMode]);
 
   /* =========================
-     Load invoice (HOOK MUST ALWAYS RUN)
+     Load invoice
   ========================= */
   const invoiceQ = useQuery({
     queryKey: ["invoice_print_bundle", invoiceId, publicToken],
@@ -134,7 +138,6 @@ export default function InvoicePrint() {
     staleTime: 15_000,
   });
 
-  // ✅ derive payload safely (NO early returns before hooks below)
   const isLoading = invoiceQ.isLoading;
   const payload = invoiceQ.data as any;
   const inv = payload?.invoice ?? null;
@@ -142,7 +145,22 @@ export default function InvoicePrint() {
   const customer = payload?.customer || inv?.customers || inv?.customer || null;
 
   /* =========================
-     ✅ BUILD DOC ITEMS
+     Normalize customer fields
+  ========================= */
+  const printCustomer = useMemo(() => {
+    return {
+      name: txt(customer?.name || customer?.customer_name),
+      address: txt(customer?.address),
+      phone: txt(customer?.phone || customer?.tel || customer?.telephone),
+      whatsapp: txt(customer?.whatsapp || customer?.whats_app || customer?.mobile || customer?.mobile_no),
+      brn: txt(customer?.brn),
+      vat_no: txt(customer?.vat_no || customer?.vat),
+      customer_code: txt(customer?.customer_code || customer?.code),
+    };
+  }, [customer]);
+
+  /* =========================
+     Build doc items
   ========================= */
   const docItems: RamPotteryDocItem[] = useMemo(() => {
     return (items || []).map((it: any, idx: number) => {
@@ -155,14 +173,11 @@ export default function InvoicePrint() {
       return {
         sn: idx + 1,
         item_code: p?.item_code || p?.sku || it.item_code || it.sku || "",
-
         uom,
         units_per_box: Number(it.units_per_box ?? it.unit_per_box ?? p?.units_per_box ?? 1),
-
         box_qty: Number(it.box_qty ?? it.boxQty ?? it.qty_box ?? it.qty ?? 0),
         pcs_qty: Number(it.pcs_qty ?? it.pcsQty ?? it.qty_pcs ?? 0),
         total_qty: Number(it.total_qty ?? it.totalQty ?? 0),
-
         description: it.description || p?.name || "",
         unit_price_excl_vat: Number(it.unit_price_excl_vat ?? 0),
         unit_vat: Number(it.unit_vat ?? 0),
@@ -173,10 +188,9 @@ export default function InvoicePrint() {
   }, [items]);
 
   /* =========================
-     WhatsApp link (ONLY public)
+     WhatsApp link (public)
   ========================= */
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
 
   const viewUrl = isPublicMode
     ? `${origin}/invoices/${invoiceId}/print?t=${encodeURIComponent(publicToken)}`
@@ -195,7 +209,7 @@ export default function InvoicePrint() {
       "Ram Pottery Ltd",
       "",
       "Invoice details:",
-      customer?.name ? `Customer: ${customer.name}` : null,
+      printCustomer.name ? `Customer: ${printCustomer.name}` : null,
       `Invoice: ${inv.invoice_number || `#${inv.id}`}`,
       `Invoice Amount: ${rs(gross)}`,
       `Amount Paid: ${rs(paid)}`,
@@ -207,10 +221,10 @@ export default function InvoicePrint() {
       .join("\n");
 
     return `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`;
-  }, [inv, customer?.name, viewUrl, isPublicMode]);
+  }, [inv, printCustomer.name, viewUrl, isPublicMode]);
 
   /* =========================
-     PRINT (reliable)
+     Print
   ========================= */
   useEffect(() => {
     const after = () => {
@@ -241,7 +255,7 @@ export default function InvoicePrint() {
   }
 
   /* =========================
-     PDF download (html2pdf tuned)
+     PDF download
   ========================= */
   async function downloadPdfClient() {
     if (!docRootRef.current || !inv) return;
@@ -277,7 +291,7 @@ export default function InvoicePrint() {
   }
 
   /* =========================
-     ✅ ALL RETURNS DOWN HERE (AFTER ALL HOOKS)
+     Returns
   ========================= */
   if (!isValidId(invoiceId)) {
     return <div className="p-6 text-sm text-muted-foreground">Invalid invoice id.</div>;
@@ -309,8 +323,8 @@ export default function InvoicePrint() {
 
   return (
     <div className="print-shell p-4">
-      {/* Toolbar (hidden on print) */}
-      <div className="no-print flex flex-wrap items-center justify-between gap-2 mb-3">
+      {/* Toolbar */}
+      <div className="no-print mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm text-muted-foreground">Invoice {inv.invoice_number || `#${inv.id}`}</div>
 
         <div className="flex flex-wrap gap-2">
@@ -342,20 +356,21 @@ export default function InvoicePrint() {
         </div>
       </div>
 
-      {/* ✅ ONLY THE DOCUMENT */}
+      {/* Document */}
       <div className="print-stage">
         <div ref={docRootRef} id="rpdoc-print-root">
           <RamPotteryDoc
             docTitle="VAT INVOICE"
             companyName="RAM POTTERY LTD"
-            logoSrc={"/logo.png"}
+            logoSrc="/logo.png"
             customer={{
-              name: customer?.name || "",
-              address: customer?.address || "",
-              phone: customer?.phone || "",
-              brn: customer?.brn || "",
-              vat_no: customer?.vat_no || "",
-              customer_code: customer?.customer_code || "",
+              name: printCustomer.name,
+              address: printCustomer.address,
+              phone: printCustomer.phone,
+              whatsapp: printCustomer.whatsapp,
+              brn: printCustomer.brn,
+              vat_no: printCustomer.vat_no,
+              customer_code: printCustomer.customer_code,
             }}
             company={{ brn: "C17144377", vat_no: "27490894" }}
             docNoLabel="INVOICE NO:"
@@ -372,10 +387,9 @@ export default function InvoicePrint() {
               vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
               vat_amount: Number(inv.vat_amount || 0),
               total_amount: Number(inv.total_amount || 0),
-
               previous_balance: Number(inv.previous_balance || 0),
 
-               /* ✅ ALWAYS BLANK */
+              /* always blank */
               amount_paid: null,
               balance_remaining: null,
             }}
@@ -387,4 +401,3 @@ export default function InvoicePrint() {
     </div>
   );
 }
-

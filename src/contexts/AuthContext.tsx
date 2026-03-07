@@ -25,23 +25,16 @@ export type PermissionsMap = Record<string, boolean>;
 type AuthCtx = {
   session: Session | null;
   user: User | null;
-
-  /** Single loading flag (prevents ProtectedRoute flicker) */
   loading: boolean;
-
   profile: any | null;
-
   role: AppRole;
   permissions: PermissionsMap;
   isAdmin: boolean;
-
   can: (key: string) => boolean;
-
   signIn: (
     email: string,
     password: string
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
-
   signOut: () => Promise<void>;
 };
 
@@ -65,25 +58,48 @@ function normRole(v: any): AppRole {
     r === "accountant" ||
     r === "sales" ||
     r === "viewer"
-  )
+  ) {
     return r;
+  }
   return "viewer";
-}
-
-async function fetchRpMe(userId: string) {
-  const res = await fetch("/api/auth/me", {
-    method: "GET",
-    credentials: "include",
-    headers: { "x-rp-user": userId },
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || !json?.ok) throw new Error(json?.error || `Auth me failed (${res.status})`);
-  return json.user;
 }
 
 function normPerms(v: any): PermissionsMap {
   if (!v || typeof v !== "object") return {};
   return v as PermissionsMap;
+}
+
+function isRefreshTokenError(message: any) {
+  const msg = String(message || "").toLowerCase();
+  return (
+    msg.includes("refresh token") ||
+    msg.includes("invalid refresh token") ||
+    msg.includes("refresh token not found")
+  );
+}
+
+async function fetchRpMe(userId: string) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const res = await fetch("/api/auth/me", {
+      method: "GET",
+      credentials: "include",
+      headers: { "x-rp-user": userId },
+      signal: controller.signal,
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok || !json?.ok) {
+      throw new Error(json?.error || `Auth me failed (${res.status})`);
+    }
+
+    return json.user;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 /* =====================================================
@@ -92,7 +108,7 @@ function normPerms(v: any): PermissionsMap {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<any | null>(null);
 
   const [sessionLoading, setSessionLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -100,10 +116,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const user = session?.user ?? null;
 
   /* =====================================================
-     1️⃣ Persist UUID for Express API auth
-     (x-rp-user header)
+     1) Persist UUID for Express API auth
   ===================================================== */
-
   useEffect(() => {
     if (user?.id) {
       localStorage.setItem("x-rp-user", user.id);
@@ -113,9 +127,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.id]);
 
   /* =====================================================
-     2️⃣ Session bootstrap + auth state changes
+     2) Session bootstrap + auth state changes
   ===================================================== */
-
   useEffect(() => {
     let alive = true;
     let bootstrapped = false;
@@ -123,15 +136,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const { data, error } = await supabase.auth.getSession();
+
         if (!alive) return;
 
         if (error) {
           console.error("getSession error:", error.message);
-        }
 
-        setSession(data.session ?? null);
-      } catch (e) {
+          if (isRefreshTokenError(error.message)) {
+            try {
+              localStorage.removeItem("x-rp-user");
+              await supabase.auth.signOut();
+            } catch {}
+            setSession(null);
+          } else {
+            setSession(data?.session ?? null);
+          }
+        } else {
+          setSession(data?.session ?? null);
+        }
+      } catch (e: any) {
         console.error("getSession crash:", e);
+
+        if (isRefreshTokenError(e?.message)) {
+          try {
+            localStorage.removeItem("x-rp-user");
+            await supabase.auth.signOut();
+          } catch {}
+          if (alive) setSession(null);
+        }
       } finally {
         if (!alive) return;
         bootstrapped = true;
@@ -140,10 +172,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
+      async (_event, newSession) => {
         if (!alive) return;
 
         setSession(newSession ?? null);
+
+        if (!newSession) {
+          setProfile(null);
+          setProfileLoading(false);
+        }
 
         if (bootstrapped) {
           setSessionLoading(false);
@@ -158,51 +195,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /* =====================================================
-   3️⃣ Load authority profile via backend (avoids RLS issues)
-===================================================== */
-useEffect(() => {
-  let alive = true;
+     3) Load authority profile via backend
+  ===================================================== */
+  useEffect(() => {
+    let alive = true;
 
-  (async () => {
-    try {
-      if (!user?.id) {
-        if (alive) {
-          setProfile(null);
-          setProfileLoading(false);
+    (async () => {
+      try {
+        if (!user?.id) {
+          if (alive) {
+            setProfile(null);
+            setProfileLoading(false);
+          }
+          return;
         }
-        return;
-      }
 
-      if (alive) setProfileLoading(true);
+        if (alive) setProfileLoading(true);
 
-      const me = await fetchRpMe(user.id);
+        const me = await fetchRpMe(user.id);
 
-      if (!alive) return;
+        if (!alive) return;
 
-      if (me?.is_active === false) {
-        await supabase.auth.signOut();
+        if (me?.is_active === false) {
+          await supabase.auth.signOut();
+          if (!alive) return;
+          setProfile(null);
+          return;
+        }
+
+        setProfile(me);
+      } catch (e: any) {
+        console.warn("auth/me load error:", e?.message || e);
+
+        if (!alive) return;
+
         setProfile(null);
-        return;
+      } finally {
+        if (alive) setProfileLoading(false);
       }
+    })();
 
-      setProfile(me);
-    } catch (e: any) {
-      console.warn("auth/me load error:", e?.message || e);
-      if (alive) setProfile(null);
-    } finally {
-      if (alive) setProfileLoading(false);
-    }
-  })();
-
-  return () => {
-    alive = false;
-  };
-}, [user?.id]);
+    return () => {
+      alive = false;
+    };
+  }, [user?.id]);
 
   /* =====================================================
      Auth actions
   ===================================================== */
-
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -215,17 +255,14 @@ useEffect(() => {
 
   async function signOut() {
     localStorage.removeItem("x-rp-user");
+    setProfile(null);
     await supabase.auth.signOut();
   }
 
   /* =====================================================
      Derived values
   ===================================================== */
-
-  const role: AppRole = useMemo(
-    () => normRole(profile?.role),
-    [profile?.role]
-  );
+  const role: AppRole = useMemo(() => normRole(profile?.role), [profile?.role]);
 
   const permissions: PermissionsMap = useMemo(
     () => normPerms(profile?.permissions),
@@ -244,11 +281,9 @@ useEffect(() => {
   }, [isAdmin, permissions]);
 
   /* =====================================================
-     FINAL LOADING STATE (no flicker)
+     Final loading state
   ===================================================== */
-
-  const loading =
-    sessionLoading || (session ? profileLoading : false);
+  const loading = sessionLoading || (session ? profileLoading : false);
 
   const value = useMemo<AuthCtx>(
     () => ({
@@ -263,16 +298,7 @@ useEffect(() => {
       signIn,
       signOut,
     }),
-    [
-      session,
-      user,
-      loading,
-      profile,
-      role,
-      permissions,
-      isAdmin,
-      can,
-    ]
+    [session, user, loading, profile, role, permissions, isAdmin, can]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

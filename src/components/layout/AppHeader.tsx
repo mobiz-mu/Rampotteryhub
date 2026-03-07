@@ -91,7 +91,7 @@ function useDebouncedValue<T>(value: T, delay = 250) {
 
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-lg border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+    <span className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
       {children}
     </span>
   );
@@ -106,10 +106,11 @@ function Pill({
 }) {
   const cls =
     tone === "danger"
-      ? "bg-destructive/10 text-destructive border-destructive/20"
+      ? "bg-red-50 text-red-700 border-red-200"
       : tone === "success"
-      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20"
-      : "bg-muted/40 text-muted-foreground border-border/60";
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : "bg-slate-50 text-slate-600 border-slate-200";
+
   return (
     <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold", cls)}>
       {children}
@@ -121,7 +122,6 @@ export function AppHeader() {
   const navigate = useNavigate();
 
   const [isDark, setIsDark] = useState<boolean>(() => getInitialDark());
-
   const [notifyOpen, setNotifyOpen] = useState(false);
 
   const [q, setQ] = useState("");
@@ -133,7 +133,6 @@ export function AppHeader() {
   const searchRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // theme
   useEffect(() => {
     const root = document.documentElement;
     if (isDark) root.classList.add("dark");
@@ -153,7 +152,6 @@ export function AppHeader() {
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
-  // ESC close
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -165,7 +163,6 @@ export function AppHeader() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Cmd/Ctrl + K
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -180,7 +177,6 @@ export function AppHeader() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // outside click close
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
@@ -202,9 +198,6 @@ export function AppHeader() {
   const toggleSidebar = () => window.dispatchEvent(new Event("rp:toggle-sidebar"));
   const themeIcon = useMemo(() => (isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />), [isDark]);
 
-  // ----------------------------
-  // Notifications: Low stock
-  // ----------------------------
   const lowStockQ = useQuery({
     queryKey: ["header_low_stock"],
     queryFn: async () => {
@@ -236,9 +229,6 @@ export function AppHeader() {
   const lowCount = (lowStockQ.data ?? []).length;
   const showDot = lowCount > 0;
 
-  // ----------------------------
-  // Search
-  // ----------------------------
   const searchQ = useQuery({
     queryKey: ["header_search", qDebounced],
     enabled: qDebounced.trim().length >= 2,
@@ -249,12 +239,10 @@ export function AppHeader() {
       const [invRes, cusRes, prodRes] = await Promise.allSettled([
         supabase
           .from("invoices")
-          .select(
-            `
+          .select(`
             id,invoice_number,invoice_date,status,total_amount,balance_remaining,
             customer:customers ( id,name,client_name,customer_code )
-          `
-          )
+          `)
           .or(`invoice_number.ilike.${like}`)
           .order("invoice_date", { ascending: false })
           .limit(6),
@@ -376,9 +364,8 @@ export function AppHeader() {
     <header className="rp-header sticky top-0 z-50 overflow-visible">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
 
-      <div className="h-16 flex items-center justify-between px-3 sm:px-4 md:px-6">
-        {/* Left */}
-        <div className="flex items-center gap-3 min-w-0 flex-1">
+      <div className="flex h-16 items-center justify-between px-3 sm:px-4 md:px-6">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <button
             type="button"
             onClick={toggleSidebar}
@@ -388,8 +375,7 @@ export function AppHeader() {
             <Menu className="h-5 w-5" />
           </button>
 
-          {/* Search (wider) */}
-          <div className="relative w-full max-w-[720px] lg:max-w-[820px] overflow-visible" ref={searchRef}>
+          <div className="relative w-full max-w-[720px] overflow-visible lg:max-w-[820px]" ref={searchRef}>
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               ref={inputRef}
@@ -411,20 +397,19 @@ export function AppHeader() {
               )}
             />
 
-            {/* Cmd/K hint */}
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 hidden sm:flex items-center gap-1">
+            <div className="absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 sm:flex">
               <Kbd>
                 <Command className="h-3.5 w-3.5" />K
               </Kbd>
             </div>
 
-            {/* Search dropdown (correct position + separate from notifications) */}
+            {/* SEARCH DROPDOWN - SOLID WHITE + BLACK TEXT */}
             <div
               className={cn(
                 "absolute left-0 right-0 mt-2 origin-top rounded-2xl overflow-hidden",
-                "border border-border/60",
-                "bg-background/92 backdrop-blur-xl",
-                "shadow-[0_28px_90px_rgba(2,6,23,0.20)]",
+                "border border-slate-200",
+                "bg-white",
+                "shadow-[0_30px_95px_rgba(2,6,23,0.18)]",
                 "transition-all duration-200",
                 "z-[60]",
                 searchOpen ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 -translate-y-1"
@@ -432,8 +417,10 @@ export function AppHeader() {
               role="listbox"
               aria-label="Search results"
             >
-              <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3">
-                <div className="text-xs text-muted-foreground">
+              <div className="h-[3px] w-full bg-[var(--rp-accent)]" />
+
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 bg-white">
+                <div className="text-xs font-medium text-slate-500">
                   {qDebounced.trim().length < 2
                     ? "Type at least 2 characters…"
                     : searchQ.isFetching
@@ -456,7 +443,7 @@ export function AppHeader() {
                         setActiveIndex(0);
                         inputRef.current?.focus();
                       }}
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground transition"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-900 transition"
                       aria-label="Clear search"
                     >
                       <X className="h-4 w-4" />
@@ -467,14 +454,13 @@ export function AppHeader() {
               </div>
 
               {qDebounced.trim().length >= 2 && !searchQ.isFetching && hits.length === 0 ? (
-                <div className="p-4 text-sm text-muted-foreground">No results found.</div>
+                <div className="bg-white p-4 text-sm text-slate-500">No results found.</div>
               ) : null}
 
-              <div className="max-h-[420px] overflow-auto p-2 rp-scroll">
-                {/* Invoices */}
+              <div className="max-h-[420px] overflow-auto bg-white p-2 rp-scroll">
                 {(searchQ.data?.invoices?.length ?? 0) > 0 ? (
                   <div className="mb-2">
-                    <div className="px-2 py-2 text-[11px] font-extrabold tracking-wider text-muted-foreground uppercase flex items-center gap-2">
+                    <div className="flex items-center gap-2 px-2 py-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
                       <FileText className="h-4 w-4" />
                       Invoices
                     </div>
@@ -493,22 +479,26 @@ export function AppHeader() {
                             type="button"
                             onClick={() => onPick(it)}
                             className={cn(
-                              "w-full text-left rounded-2xl px-3 py-2.5 transition",
-                              "border border-border/50",
-                              "hover:bg-muted/40",
-                              active ? "bg-muted/50 border-primary/25" : "bg-background/40"
+                              "w-full text-left rounded-2xl px-3 py-3 transition-all duration-150",
+                              "border border-slate-200",
+                              "hover:bg-slate-50 hover:border-slate-300",
+                              active ? "bg-slate-100 border-[var(--rp-accent)] shadow-sm" : "bg-white"
                             )}
                             role="option"
                             aria-selected={active}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="text-sm font-semibold truncate">{invNo}</div>
-                                <div className="text-xs text-muted-foreground truncate">{it.customer_label || "—"}</div>
+                                <div className="truncate text-sm font-bold text-slate-900">{invNo}</div>
+                                <div className="truncate text-xs text-slate-500">{it.customer_label || "—"}</div>
                               </div>
-                              <div className="text-right shrink-0">
-                                <div className="text-sm font-extrabold tabular-nums whitespace-nowrap">Rs {total}</div>
-                                <div className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">{status}</div>
+                              <div className="shrink-0 text-right">
+                                <div className="whitespace-nowrap text-sm font-extrabold tabular-nums text-slate-900">
+                                  Rs {total}
+                                </div>
+                                <div className="whitespace-nowrap text-[11px] font-semibold text-slate-500">
+                                  {status}
+                                </div>
                               </div>
                             </div>
                           </button>
@@ -518,10 +508,9 @@ export function AppHeader() {
                   </div>
                 ) : null}
 
-                {/* Customers */}
                 {(searchQ.data?.customers?.length ?? 0) > 0 ? (
                   <div className="mb-2">
-                    <div className="px-2 py-2 text-[11px] font-extrabold tracking-wider text-muted-foreground uppercase flex items-center gap-2">
+                    <div className="flex items-center gap-2 px-2 py-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
                       <Users className="h-4 w-4" />
                       Customers
                     </div>
@@ -536,20 +525,22 @@ export function AppHeader() {
                             type="button"
                             onClick={() => onPick(it)}
                             className={cn(
-                              "w-full text-left rounded-2xl px-3 py-2.5 transition",
-                              "border border-border/50",
-                              "hover:bg-muted/40",
-                              active ? "bg-muted/50 border-primary/25" : "bg-background/40"
+                              "w-full text-left rounded-2xl px-3 py-3 transition-all duration-150",
+                              "border border-slate-200",
+                              "hover:bg-slate-50 hover:border-slate-300",
+                              active ? "bg-slate-100 border-[var(--rp-accent)] shadow-sm" : "bg-white"
                             )}
                             role="option"
                             aria-selected={active}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="text-sm font-semibold truncate">{it.label}</div>
-                                <div className="text-xs text-muted-foreground truncate">{it.code ? `Code: ${it.code}` : "Customer"}</div>
+                                <div className="truncate text-sm font-bold text-slate-900">{it.label}</div>
+                                <div className="truncate text-xs text-slate-500">
+                                  {it.code ? `Code: ${it.code}` : "Customer"}
+                                </div>
                               </div>
-                              <span className="text-[11px] font-semibold text-muted-foreground">Open</span>
+                              <span className="text-[11px] font-semibold text-slate-500">Open</span>
                             </div>
                           </button>
                         );
@@ -558,10 +549,9 @@ export function AppHeader() {
                   </div>
                 ) : null}
 
-                {/* Stock */}
                 {(searchQ.data?.products?.length ?? 0) > 0 ? (
                   <div>
-                    <div className="px-2 py-2 text-[11px] font-extrabold tracking-wider text-muted-foreground uppercase flex items-center gap-2">
+                    <div className="flex items-center gap-2 px-2 py-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
                       <Package className="h-4 w-4" />
                       Stock
                     </div>
@@ -576,20 +566,22 @@ export function AppHeader() {
                             type="button"
                             onClick={() => onPick(it)}
                             className={cn(
-                              "w-full text-left rounded-2xl px-3 py-2.5 transition",
-                              "border border-border/50",
-                              "hover:bg-muted/40",
-                              active ? "bg-muted/50 border-primary/25" : "bg-background/40"
+                              "w-full text-left rounded-2xl px-3 py-3 transition-all duration-150",
+                              "border border-slate-200",
+                              "hover:bg-slate-50 hover:border-slate-300",
+                              active ? "bg-slate-100 border-[var(--rp-accent)] shadow-sm" : "bg-white"
                             )}
                             role="option"
                             aria-selected={active}
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="text-sm font-semibold truncate">{it.label}</div>
-                                <div className="text-xs text-muted-foreground truncate">{it.code ? `SKU/Code: ${it.code}` : "Stock item"}</div>
+                                <div className="truncate text-sm font-bold text-slate-900">{it.label}</div>
+                                <div className="truncate text-xs text-slate-500">
+                                  {it.code ? `SKU/Code: ${it.code}` : "Stock item"}
+                                </div>
                               </div>
-                              <span className="text-[11px] font-semibold text-muted-foreground">View</span>
+                              <span className="text-[11px] font-semibold text-slate-500">View</span>
                             </div>
                           </button>
                         );
@@ -599,7 +591,7 @@ export function AppHeader() {
                     <div className="mt-2 flex justify-end px-1 pb-1">
                       <Button
                         variant="outline"
-                        className="rounded-xl"
+                        className="rounded-xl border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
                         onClick={() => {
                           setSearchOpen(false);
                           navigate(`/stock?q=${encodeURIComponent(q.trim())}`);
@@ -615,11 +607,10 @@ export function AppHeader() {
           </div>
         </div>
 
-        {/* Right */}
-        <div className="flex items-center gap-2 md:gap-3 relative">
-          <div className="hidden sm:flex items-center gap-2 mr-1 select-none">
+        <div className="relative flex items-center gap-2 md:gap-3">
+          <div className="mr-1 hidden select-none items-center gap-2 sm:flex">
             <span className="relative live-dot h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(34,197,94,0.45)]" />
-            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 tracking-wide">Live</span>
+            <span className="text-xs font-medium tracking-wide text-emerald-600 dark:text-emerald-400">Live</span>
           </div>
 
           <Button
@@ -632,7 +623,6 @@ export function AppHeader() {
             {themeIcon}
           </Button>
 
-          {/* Notifications (SOLID WHITE background) */}
           <div className="relative" ref={notifyRef}>
             <Button
               variant="ghost"
@@ -653,8 +643,8 @@ export function AppHeader() {
               className={cn(
                 "absolute right-0 mt-2 w-[min(92vw,420px)] origin-top-right rounded-2xl overflow-hidden",
                 "border border-border/70",
-                "bg-white dark:bg-slate-950", // ✅ solid background
-                "backdrop-blur-0", // ✅ no glass blur
+                "bg-white dark:bg-slate-950",
+                "backdrop-blur-0",
                 "shadow-[0_30px_95px_rgba(2,6,23,0.22)]",
                 "transition-all duration-200",
                 "z-[70]",
@@ -663,10 +653,9 @@ export function AppHeader() {
               role="dialog"
               aria-label="Notifications panel"
             >
-              {/* Red accent line */}
               <div className="h-[3px] w-full bg-[var(--rp-accent)]" />
 
-              <div className="p-4 border-b border-border/60 flex items-start justify-between gap-3">
+              <div className="flex items-start justify-between gap-3 border-b border-border/60 p-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <div className="text-sm font-semibold">Notifications</div>
@@ -700,20 +689,20 @@ export function AppHeader() {
                 </div>
               </div>
 
-              <div className="p-3 max-h-[380px] overflow-auto rp-scroll">
+              <div className="max-h-[380px] overflow-auto p-3 rp-scroll">
                 {lowStockQ.isLoading ? (
-                  <div className="p-3 rounded-2xl border border-border/70 bg-slate-50 dark:bg-slate-900 text-sm text-muted-foreground flex items-center gap-2">
+                  <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-slate-50 p-3 text-sm text-muted-foreground dark:bg-slate-900">
                     <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-pulse" />
                     Loading alerts…
                   </div>
                 ) : lowCount === 0 ? (
-                  <div className="p-4 rounded-2xl border border-border/70 bg-slate-50 dark:bg-slate-900 flex items-start gap-3">
-                    <div className="h-10 w-10 rounded-2xl bg-emerald-500/10 flex items-center justify-center shrink-0">
+                  <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-slate-50 p-4 dark:bg-slate-900">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/10">
                       <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-300" />
                     </div>
                     <div className="min-w-0">
                       <div className="text-sm font-semibold">Everything looks fine</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">Stock levels are above reorder points.</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">Stock levels are above reorder points.</div>
                       <div className="mt-3">
                         <Button asChild variant="outline" size="sm" className="rounded-xl">
                           <Link to="/stock">Open Stock</Link>
@@ -723,13 +712,13 @@ export function AppHeader() {
                   </div>
                 ) : (
                   <>
-                    <div className="mb-3 p-3 rounded-2xl border border-destructive/25 bg-destructive/5 flex items-start gap-3">
-                      <div className="h-10 w-10 rounded-2xl bg-destructive/10 flex items-center justify-center shrink-0">
+                    <div className="mb-3 flex items-start gap-3 rounded-2xl border border-destructive/25 bg-destructive/5 p-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-destructive/10">
                         <AlertTriangle className="h-5 w-5 text-destructive" />
                       </div>
                       <div className="min-w-0">
                         <div className="text-sm font-semibold">Action required</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">
+                        <div className="mt-0.5 text-xs text-muted-foreground">
                           These items need restocking. Open Stock to create your purchase plan.
                         </div>
                       </div>
@@ -745,17 +734,17 @@ export function AppHeader() {
                         return (
                           <div
                             key={String(p.id)}
-                            className="rounded-2xl border border-border/70 bg-white dark:bg-slate-950 p-3 hover:bg-slate-50 dark:hover:bg-slate-900 transition"
+                            className="rounded-2xl border border-border/70 bg-white p-3 transition hover:bg-slate-50 dark:bg-slate-950 dark:hover:bg-slate-900"
                           >
                             <div className="flex items-start gap-3">
-                              <div className="h-10 w-10 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
                                 <Package className="h-5 w-5 text-primary" />
                               </div>
 
                               <div className="min-w-0 flex-1">
-                                <div className="text-sm font-semibold truncate">
+                                <div className="truncate text-sm font-semibold">
                                   <span className="font-extrabold">{code}</span>{" "}
-                                  <span className="text-muted-foreground font-semibold">•</span>{" "}
+                                  <span className="font-semibold text-muted-foreground">•</span>{" "}
                                   <span className="font-semibold">{name}</span>
                                 </div>
 
@@ -769,7 +758,7 @@ export function AppHeader() {
                                   </span>
                                 </div>
 
-                                <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                                   <div
                                     className="h-full rounded-full bg-destructive/70"
                                     style={{
@@ -821,7 +810,6 @@ export function AppHeader() {
               box-shadow: 0 26px 80px rgba(0,0,0,.40);
             }
 
-            /* Accent (dark red) */
             .rp-header{ --rp-accent: rgba(120, 8, 8, .85); }
             :root.dark .rp-header{ --rp-accent: rgba(255, 90, 90, .70); }
 
@@ -839,7 +827,6 @@ export function AppHeader() {
               animation: livePulse 2s ease-in-out infinite;
             }
 
-            /* Search red border always visible + focus stronger */
             .rp-search{
               transition: box-shadow .2s ease, border-color .2s ease, background .2s ease;
               border-color: rgba(120, 8, 8, .22);
@@ -849,7 +836,7 @@ export function AppHeader() {
               box-shadow:
                 0 0 0 1px rgba(120, 8, 8, .12),
                 0 18px 52px rgba(2,6,23,.10);
-              background: rgba(255,255,255,.74);
+              background: rgba(255,255,255,.92);
             }
             :root.dark .rp-search{
               border-color: rgba(255, 90, 90, .18);

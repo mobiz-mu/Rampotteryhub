@@ -13,6 +13,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
+    "build:all": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },

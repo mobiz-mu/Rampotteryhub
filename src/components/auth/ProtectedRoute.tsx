@@ -9,33 +9,60 @@ type ProtectedRouteProps = {
   requirePerm?: string;
 };
 
-/**
- * Public bypass paths (print-only)
- * If these routes are ever accidentally placed under ProtectedRoute,
- * they will still be accessible without login.
- */
 const PUBLIC_BYPASS: RegExp[] = [
   /^\/invoices\/\d+\/print$/i,
   /^\/credit-notes\/\d+\/print$/i,
   /^\/quotations\/\d+\/print$/i,
 ];
 
-export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedRouteProps) {
+function FullPageMessage({
+  title,
+  message,
+  extra,
+}: {
+  title: string;
+  message: string;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+      <div className="max-w-md w-full px-6">
+        <div className="rounded-2xl border bg-background shadow-premium p-5">
+          <div className="text-base font-semibold">{title}</div>
+          <div className="mt-1 text-sm text-muted-foreground">{message}</div>
+          {extra ? <div className="mt-4">{extra}</div> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FullPageLoading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+      <div className="rounded-2xl border bg-background shadow-premium px-5 py-4">
+        <div className="text-sm font-medium">Loading…</div>
+        <div className="mt-1 text-xs text-muted-foreground">Checking your access</div>
+      </div>
+    </div>
+  );
+}
+
+export function ProtectedRoute({
+  children,
+  allowRoles,
+  requirePerm,
+}: ProtectedRouteProps) {
   const { session, loading, profile, role, can } = useAuth();
   const location = useLocation();
 
-  // ✅ Allow public print pages even without login (defensive)
   const pathOnly = location.pathname || "";
   if (PUBLIC_BYPASS.some((rx) => rx.test(pathOnly))) {
     return <>{children}</>;
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="text-sm text-muted-foreground">Loading…</div>
-      </div>
-    );
+    return <FullPageLoading />;
   }
 
   if (!session) {
@@ -43,19 +70,14 @@ export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedR
     return <Navigate to="/auth" replace state={{ from }} />;
   }
 
-  // Logged in but no rp_users record
   if (!profile) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="max-w-md w-full px-6">
-          <div className="rounded-2xl border bg-background shadow-premium p-5">
-            <div className="text-base font-semibold">Access not configured</div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              Your login is valid, but your ERP access (rp_users) is not set up yet.
-              Please contact the administrator to enable your account.
-            </div>
-
-            <div className="mt-4 text-xs text-muted-foreground break-all">
+      <FullPageMessage
+        title="Access not configured"
+        message="Your login is valid, but your ERP access (rp_users) is not set up yet. Please contact the administrator to enable your account."
+        extra={
+          <>
+            <div className="text-xs text-muted-foreground break-all">
               User ID: {session.user.id}
             </div>
 
@@ -68,34 +90,27 @@ export function ProtectedRoute({ children, allowRoles, requirePerm }: ProtectedR
                 Refresh
               </button>
             </div>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
     );
   }
 
-  // Inactive user
   if (profile.is_active === false) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
-        <div className="rounded-2xl border bg-background shadow-premium p-5 max-w-md w-full">
-          <div className="text-base font-semibold">Account disabled</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Your account is inactive. Please contact the administrator.
-          </div>
-        </div>
-      </div>
+      <FullPageMessage
+        title="Account disabled"
+        message="Your account is inactive. Please contact the administrator."
+      />
     );
   }
 
-  // Role gate
-  if (allowRoles?.length) {
-    if (!allowRoles.includes(role)) return <Navigate to="/dashboard" replace />;
+  if (allowRoles?.length && !allowRoles.includes(role)) {
+    return <Navigate to="/dashboard" replace />;
   }
 
-  // Permission gate
-  if (requirePerm) {
-    if (!can(requirePerm)) return <Navigate to="/dashboard" replace />;
+  if (requirePerm && !can(requirePerm)) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;
