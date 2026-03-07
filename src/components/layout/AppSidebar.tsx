@@ -1,5 +1,4 @@
 // src/components/layout/AppSidebar.tsx
-// (Same as your original, only one tiny safety tweak: mobile open button sits BELOW header if needed)
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -16,6 +15,7 @@ import {
   ChevronDown,
   Menu,
   X,
+  Clock3,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
@@ -75,6 +75,7 @@ export function AppSidebar() {
         show: can("ar.view"),
         children: [
           { title: "All Invoices", href: "/invoices", show: can("ar.view") },
+          { title: "Pending Invoices", href: "/invoices/pending", show: can("ar.view") },
           { title: "Create Invoice", href: "/invoices/create", show: can("ar.invoices") },
         ],
       },
@@ -180,7 +181,6 @@ export function AppSidebar() {
 
   return (
     <>
-      {/* Optional: keep this, but it won’t clash anymore */}
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
@@ -391,4 +391,3 @@ export function AppSidebar() {
     </>
   );
 }
-

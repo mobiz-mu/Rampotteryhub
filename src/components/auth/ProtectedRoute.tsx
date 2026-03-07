@@ -1,4 +1,3 @@
-// src/components/auth/ProtectedRoute.tsx
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth, type AppRole } from "@/contexts/AuthContext";
@@ -53,7 +52,7 @@ export function ProtectedRoute({
   allowRoles,
   requirePerm,
 }: ProtectedRouteProps) {
-  const { session, loading, profile, role, can } = useAuth();
+  const { session, loading, profile, profileError, role, can } = useAuth();
   const location = useLocation();
 
   const pathOnly = location.pathname || "";
@@ -73,13 +72,23 @@ export function ProtectedRoute({
   if (!profile) {
     return (
       <FullPageMessage
-        title="Access not configured"
-        message="Your login is valid, but your ERP access (rp_users) is not set up yet. Please contact the administrator to enable your account."
+        title={profileError ? "Unable to load account access" : "Access not configured"}
+        message={
+          profileError
+            ? "Your login worked, but the ERP profile could not be loaded right now. Please refresh and try again."
+            : "Your login is valid, but your ERP access (rp_users) is not set up yet. Please contact the administrator to enable your account."
+        }
         extra={
           <>
             <div className="text-xs text-muted-foreground break-all">
               User ID: {session.user.id}
             </div>
+
+            {profileError ? (
+              <div className="mt-2 text-xs text-rose-600 break-all">
+                Error: {profileError}
+              </div>
+            ) : null}
 
             <div className="mt-4">
               <button

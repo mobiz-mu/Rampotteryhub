@@ -9,7 +9,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
-import { ArrowLeft, Save, UserPlus, Pencil } from "lucide-react";
+import {
+  ArrowLeft,
+  Save,
+  UserPlus,
+  Pencil,
+  ShieldCheck,
+  Building2,
+  MapPin,
+  AlertTriangle,
+  CheckCircle2,
+  Hash,
+} from "lucide-react";
 
 function n(v: any) {
   const x = Number(v ?? 0);
@@ -20,9 +31,40 @@ function digitsOnly(v: any) {
 }
 function normalizeMuPhone(raw: any) {
   const d = digitsOnly(raw);
-  if (d.length === 8) return d; // keep local
+  if (d.length === 8) return d;
   if (d.startsWith("230") && d.length === 11) return d.slice(3);
   return d;
+}
+function normText(v: any) {
+  return String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+function cleanText(v: any) {
+  return String(v ?? "").trim();
+}
+function identityModeOf(brn: any, name: any, address: any) {
+  if (cleanText(brn)) return "BRN";
+  if (cleanText(name) && cleanText(address)) return "NAME_ADDRESS";
+  return "INCOMPLETE";
+}
+function identityKeyOf(brn: any, name: any, address: any) {
+  const brnKey = normText(brn);
+  if (brnKey) return `BRN:${brnKey}`;
+
+  const nameKey = normText(name);
+  const addrKey = normText(address);
+  if (nameKey && addrKey) return `NAMEADDR:${nameKey}__${addrKey}`;
+
+  return "";
+}
+function identityLabelOf(brn: any, name: any, address: any) {
+  const brnText = cleanText(brn);
+  if (brnText) return `BRN • ${brnText}`;
+
+  const nameText = cleanText(name);
+  const addrText = cleanText(address);
+  if (nameText || addrText) return `${nameText || "No Name"} • ${addrText || "No Address"}`;
+
+  return "Incomplete identity";
 }
 
 export default function CustomersNew() {
@@ -53,19 +95,53 @@ export default function CustomersNew() {
 
   const canSave = useMemo(() => name.trim().length > 0, [name]);
 
+  const identityMode = useMemo(
+    () => identityModeOf(brn, name, address),
+    [brn, name, address]
+  );
+
+  const identityKey = useMemo(
+    () => identityKeyOf(brn, name, address),
+    [brn, name, address]
+  );
+
+  const identityLabel = useMemo(
+    () => identityLabelOf(brn, name, address),
+    [brn, name, address]
+  );
+
   // Load customer when editing
   const customerQ = useQuery({
     queryKey: ["customer", customerId],
     enabled: isEdit,
     queryFn: async () => {
-      const { data, error } = await supabase.from("customers").select("*").eq("id", customerId).single();
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("id", customerId)
+        .single();
       if (error) throw error;
       return data as any;
     },
     staleTime: 30_000,
   });
 
-  // Prefill when data arrives (edit mode)
+  // Load all customers for duplicate identity check
+  const existingCustomersQ = useQuery({
+    queryKey: ["customers", "identity-check-all"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("id, customer_code, name, client_name, address, brn, vat_no, phone, whatsapp, is_active")
+        .order("name", { ascending: true });
+
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+    staleTime: 30_000,
+  });
+
+  // Prefill when data arrives
   useEffect(() => {
     if (!isEdit) return;
 
@@ -87,25 +163,77 @@ export default function CustomersNew() {
       setDiscountPercent(String(n(c.discount_percent ?? 0)));
       setOpeningBalance(String(n(c.opening_balance ?? 0)));
 
-      // focus name after prefill
       setTimeout(() => nameRef.current?.focus(), 0);
     }
   }, [isEdit, customerQ.isSuccess, customerQ.data]);
 
+  const duplicateMatches = useMemo(() => {
+    const rows = existingCustomersQ.data || [];
+    const currentKey = identityKey;
+
+    if (!currentKey) return [];
+
+    return rows.filter((r: any) => {
+      if (isEdit && Number(r.id) === customerId) return false;
+
+      const rowKey = identityKeyOf(r.brn, r.name, r.address);
+      return rowKey === currentKey;
+    });
+  }, [existingCustomersQ.data, identityKey, isEdit, customerId]);
+
+  const sameNameOtherAccounts = useMemo(() => {
+    const rows = existingCustomersQ.data || [];
+    const currentName = normText(name);
+    if (!currentName) return [];
+
+    return rows.filter((r: any) => {
+      if (isEdit && Number(r.id) === customerId) return false;
+      return normText(r.name) === currentName;
+    });
+  }, [existingCustomersQ.data, name, isEdit, customerId]);
+
+  const duplicateBlocked = duplicateMatches.length > 0;
+  const identityIncomplete = identityMode === "INCOMPLETE";
+
   const saveM = useMutation({
     mutationFn: async () => {
+      const trimmedName = cleanText(name);
+      const trimmedAddress = cleanText(address);
+      const trimmedBrn = cleanText(brn);
+
+      if (!trimmedName) throw new Error("Customer Name is required");
+
+      // identity validation
+      if (!trimmedBrn && !trimmedAddress) {
+        throw new Error("For customers without BRN, Address is required to keep accounts separate.");
+      }
+
+      // live duplicate check against latest loaded set
+      const latestRows = existingCustomersQ.data || [];
+      const candidateKey = identityKeyOf(trimmedBrn, trimmedName, trimmedAddress);
+
+      const conflict = latestRows.find((r: any) => {
+        if (isEdit && Number(r.id) === customerId) return false;
+        return identityKeyOf(r.brn, r.name, r.address) === candidateKey;
+      });
+
+      if (conflict) {
+        const conflictLabel = identityLabelOf(conflict.brn, conflict.name, conflict.address);
+        throw new Error(`Duplicate customer account detected: ${conflictLabel}`);
+      }
+
       const payload: any = {
-        customer_code: customer_code.trim() || null,
-        name: name.trim(),
-        client_name: client_name.trim() || null,
+        customer_code: cleanText(customer_code) || null,
+        name: trimmedName,
+        client_name: cleanText(client_name) || null,
 
-        phone: phone.trim() ? normalizeMuPhone(phone) : null,
-        whatsapp: whatsapp.trim() ? normalizeMuPhone(whatsapp) : null,
-        email: email.trim() || null,
-        address: address.trim() || null,
+        phone: cleanText(phone) ? normalizeMuPhone(phone) : null,
+        whatsapp: cleanText(whatsapp) ? normalizeMuPhone(whatsapp) : null,
+        email: cleanText(email) || null,
+        address: trimmedAddress || null,
 
-        brn: brn.trim() || null,
-        vat_no: vat_no.trim() || null,
+        brn: trimmedBrn || null,
+        vat_no: cleanText(vat_no) || null,
 
         discount_percent: n(discount_percent),
         opening_balance: n(opening_balance),
@@ -118,6 +246,7 @@ export default function CustomersNew() {
           .eq("id", customerId)
           .select("id")
           .single();
+
         if (error) throw error;
         return { mode: "edit", row: data };
       } else {
@@ -126,6 +255,7 @@ export default function CustomersNew() {
           .insert({ ...payload, is_active: true })
           .select("id")
           .single();
+
         if (error) throw error;
         return { mode: "create", row: data };
       }
@@ -133,10 +263,12 @@ export default function CustomersNew() {
     onSuccess: async (res: any) => {
       toast.success(res?.mode === "edit" ? "Customer updated" : "Customer created");
       await qc.invalidateQueries({ queryKey: ["customers"], exact: false });
+      await qc.invalidateQueries({ queryKey: ["customers", "identity-check-all"], exact: false });
       if (isEdit) qc.invalidateQueries({ queryKey: ["customer", customerId], exact: true });
       nav("/customers");
     },
-    onError: (e: any) => toast.error(e?.message || (isEdit ? "Failed to update customer" : "Failed to create customer")),
+    onError: (e: any) =>
+      toast.error(e?.message || (isEdit ? "Failed to update customer" : "Failed to create customer")),
   });
 
   const busy = saveM.isPending || (isEdit && customerQ.isLoading);
@@ -157,9 +289,13 @@ export default function CustomersNew() {
             {isEdit ? <Pencil className="h-5 w-5 text-primary" /> : <UserPlus className="h-5 w-5 text-primary" />}
           </div>
           <div>
-            <div className="text-2xl font-semibold tracking-tight">{isEdit ? "Edit Customer" : "New Customer"}</div>
+            <div className="text-2xl font-semibold tracking-tight">
+              {isEdit ? "Edit Customer" : "New Customer"}
+            </div>
             <div className="text-xs text-muted-foreground">
-              {isEdit ? "Update customer profile (VAT/BRN/WhatsApp/Discount)" : "Create customer profile (VAT/BRN/WhatsApp/Discount)"}
+              {isEdit
+                ? "Update customer profile with BRN-first separate-account logic"
+                : "Create customer profile with BRN-first separate-account logic"}
             </div>
           </div>
         </div>
@@ -173,7 +309,7 @@ export default function CustomersNew() {
           <Button
             className="gradient-primary shadow-glow text-primary-foreground"
             onClick={() => saveM.mutate()}
-            disabled={!canSave || busy || (isEdit && !!customerQ.error)}
+            disabled={!canSave || busy || (isEdit && !!customerQ.error) || duplicateBlocked || identityIncomplete}
           >
             <Save className="h-4 w-4 mr-2" />
             {busy ? "Saving..." : isEdit ? "Save Changes" : "Save Customer"}
@@ -190,11 +326,124 @@ export default function CustomersNew() {
         </Card>
       ) : null}
 
+      {/* identity preview */}
+      <Card className="p-5 sm:p-6 border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.35)] dark:bg-slate-950/40 dark:border-white/10">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-3 min-w-0">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              <div className="text-sm font-semibold">Account Identity Preview</div>
+            </div>
+
+            <div className="inline-flex max-w-full items-center gap-2 rounded-2xl border bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {cleanText(brn) ? <Building2 className="h-4 w-4 shrink-0 text-sky-700" /> : <MapPin className="h-4 w-4 shrink-0 text-amber-700" />}
+              <span className="truncate font-semibold">{identityLabel}</span>
+            </div>
+
+            <div className="text-xs text-muted-foreground">
+              {identityMode === "BRN" ? (
+                <>This account will be identified by <b>BRN</b>.</>
+              ) : identityMode === "NAME_ADDRESS" ? (
+                <>This account will be identified by <b>Name + Address</b> because BRN is empty.</>
+              ) : (
+                <>Identity is incomplete. Add <b>BRN</b> or at least <b>Address</b> with customer name.</>
+              )}
+            </div>
+
+            <div className="text-[11px] text-slate-400 break-all">
+              Key: {identityKey || "—"}
+            </div>
+          </div>
+
+          <div className="w-full max-w-[520px] space-y-3">
+            {identityIncomplete ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <div className="font-semibold">Incomplete account identity</div>
+                    <div className="mt-1 text-xs">
+                      If BRN is empty, Address is required so same-name customers remain separate accounts.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {duplicateBlocked ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <div className="font-semibold">Duplicate account detected</div>
+                    <div className="mt-1 text-xs">
+                      Another customer already uses this same account identity.
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {duplicateMatches.map((m: any) => (
+                        <div key={m.id} className="rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs">
+                          <div className="font-semibold text-slate-900">{m.name || "—"}</div>
+                          <div className="text-slate-600">{identityLabelOf(m.brn, m.name, m.address)}</div>
+                          <div className="text-slate-500">
+                            Code: {m.customer_code || "—"} • VAT: {m.vat_no || "—"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : !identityIncomplete ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <div className="font-semibold">Identity is valid</div>
+                    <div className="mt-1 text-xs">
+                      This customer can be saved as a separate account.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {sameNameOtherAccounts.length > 0 ? (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                <div className="flex items-start gap-2">
+                  <Hash className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <div className="font-semibold">Same-name accounts found</div>
+                    <div className="mt-1 text-xs">
+                      This is okay as long as BRN is different, or if no BRN then address is different.
+                    </div>
+
+                    <div className="mt-3 space-y-2 max-h-40 overflow-auto">
+                      {sameNameOtherAccounts.slice(0, 8).map((m: any) => (
+                        <div key={m.id} className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs">
+                          <div className="font-semibold text-slate-900">{m.name || "—"}</div>
+                          <div className="text-slate-600">{identityLabelOf(m.brn, m.name, m.address)}</div>
+                          <div className="text-slate-500">
+                            Code: {m.customer_code || "—"} • VAT: {m.vat_no || "—"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </Card>
+
       <Card className="p-5 sm:p-6 border-white/30 bg-white/85 backdrop-blur shadow-[0_18px_40px_-22px_rgba(0,0,0,.35)] dark:bg-slate-950/40 dark:border-white/10">
         <div className="grid gap-5 lg:grid-cols-2">
           {/* Left: identity */}
           <div className="space-y-4">
-            <div className="text-[11px] font-extrabold tracking-[0.14em] uppercase text-muted-foreground">Identity</div>
+            <div className="text-[11px] font-extrabold tracking-[0.14em] uppercase text-muted-foreground">
+              Identity
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -231,19 +480,26 @@ export default function CustomersNew() {
                 onChange={(e) => setName(e.target.value)}
                 disabled={busy}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && canSave && !busy) saveM.mutate();
+                  if (e.key === "Enter" && canSave && !busy && !duplicateBlocked && !identityIncomplete) {
+                    saveM.mutate();
+                  }
                 }}
               />
             </div>
 
             <div>
-              <div className="text-xs font-semibold mb-1">Address</div>
+              <div className="text-xs font-semibold mb-1">
+                Address {!cleanText(brn) ? <span className="text-rose-600">*</span> : null}
+              </div>
               <Input
                 placeholder="Street, City, Mauritius"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 disabled={busy}
               />
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Required when BRN is empty.
+              </div>
             </div>
           </div>
 
@@ -256,7 +512,12 @@ export default function CustomersNew() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <div className="text-xs font-semibold mb-1">Phone</div>
-                <Input placeholder="e.g. 57850062" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={busy} />
+                <Input
+                  placeholder="e.g. 57850062"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  disabled={busy}
+                />
               </div>
               <div>
                 <div className="text-xs font-semibold mb-1">WhatsApp</div>
@@ -282,11 +543,24 @@ export default function CustomersNew() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <div className="text-xs font-semibold mb-1">BRN</div>
-                <Input placeholder="BRN" value={brn} onChange={(e) => setBrn(e.target.value)} disabled={busy} />
+                <Input
+                  placeholder="BRN"
+                  value={brn}
+                  onChange={(e) => setBrn(e.target.value)}
+                  disabled={busy}
+                />
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  If BRN exists, it becomes the account identity key.
+                </div>
               </div>
               <div>
                 <div className="text-xs font-semibold mb-1">VAT No</div>
-                <Input placeholder="VAT number" value={vat_no} onChange={(e) => setVatNo(e.target.value)} disabled={busy} />
+                <Input
+                  placeholder="VAT number"
+                  value={vat_no}
+                  onChange={(e) => setVatNo(e.target.value)}
+                  disabled={busy}
+                />
               </div>
             </div>
 

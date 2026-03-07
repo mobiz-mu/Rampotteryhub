@@ -1,4 +1,3 @@
-// src/pages/AgingReport.tsx
 import React, { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -9,18 +8,46 @@ function n(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
 }
+
 function money(v: any) {
-  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n(v));
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n(v));
 }
+
 function daysBetween(from: Date, to: Date) {
   const ms = to.getTime() - from.getTime();
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
+
 function fmtDate(v: any) {
   const s = String(v || "").trim();
   if (!s) return "—";
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString();
+}
+
+function txt(v: any) {
+  return String(v ?? "").trim();
+}
+
+function customerPhones(c: any) {
+  const phone = txt(c?.phone);
+  const whatsapp = txt(c?.whatsapp);
+
+  if (phone && whatsapp && phone !== whatsapp) return `${phone} / ${whatsapp}`;
+  return phone || whatsapp || "—";
+}
+
+function customerAccountKey(c: any) {
+  const brn = txt(c?.brn);
+  const name = txt(c?.name);
+  const address = txt(c?.address);
+
+  if (brn) return `BRN: ${brn}`;
+  if (name && address) return `${name} • ${address}`;
+  return name || "Customer";
 }
 
 type AgingRow = {
@@ -42,7 +69,12 @@ export default function AgingReport() {
   const custQ = useQuery({
     queryKey: ["customer", customerId],
     queryFn: async () => {
-      const { data, error } = await supabase.from("customers").select("*").eq("id", customerId).maybeSingle();
+      const { data, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("id", customerId)
+        .maybeSingle();
+
       if (error) throw error;
       return data;
     },
@@ -55,9 +87,10 @@ export default function AgingReport() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
-        .select("id,invoice_number,invoice_date,total_amount,amount_paid,balance_remaining,status")
+        .select(
+          "id,invoice_number,invoice_date,total_amount,amount_paid,balance_remaining,status"
+        )
         .eq("customer_id", customerId)
-        // keep only meaningful invoices for aging
         .not("status", "in", '("DRAFT","VOID")')
         .order("invoice_date", { ascending: true });
 
@@ -72,15 +105,26 @@ export default function AgingReport() {
   const invoices: any[] = invQ.data || [];
   const today = new Date();
 
+  const customerName = useMemo(() => {
+    const client = txt(customer?.client_name);
+    const name = txt(customer?.name);
+    return client || name || "Customer";
+  }, [customer]);
+
+  const accountKey = useMemo(() => customerAccountKey(customer), [customer]);
+
   const openRows: AgingRow[] = useMemo(() => {
     return invoices
       .map((r) => {
         const invDate = new Date(String(r.invoice_date));
-        const ageDays = Number.isNaN(invDate.getTime()) ? 0 : Math.max(0, daysBetween(invDate, today));
+        const ageDays = Number.isNaN(invDate.getTime())
+          ? 0
+          : Math.max(0, daysBetween(invDate, today));
+
         return {
           id: Number(r.id),
-          invoice_number: String(r.invoice_number),
-          invoice_date: String(r.invoice_date),
+          invoice_number: String(r.invoice_number || ""),
+          invoice_date: String(r.invoice_date || ""),
           ageDays,
           total_amount: n(r.total_amount),
           amount_paid: n(r.amount_paid),
@@ -94,6 +138,7 @@ export default function AgingReport() {
 
   const buckets = useMemo(() => {
     const b = { d0_30: 0, d31_60: 0, d61_90: 0, d90p: 0, total: 0 };
+
     for (const r of openRows) {
       b.total += r.balance_remaining;
       if (r.ageDays <= 30) b.d0_30 += r.balance_remaining;
@@ -101,6 +146,7 @@ export default function AgingReport() {
       else if (r.ageDays <= 90) b.d61_90 += r.balance_remaining;
       else b.d90p += r.balance_remaining;
     }
+
     return b;
   }, [openRows]);
 
@@ -112,9 +158,12 @@ export default function AgingReport() {
             ← Back
           </Button>
         </div>
+
         <div className="inv-screen inv-form-shell inv-form-shell--tight">
           <div className="inv-form-card">
-            <div className="p-6 text-sm text-muted-foreground">Invalid customer.</div>
+            <div className="p-6 text-sm text-muted-foreground">
+              Invalid customer.
+            </div>
           </div>
         </div>
       </div>
@@ -129,11 +178,19 @@ export default function AgingReport() {
         <Button variant="outline" onClick={() => nav(-1)}>
           ← Back
         </Button>
+
         <div className="inv-actions-right">
-          <Button variant="outline" onClick={() => invQ.refetch()} disabled={invQ.isFetching}>
+          <Button
+            variant="outline"
+            onClick={() => invQ.refetch()}
+            disabled={invQ.isFetching}
+          >
             {invQ.isFetching ? "Refreshing…" : "Refresh"}
           </Button>
-          <Button onClick={() => nav(`/statement/print?customerId=${customerId}`)}>Statement PDF</Button>
+
+          <Button onClick={() => nav(`/statement/print?customerId=${customerId}`)}>
+            Statement PDF
+          </Button>
         </div>
       </div>
 
@@ -143,29 +200,146 @@ export default function AgingReport() {
             <div>
               <div className="inv-form-title">Aging Report</div>
               <div className="inv-form-sub">
-                Customer: <b>{customer?.name || "—"}</b>
+                Customer: <b>{customerName}</b>
               </div>
             </div>
-            <div className="text-sm text-muted-foreground">{new Date().toLocaleDateString()}</div>
+
+            <div className="text-sm text-muted-foreground">
+              {new Date().toLocaleDateString()}
+            </div>
           </div>
 
           {loading ? (
             <div className="p-6 text-sm text-muted-foreground">Loading…</div>
           ) : (
             <>
+              {/* Customer identity block */}
+              <div
+                style={{
+                  margin: "0 16px 14px",
+                  display: "grid",
+                  gridTemplateColumns: "1.1fr .9fr",
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{
+                    border: "1px solid rgba(0,0,0,.08)",
+                    borderRadius: 16,
+                    padding: 14,
+                    background: "rgba(255,255,255,.72)",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 11,
+                      letterSpacing: ".10em",
+                      textTransform: "uppercase",
+                      opacity: 0.7,
+                    }}
+                  >
+                    Customer Account
+                  </div>
+
+                  <div style={{ marginTop: 8, fontSize: 14, fontWeight: 800 }}>
+                    {customerName}
+                  </div>
+
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+                    {txt(customer?.address) || "—"}
+                  </div>
+
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+                    Tel: {customerPhones(customer)}
+                  </div>
+
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+                    {txt(customer?.brn) ? `BRN: ${txt(customer?.brn)}` : "BRN: —"}
+                    {txt(customer?.vat_no) ? ` • VAT: ${txt(customer?.vat_no)}` : ""}
+                  </div>
+
+                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.72 }}>
+                    Account key: {accountKey}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    border: "1px solid rgba(0,0,0,.08)",
+                    borderRadius: 16,
+                    padding: 14,
+                    background: "rgba(255,255,255,.72)",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 11,
+                      letterSpacing: ".10em",
+                      textTransform: "uppercase",
+                      opacity: 0.7,
+                    }}
+                  >
+                    Outstanding Summary
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 10,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12,
+                    }}
+                  >
+                    <span>Total Open Invoices</span>
+                    <b>{openRows.length}</b>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12,
+                    }}
+                  >
+                    <span>Total Outstanding</span>
+                    <b>Rs {money(buckets.total)}</b>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 8,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12,
+                    }}
+                  >
+                    <span>Oldest Bucket</span>
+                    <b>{buckets.d90p > 0 ? "90+ Days" : "Below 90 Days"}</b>
+                  </div>
+
+                  <div style={{ marginTop: 8, fontSize: 11, opacity: 0.72 }}>
+                    This report is for this exact customer account only.
+                  </div>
+                </div>
+              </div>
+
               <div className="inv-totalsbar inv-totalsbar--premium inv-totalsbar--shadow">
                 <div className="inv-totalsbar__cell">
                   <span className="k">0–30</span>
                   <span className="v">Rs {money(buckets.d0_30)}</span>
                 </div>
+
                 <div className="inv-totalsbar__cell">
                   <span className="k">31–60</span>
                   <span className="v">Rs {money(buckets.d31_60)}</span>
                 </div>
+
                 <div className="inv-totalsbar__cell">
                   <span className="k">61–90</span>
                   <span className="v">Rs {money(buckets.d61_90)}</span>
                 </div>
+
                 <div className="inv-totalsbar__cell inv-totalsbar__cell--balance">
                   <span className="k">90+</span>
                   <span className="v">Rs {money(buckets.d90p)}</span>
@@ -211,12 +385,23 @@ export default function AgingReport() {
                         >
                           <td className="inv-td">
                             <b>{r.invoice_number}</b>
-                            <div className="mt-1 text-xs text-muted-foreground">{r.status}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {r.status}
+                            </div>
                           </td>
+
                           <td className="inv-td">{fmtDate(r.invoice_date)}</td>
+
                           <td className="inv-td inv-center">{r.ageDays} d</td>
-                          <td className="inv-td inv-right">Rs {money(r.total_amount)}</td>
-                          <td className="inv-td inv-right">Rs {money(r.amount_paid)}</td>
+
+                          <td className="inv-td inv-right">
+                            Rs {money(r.total_amount)}
+                          </td>
+
+                          <td className="inv-td inv-right">
+                            Rs {money(r.amount_paid)}
+                          </td>
+
                           <td className="inv-td inv-right">
                             <b>Rs {money(r.balance_remaining)}</b>
                           </td>
@@ -228,7 +413,9 @@ export default function AgingReport() {
               </div>
 
               <div className="p-3 text-xs text-muted-foreground">
-                Aging uses <b>invoice_date</b> and <b>balance_remaining</b>. Draft/Void excluded.
+                Aging uses <b>invoice_date</b> and <b>balance_remaining</b>.{" "}
+                Draft/Void excluded. This page already stays separate per{" "}
+                <b>customer_id</b>, so accounts with the same name remain separate.
               </div>
             </>
           )}

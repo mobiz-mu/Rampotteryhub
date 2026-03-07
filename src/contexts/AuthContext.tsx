@@ -1,4 +1,3 @@
-// src/contexts/AuthContext.tsx
 import React, {
   createContext,
   useContext,
@@ -27,6 +26,7 @@ type AuthCtx = {
   user: User | null;
   loading: boolean;
   profile: any | null;
+  profileError: string | null;
   role: AppRole;
   permissions: PermissionsMap;
   isAdmin: boolean;
@@ -78,11 +78,29 @@ function isRefreshTokenError(message: any) {
   );
 }
 
-async function fetchRpMe(userId: string) {
+function isAbortLikeError(error: any) {
+  const name = String(error?.name || "").toLowerCase();
+  const msg = String(error?.message || "").toLowerCase();
+
+  return (
+    name === "aborterror" ||
+    msg.includes("aborted") ||
+    msg.includes("signal is aborted")
+  );
+}
+
+async function fetchRpMe(userId: string, signal?: AbortSignal) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 8000);
 
+  const onAbort = () => controller.abort();
+
   try {
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     const res = await fetch("/api/auth/me", {
       method: "GET",
       credentials: "include",
@@ -99,6 +117,7 @@ async function fetchRpMe(userId: string) {
     return json.user;
   } finally {
     window.clearTimeout(timeout);
+    if (signal) signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -109,6 +128,7 @@ async function fetchRpMe(userId: string) {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const [sessionLoading, setSessionLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -179,6 +199,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (!newSession) {
           setProfile(null);
+          setProfileError(null);
           setProfileLoading(false);
         }
 
@@ -199,20 +220,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ===================================================== */
   useEffect(() => {
     let alive = true;
+    const controller = new AbortController();
 
     (async () => {
       try {
         if (!user?.id) {
           if (alive) {
             setProfile(null);
+            setProfileError(null);
             setProfileLoading(false);
           }
           return;
         }
 
-        if (alive) setProfileLoading(true);
+        if (alive) {
+          setProfileLoading(true);
+          setProfileError(null);
+        }
 
-        const me = await fetchRpMe(user.id);
+        const me = await fetchRpMe(user.id, controller.signal);
 
         if (!alive) return;
 
@@ -220,16 +246,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await supabase.auth.signOut();
           if (!alive) return;
           setProfile(null);
+          setProfileError("Account is inactive");
           return;
         }
 
         setProfile(me);
+        setProfileError(null);
       } catch (e: any) {
-        console.warn("auth/me load error:", e?.message || e);
-
         if (!alive) return;
 
+        if (isAbortLikeError(e)) {
+          return;
+        }
+
+        console.warn("auth/me load error:", e?.message || e);
         setProfile(null);
+        setProfileError(e?.message || "Failed to load ERP profile");
       } finally {
         if (alive) setProfileLoading(false);
       }
@@ -237,6 +269,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       alive = false;
+      controller.abort();
     };
   }, [user?.id]);
 
@@ -256,6 +289,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function signOut() {
     localStorage.removeItem("x-rp-user");
     setProfile(null);
+    setProfileError(null);
     await supabase.auth.signOut();
   }
 
@@ -291,6 +325,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       loading,
       profile,
+      profileError,
       role,
       permissions,
       isAdmin,
@@ -298,7 +333,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signIn,
       signOut,
     }),
-    [session, user, loading, profile, role, permissions, isAdmin, can]
+    [
+      session,
+      user,
+      loading,
+      profile,
+      profileError,
+      role,
+      permissions,
+      isAdmin,
+      can,
+    ]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -28,8 +28,10 @@ import {
   MapPin,
   Phone,
   BadgePercent,
-  UserRound,
   FileSpreadsheet,
+  Building2,
+  ShieldCheck,
+  Hash,
 } from "lucide-react";
 
 /* ===================================================
@@ -37,6 +39,10 @@ import {
 =================================================== */
 function normalizePhone(v: any) {
   return String(v ?? "").replace(/[^\d]/g, "");
+}
+
+function normalizeText(v: any) {
+  return String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function toNumber(v: any, fallback = 0) {
@@ -54,6 +60,24 @@ function initials(name: any) {
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase() || "")
     .join("");
+}
+
+function customerIdentityKey(c: Customer) {
+  const brn = normalizeText((c as any).brn);
+  const name = normalizeText((c as any).name);
+  const address = normalizeText((c as any).address);
+
+  if (brn) return `BRN:${brn}`;
+  return `NAMEADDR:${name}__${address}`;
+}
+
+function customerIdentityLabel(c: Customer) {
+  const brn = String((c as any).brn ?? "").trim();
+  if (brn) return `BRN • ${brn}`;
+
+  const name = String((c as any).name ?? "").trim() || "No Name";
+  const address = String((c as any).address ?? "").trim() || "No Address";
+  return `${name} • ${address}`;
 }
 
 function downloadCsv(rows: Customer[]) {
@@ -81,8 +105,8 @@ function downloadCsv(rows: Customer[]) {
         c.address ?? "",
         c.phone ?? "",
         c.whatsapp ?? "",
-        c.brn ?? "",
-        c.vat_no ?? "",
+        (c as any).brn ?? "",
+        (c as any).vat_no ?? "",
         (c as any).discount_percent ?? 0,
       ]
         .map((x) => `"${String(x).replace(/"/g, '""')}"`)
@@ -232,10 +256,22 @@ export default function Customers() {
   const totalCustomers = rows.length;
   const totalWithAddress = useMemo(() => rows.filter((c) => String(c.address ?? "").trim()).length, [rows]);
   const totalWithWhatsapp = useMemo(() => rows.filter((c) => String(c.whatsapp ?? "").trim()).length, [rows]);
+  const totalWithBrn = useMemo(() => rows.filter((c) => String((c as any).brn ?? "").trim()).length, [rows]);
+
   const avgDiscount = useMemo(() => {
     if (!rows.length) return 0;
     const total = rows.reduce((sum, c) => sum + toNumber((c as any).discount_percent ?? 0, 0), 0);
     return Math.round(total / rows.length);
+  }, [rows]);
+
+  const duplicateNameCount = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of rows) {
+      const key = normalizeText((c as any).name);
+      if (!key) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return Array.from(counts.values()).filter((x) => x > 1).length;
   }, [rows]);
 
   const activeM = useMutation({
@@ -318,13 +354,14 @@ export default function Customers() {
             <div className="min-w-0">
               <div className="text-4xl font-extrabold tracking-tight text-slate-950">Customers</div>
               <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Premium customer register • faster access • clean business profile view • statements • import/export
+                Premium customer register • same-name customers stay separate • BRN-first identity • cleaner account control
               </div>
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <StatCard icon={<Users className="h-4 w-4 text-slate-700" />} label="Total Customers" value={totalCustomers} />
+            <StatCard icon={<Building2 className="h-4 w-4 text-sky-700" />} label="With BRN" value={totalWithBrn} tone="blue" />
             <StatCard icon={<MapPin className="h-4 w-4 text-sky-700" />} label="With Address" value={totalWithAddress} tone="blue" />
             <StatCard icon={<MessageCircle className="h-4 w-4 text-emerald-700" />} label="With WhatsApp" value={totalWithWhatsapp} tone="green" />
             <StatCard icon={<BadgePercent className="h-4 w-4 text-amber-700" />} label="Avg Discount" value={`${avgDiscount}%`} tone="amber" />
@@ -364,21 +401,33 @@ export default function Customers() {
         </div>
       </div>
 
-      {/* Search / Filter Bar */}
+      {/* Search / Info Bar */}
       <Card className="rounded-[30px] border-white/35 bg-white/82 p-5 shadow-[0_18px_48px_-28px_rgba(0,0,0,.24)] backdrop-blur">
         <div className="grid gap-4 xl:grid-cols-[1fr_auto] xl:items-center">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="h-13 rounded-2xl border-white/30 bg-white pl-11 text-base shadow-sm"
-              placeholder="Search customer, code, phone, WhatsApp, BRN, VAT…"
+              placeholder="Search customer, code, BRN, VAT, phone, WhatsApp, address…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
 
           <div className="text-sm text-slate-500">
-            {customersQ.isLoading ? "Loading…" : `${rows.length} customer(s) found`}
+            {customersQ.isLoading ? "Loading…" : `${rows.length} customer(s) found • ${duplicateNameCount} repeated-name group(s)`}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-600">
+          <div className="flex flex-wrap items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-primary" />
+            <span className="font-semibold text-slate-800">Account identity rule:</span>
+            <span>Use <b>BRN</b> when available.</span>
+            <span className="text-slate-400">•</span>
+            <span>If no BRN, fallback to <b>Name + Address</b>.</span>
+            <span className="text-slate-400">•</span>
+            <span>Same names must remain separate accounts.</span>
           </div>
         </div>
       </Card>
@@ -393,12 +442,13 @@ export default function Customers() {
             </div>
           </div>
 
-          <div className="mt-4 hidden grid-cols-[120px_1.25fr_1fr_.8fr_.8fr_.55fr_220px] gap-4 border-t border-slate-100 pt-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:grid">
+          <div className="mt-4 hidden grid-cols-[110px_1.1fr_1.1fr_.8fr_.8fr_.95fr_.55fr_220px] gap-4 border-t border-slate-100 pt-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:grid">
             <div>Code</div>
             <div>Customer</div>
             <div>Address</div>
             <div>Phone</div>
             <div>WhatsApp</div>
+            <div>BRN / VAT</div>
             <div>Discount</div>
             <div className="text-right">Actions</div>
           </div>
@@ -416,12 +466,17 @@ export default function Customers() {
             <div className="space-y-4">
               {paginated.map((c) => {
                 const discount = toNumber((c as any).discount_percent ?? 0, 0);
+                const brn = String((c as any).brn ?? "").trim();
+                const vatNo = String((c as any).vat_no ?? "").trim();
+                const accountIdentity = customerIdentityLabel(c);
+                const identityKey = customerIdentityKey(c);
+
                 return (
                   <div
                     key={c.id}
                     className="group rounded-[26px] border border-slate-200/85 bg-white px-5 py-4 shadow-[0_14px_36px_-26px_rgba(15,23,42,.22)] transition-all duration-200 hover:-translate-y-[1px] hover:shadow-[0_18px_42px_-24px_rgba(15,23,42,.26)]"
                   >
-                    <div className="grid gap-4 xl:grid-cols-[120px_1.25fr_1fr_.8fr_.8fr_.55fr_220px] xl:items-center">
+                    <div className="grid gap-4 xl:grid-cols-[110px_1.1fr_1.1fr_.8fr_.8fr_.95fr_.55fr_220px] xl:items-center">
                       {/* Code */}
                       <div className="min-w-0">
                         <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Code</div>
@@ -435,13 +490,24 @@ export default function Customers() {
                           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-sm font-extrabold text-slate-700 ring-1 ring-slate-200">
                             {initials(c.name)}
                           </div>
+
                           <div className="min-w-0">
                             <div className="truncate text-[17px] font-extrabold tracking-tight text-slate-950">{c.name}</div>
+
                             {(c as any).client_name ? (
                               <div className="mt-1 text-xs text-slate-500">Client: {String((c as any).client_name)}</div>
                             ) : (
                               <div className="mt-1 text-xs text-slate-400">No client alias</div>
                             )}
+
+                            <div className="mt-2 flex min-w-0 items-center gap-2">
+                              <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                                <Hash className="h-3.5 w-3.5" />
+                                <span className="truncate" title={accountIdentity}>
+                                  {accountIdentity}
+                                </span>
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -452,6 +518,10 @@ export default function Customers() {
                         <div className="flex items-start gap-2">
                           <MapPin className="mt-[2px] h-4 w-4 shrink-0 text-slate-400" />
                           <div className="line-clamp-2 text-sm leading-snug text-slate-600">{c.address || "-"}</div>
+                        </div>
+
+                        <div className="mt-2 text-[11px] text-slate-400" title={identityKey}>
+                          Key: {identityKey}
                         </div>
                       </div>
 
@@ -470,6 +540,21 @@ export default function Customers() {
                         <div className="flex items-center gap-2 text-sm text-slate-700">
                           <MessageCircle className="h-4 w-4 text-emerald-500" />
                           <span className="font-medium">{c.whatsapp || "-"}</span>
+                        </div>
+                      </div>
+
+                      {/* BRN / VAT */}
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">BRN / VAT</div>
+
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 text-sm text-slate-700">
+                            <Building2 className="h-4 w-4 text-slate-400" />
+                            <span className="font-medium truncate">{brn || "-"}</span>
+                          </div>
+                          <div className="text-xs text-slate-500 truncate">
+                            VAT: <span className="font-medium text-slate-700">{vatNo || "-"}</span>
+                          </div>
                         </div>
                       </div>
 

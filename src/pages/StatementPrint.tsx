@@ -228,15 +228,56 @@ export default function StatementPrint() {
           </div>
 
           {/* Customer + Summary */}
-          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div style={{ border: "1px solid rgba(0,0,0,.10)", borderRadius: 12, padding: 12 }}>
-              <div style={{ fontSize: 11, letterSpacing: ".10em", textTransform: "uppercase", opacity: 0.7 }}>Customer</div>
-              <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800 }}>{customerName}</div>
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>{customer.address || "—"}</div>
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                {customer.whatsapp || customer.phone ? `Phone: ${customer.whatsapp || customer.phone}` : "—"}
-              </div>
-            </div>
+<div
+  style={{
+    marginTop: 14,
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 12,
+  }}
+>
+  <div
+    style={{
+      border: "1px solid rgba(0,0,0,.10)",
+      borderRadius: 12,
+      padding: 12,
+    }}
+  >
+    <div
+      style={{
+        fontSize: 11,
+        letterSpacing: ".10em",
+        textTransform: "uppercase",
+        opacity: 0.7,
+      }}
+    >
+      Customer
+    </div>
+
+    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800 }}>
+      {customerName}
+    </div>
+
+    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+      {customer.address || "—"}
+    </div>
+
+    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+      {customer.phone || customer.whatsapp
+        ? `Tel: ${customer.phone || ""}${
+            customer.phone && customer.whatsapp && customer.phone !== customer.whatsapp ? " / " : ""
+          }${
+            customer.whatsapp && customer.whatsapp !== customer.phone ? customer.whatsapp : !customer.phone ? customer.whatsapp : ""
+          }`
+        : "—"}
+    </div>
+
+    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
+      {customer.brn ? `BRN: ${customer.brn}` : ""}
+      {customer.brn && customer.vat_no ? " • " : ""}
+      {customer.vat_no ? `VAT: ${customer.vat_no}` : !customer.brn ? "—" : ""}
+    </div>
+  </div>
 
             <div style={{ border: "1px solid rgba(0,0,0,.10)", borderRadius: 12, padding: 12 }}>
               <div style={{ fontSize: 11, letterSpacing: ".10em", textTransform: "uppercase", opacity: 0.7 }}>Summary</div>
