@@ -8,10 +8,6 @@ import React, {
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 
-/* =====================================================
-   Types
-===================================================== */
-
 export type AppRole =
   | "admin"
   | "manager"
@@ -45,10 +41,6 @@ export function useAuth() {
   if (!v) throw new Error("useAuth must be used within AuthProvider");
   return v;
 }
-
-/* =====================================================
-   Helpers
-===================================================== */
 
 function normRole(v: any): AppRole {
   const r = String(v || "").toLowerCase();
@@ -90,40 +82,21 @@ function isAbortLikeError(error: any) {
 }
 
 async function fetchRpMe(userId: string, signal?: AbortSignal) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 8000);
+  const res = await fetch("/api/auth/me", {
+    method: "GET",
+    credentials: "include",
+    headers: { "x-rp-user": userId },
+    signal,
+  });
 
-  const onAbort = () => controller.abort();
+  const json = await res.json().catch(() => ({}));
 
-  try {
-    if (signal) {
-      if (signal.aborted) controller.abort();
-      else signal.addEventListener("abort", onAbort, { once: true });
-    }
-
-    const res = await fetch("/api/auth/me", {
-      method: "GET",
-      credentials: "include",
-      headers: { "x-rp-user": userId },
-      signal: controller.signal,
-    });
-
-    const json = await res.json().catch(() => ({}));
-
-    if (!res.ok || !json?.ok) {
-      throw new Error(json?.error || `Auth me failed (${res.status})`);
-    }
-
-    return json.user;
-  } finally {
-    window.clearTimeout(timeout);
-    if (signal) signal.removeEventListener("abort", onAbort);
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error || `Auth me failed (${res.status})`);
   }
-}
 
-/* =====================================================
-   Provider
-===================================================== */
+  return json.user;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -135,9 +108,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const user = session?.user ?? null;
 
-  /* =====================================================
-     1) Persist UUID for Express API auth
-  ===================================================== */
   useEffect(() => {
     if (user?.id) {
       localStorage.setItem("x-rp-user", user.id);
@@ -146,9 +116,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user?.id]);
 
-  /* =====================================================
-     2) Session bootstrap + auth state changes
-  ===================================================== */
   useEffect(() => {
     let alive = true;
     let bootstrapped = false;
@@ -215,9 +182,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  /* =====================================================
-     3) Load authority profile via backend
-  ===================================================== */
   useEffect(() => {
     let alive = true;
     const controller = new AbortController();
@@ -273,9 +237,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user?.id]);
 
-  /* =====================================================
-     Auth actions
-  ===================================================== */
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -293,9 +254,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut();
   }
 
-  /* =====================================================
-     Derived values
-  ===================================================== */
   const role: AppRole = useMemo(() => normRole(profile?.role), [profile?.role]);
 
   const permissions: PermissionsMap = useMemo(
@@ -314,9 +272,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isAdmin, permissions]);
 
-  /* =====================================================
-     Final loading state
-  ===================================================== */
   const loading = sessionLoading || (session ? profileLoading : false);
 
   const value = useMemo<AuthCtx>(
