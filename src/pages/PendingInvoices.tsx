@@ -34,7 +34,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { listInvoices, markInvoicePaid, voidInvoice, setInvoicePayment } from "@/lib/invoices";
+import { listInvoices, markInvoicePaid, voidInvoice, setInvoicePayment, cancelDraftInvoice } from "@/lib/invoices";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -419,6 +419,19 @@ export default function PendingInvoices() {
     },
   });
 
+  const cancelDraftM = useMutation({
+    mutationFn: async (invoiceId: number) => cancelDraftInvoice(invoiceId),
+    onError: (err: any) => {
+      toast.error(err?.message || "Cancel draft failed");
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["pending_invoices"] });
+      await qc.invalidateQueries({ queryKey: ["invoices"] });
+      await qc.invalidateQueries({ queryKey: ["invoice"] });
+      toast.success("Draft invoice cancelled");
+    },
+  });
+
   function openPayment(inv: any) {
     setPayInvoice(inv);
     setPayAmountStr(String(n(inv.amount_paid).toFixed(2)));
@@ -443,6 +456,16 @@ export default function PendingInvoices() {
   function onVoid(inv: any) {
     if (!confirm("Void this invoice? This cannot be undone.")) return;
     voidM.mutate(inv.id);
+  }
+
+  function onCancelDraft(inv: any) {
+    if (normalizeStatus(inv?.status) !== "DRAFT") {
+      toast.error("Only draft invoices can be cancelled.");
+      return;
+    }
+
+    if (!confirm("Cancel this draft invoice? This will permanently delete it.")) return;
+    cancelDraftM.mutate(inv.id);
   }
 
   function onSendWhatsApp(inv: any) {
@@ -1059,7 +1082,17 @@ export default function PendingInvoices() {
                               </>
                             ) : null}
 
-                            {st !== "VOID" ? (
+                            {st === "DRAFT" ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => onCancelDraft(r)} disabled={cancelDraftM.isPending}>
+                                  <Ban className="mr-2 h-4 w-4" />
+                                  Cancel Draft
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+
+                            {st !== "VOID" && st !== "DRAFT" ? (
                               <>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={() => onVoid(r)} disabled={voidM.isPending}>

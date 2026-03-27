@@ -5,6 +5,8 @@ export type Product = {
   description: string | null;
 
   units_per_box: number | null;
+  bag_weight_kg: number | null;
+
   cost_price: number | null;
   selling_price: number;
 
@@ -26,6 +28,8 @@ export type ProductUpsert = {
   description?: string | null;
 
   units_per_box?: number | null;
+  bag_weight_kg?: number | null;
+
   cost_price?: number | null;
   selling_price: number;
 

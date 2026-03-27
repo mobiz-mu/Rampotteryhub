@@ -34,6 +34,7 @@ type ProductRow = {
   name?: string | null;
   description?: string | null;
   units_per_box?: number | null;
+  bag_weight_kg?: number | null;
   selling_price: number; // VAT-exclusive
 };
 
@@ -43,7 +44,7 @@ type ProductRow = {
  * PCS  -> total_qty = pcs_qty
  * KG   -> total_qty = box_qty
  * G    -> total_qty = box_qty / 1000 (grams to kg)
- * BAG  -> total_qty = box_qty * units_per_box (default 25 kg per bag)
+ * BAG  -> total_qty = box_qty * units_per_box (product bag_weight_kg per bag)
  */
 type Uom = "BOX" | "PCS" | "KG" | "G" | "BAG";
 
@@ -60,7 +61,7 @@ type InvoiceLine = {
    * - BOX:  box_qty = number of boxes (decimals allowed)
    * - KG:   box_qty = kg (decimals allowed)
    * - G:    box_qty = grams (decimals allowed)
-   * - BAG:  box_qty = bags (decimals allowed) ; units_per_box default 25
+   * - BAG:  box_qty = bags (decimals allowed) ; units_per_box = kg per bag
    * - PCS:  box_qty used only as a UI bridge (we store pcs_qty for PCS)
    */
   box_qty: number;
@@ -68,7 +69,7 @@ type InvoiceLine = {
   /** PCS qty (decimals allowed as requested) */
   pcs_qty: number;
 
-  /** Used for BOX (units/box) and BAG (kg/bag default 25) */
+  /** Used for BOX (units/box) and BAG (kg per bag) */
   units_per_box: number;
 
   /** Computed base quantity:
@@ -175,7 +176,7 @@ function uomLabel(u: Uom) {
 /** Default "units_per_box" based on UOM */
 function defaultUnitsPerBoxFor(uom: Uom, current: any) {
   const cur = n(current);
-  if (uom === "BAG") return cur > 0 ? cur : 25; // ✅ 1 BAG = 25 KG
+  if (uom === "BAG") return cur > 0 ? cur : 1; // BAG uses product bag_weight_kg
   if (uom === "BOX") return Math.max(1, roundTo(cur || 1, 3));
   return 1;
 }
@@ -525,23 +526,27 @@ export default function InvoiceCreate() {
     return r2(realLines.reduce((sum, r) => sum + n(r.total_qty) * n(r.unit_price_excl_vat), 0));
   }, [realLines]);
 
+  const discountAmount = useMemo(() => {
+    return r2(subtotalEx * (discountPercent / 100));
+  }, [subtotalEx, discountPercent]);
+
+  const subtotalAfterDiscount = useMemo(() => {
+    return r2(Math.max(0, subtotalEx - discountAmount));
+  }, [subtotalEx, discountAmount]);
+
   const vatAmount = useMemo(() => {
     return r2(
       realLines.reduce((sum, r) => {
         const rate = clampPct(r.vat_rate);
-        const ex = n(r.unit_price_excl_vat);
-        return sum + n(r.total_qty) * (ex * (rate / 100));
+        const rowBase = n(r.total_qty) * n(r.unit_price_excl_vat);
+        const rowDiscount = r2(rowBase * (discountPercent / 100));
+        const rowTaxable = Math.max(0, rowBase - rowDiscount);
+        return sum + rowTaxable * (rate / 100);
       }, 0)
     );
-  }, [realLines]);
+  }, [realLines, discountPercent]);
 
-  const totalAmount = useMemo(() => r2(subtotalEx + vatAmount), [subtotalEx, vatAmount]);
-
-  const discountAmount = useMemo(() => {
-    const baseEx = realLines.reduce((sum, r) => sum + n(r.total_qty) * n(r.base_unit_price_excl_vat), 0);
-    const discEx = realLines.reduce((sum, r) => sum + n(r.total_qty) * n(r.unit_price_excl_vat), 0);
-    return Math.max(0, r2(baseEx - discEx));
-  }, [realLines]);
+  const totalAmount = useMemo(() => r2(subtotalAfterDiscount + vatAmount), [subtotalAfterDiscount, vatAmount]);
 
   const previousBalance = useMemo(() => n(previousBalanceText), [previousBalanceText]);
   const amountPaid = useMemo(() => n(amountPaidText), [amountPaidText]);
@@ -663,11 +668,11 @@ export default function InvoiceCreate() {
         const baseEx = n((product as any).selling_price || 0);
         const discountedEx = roundTo(baseEx * (1 - dp / 100), 6);
 
-        // Keep the current row uom, but enforce BAG default units_per_box=25
+        // Keep the current row UOM, but for BAG use the product bag_weight_kg
         const nextUom: Uom = (r.uom || "BOX") as Uom;
         const nextUpb =
           nextUom === "BAG"
-            ? 25
+            ? Math.max(0.001, roundTo(n((product as any).bag_weight_kg || 1), 3))
             : nextUom === "BOX"
             ? Math.max(1, roundTo(n(product.units_per_box || 1), 3))
             : 1;
@@ -793,7 +798,7 @@ export default function InvoiceCreate() {
             total_qty = roundTo(box_qty / 1000, 3);
           } else {
             // BAG
-            units_per_box = defaultUnitsPerBoxFor("BAG", l.units_per_box); // default 25
+            units_per_box = defaultUnitsPerBoxFor("BAG", l.units_per_box);
             box_qty = roundTo(n(l.box_qty), 3);
             pcs_qty = 0;
             total_qty = roundTo(box_qty * units_per_box, 3);
@@ -824,11 +829,15 @@ export default function InvoiceCreate() {
 
       const res: any = await createInvoice(payload);
       const invNo = String(res?.invoice_number || res?.invoiceNumber || res?.invoice_no || res?.number || "(Saved)");
-      setInvoiceNumber(invNo);
       toast.success(`Invoice saved: ${invNo}`);
+
+      const cleanUrl = window.location.pathname;
+      window.location.assign(cleanUrl);
+      return;
     } catch (e: any) {
       toast.error(e?.message || "Failed to save invoice");
     } finally {
+      // keep as-is on error only; success path reloads page immediately
       setSaving(false);
     }
   }
@@ -1215,12 +1224,18 @@ export default function InvoiceCreate() {
                                 const nextUom = e.target.value as Uom;
 
                                 // Premium defaults when changing UOM:
-                                // - BAG => units_per_box = 25
+                                // - BAG => units_per_box = selected product bag_weight_kg
                                 // - G   => keep units_per_box = 1
                                 // - PCS => sync pcs_qty with current input
                                 const nextPatch: Partial<InvoiceLine> = { uom: nextUom };
+                                const selectedProduct: any = products.find((x) => x.id === r.product_id) || null;
 
-                                if (nextUom === "BAG") nextPatch.units_per_box = 25;
+                                if (nextUom === "BAG") {
+                                  nextPatch.units_per_box = Math.max(
+                                    0.001,
+                                    roundTo(n(selectedProduct?.bag_weight_kg || r.units_per_box || 1), 3)
+                                  );
+                                }
                                 if (nextUom === "PCS") nextPatch.pcs_qty = n(r.pcs_qty || r.box_qty);
                                 if (nextUom !== "PCS") nextPatch.pcs_qty = 0;
 

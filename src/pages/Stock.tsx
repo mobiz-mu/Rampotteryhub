@@ -166,10 +166,11 @@ function stockDisplay(p: Product) {
   const pcsOrBags = Math.max(0, Math.trunc(n0((p as any).current_stock ?? 0)));
 
   if (unit === "BAGS") {
+    const kgPerBag = Math.max(0, n0((p as any).bag_weight_kg));
     return {
       unit,
       primary: `${pcsOrBags} bag(s)`,
-      secondary: `${pcsOrBags} (DB)`,
+      secondary: kgPerBag > 0 ? `${pcsOrBags} (DB) ? ${kgPerBag} kg/bag` : `${pcsOrBags} (DB)`,
     };
   }
 
@@ -262,7 +263,10 @@ function toPayload(form: any): ProductUpsert {
     description: s(form.description) || "",
 
     units_per_box: stock_unit === "PCS" ? nInt(form.units_per_box) : null,
-
+    bag_weight_kg:
+      stock_unit === "BAGS"
+        ? (form.bag_weight_kg === "" ? null : Math.max(0.001, n0(form.bag_weight_kg)))
+        : null,
     cost_price: form.cost_price === "" ? null : Number.isFinite(Number(form.cost_price)) ? Number(form.cost_price) : null,
     selling_price: Math.max(0, n0(form.selling_price)),
 
@@ -336,6 +340,7 @@ const emptyForm: any = {
   current_stock_bags: "",
 
   units_per_box: "",
+  bag_weight_kg: "",
   selling_price_unit: "PCS" as PriceUnit,
   cost_price: "",
   selling_price: "",
@@ -673,6 +678,7 @@ export default function Stock() {
       current_stock_kg: "",
       current_stock_g: "",
       current_stock_bags: "",
+      bag_weight_kg: "",
       reorder_level: "",
       category_ids: [],
     });
@@ -708,6 +714,7 @@ export default function Stock() {
       selling_price_unit,
 
       units_per_box: stock_unit === "PCS" ? (p.units_per_box ?? "") : "",
+      bag_weight_kg: stock_unit === "BAGS" ? String((p as any).bag_weight_kg ?? "") : "",
       current_stock_boxes: stock_unit === "PCS" ? String(boxes) : "",
       current_stock_units: stock_unit === "PCS" ? String(units) : "",
 
@@ -1578,10 +1585,10 @@ export default function Stock() {
                       stock_unit: v,
                       selling_price_unit: v === "WEIGHT" ? "KG" : v === "BAGS" ? "BAG" : "PCS",
                       ...(v === "WEIGHT"
-                        ? { units_per_box: "", current_stock_boxes: "", current_stock_units: "", current_stock_bags: "" }
+                        ? { units_per_box: "", bag_weight_kg: "", current_stock_boxes: "", current_stock_units: "", current_stock_bags: "" }
                         : v === "BAGS"
-                        ? { units_per_box: "", current_stock_boxes: "", current_stock_units: "", current_stock_kg: "", current_stock_g: "" }
-                        : { current_stock_kg: "", current_stock_g: "", current_stock_bags: "" }),
+                        ? { units_per_box: "", current_stock_boxes: "", current_stock_units: "", current_stock_kg: "", current_stock_g: "", bag_weight_kg: prev.bag_weight_kg || "" }
+                        : { current_stock_kg: "", current_stock_g: "", current_stock_bags: "", bag_weight_kg: "" }),
                     }));
                   }}
                 >
@@ -1622,7 +1629,39 @@ export default function Stock() {
                 ) : null}
               </div>
 
-              {liveStockUnit === "PCS" ? (
+              {liveStockUnit === "BAGS" ? (
+                <div className="space-y-2 rounded-2xl border bg-white p-3">
+                  <div className="text-xs text-muted-foreground">BAG Settings</div>
+
+                  <Input
+                    placeholder="Kg per Bag (e.g. 25)"
+                    inputMode="decimal"
+                    value={String(form.bag_weight_kg ?? "")}
+                    onChange={(e) =>
+                      setForm((prev: any) => ({
+                        ...prev,
+                        bag_weight_kg: e.target.value,
+                      }))
+                    }
+                  />
+
+                  <Input
+                    placeholder="Current Bags in Stock"
+                    inputMode="numeric"
+                    value={String(form.current_stock_bags ?? "")}
+                    onChange={(e) =>
+                      setForm((prev: any) => ({
+                        ...prev,
+                        current_stock_bags: e.target.value,
+                      }))
+                    }
+                  />
+
+                  <div className="text-[11px] text-muted-foreground">
+                    Example: if one bag is 40 kg, enter 40 here. Invoice BAG lines will use this value.
+                  </div>
+                </div>
+              ) : liveStockUnit === "PCS" ? (
                 <div className="space-y-2 rounded-2xl border bg-white p-3">
                   <div className="text-xs text-muted-foreground">PCS Stock Entry</div>
 

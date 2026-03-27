@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import RequirePermission from "@/components/auth/RequirePermission";
+import SummaryReportsPage from "@/pages/SummaryReports";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
@@ -348,6 +349,9 @@ export default function App() {
                       </RequirePermission>
                     }
                   />
+
+
+                  <Route path="/reports/summary" element={<SummaryReportsPage />} /> 
 
                   {/* =========================
                       USERS

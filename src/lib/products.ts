@@ -1,4 +1,3 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import type { Product, ProductUpsert } from "@/types/product";
 
@@ -9,11 +8,10 @@ function num(v: any) {
 }
 
 /**
- * Returns products with a normalized field:
+ * Returns products with normalized fields:
  * - price_excl_vat  = selling_price
- * - vat_rate        = 15 (default, since not stored in products table)
- *
- * This keeps your invoice create page unchanged (expects price_excl_vat / vat_rate).
+ * - vat_rate        = 15
+ * - bag_weight_kg   = nullable product bag size in KG
  */
 export async function listProducts(params?: {
   q?: string;
@@ -27,7 +25,7 @@ export async function listProducts(params?: {
   let query = supabase
     .from("products")
     .select(
-      "id,sku,name,description,units_per_box,cost_price,selling_price,current_stock,reorder_level,is_active,created_at,updated_at,image_url,item_code"
+      "id,sku,name,description,units_per_box,bag_weight_kg,cost_price,selling_price,current_stock,reorder_level,is_active,created_at,updated_at,image_url,item_code"
     )
     .order("name", { ascending: true })
     .limit(limit);
@@ -44,11 +42,11 @@ export async function listProducts(params?: {
   const { data, error } = await query;
   if (error) throw error;
 
-  // ✅ normalize to what InvoiceCreate expects
   return (data || []).map((p: any) => ({
     ...p,
-    price_excl_vat: Number(p?.selling_price ?? 0), // <— key fix
-    vat_rate: 15, // <— default since products table has no vat_rate column
+    price_excl_vat: Number(p?.selling_price ?? 0),
+    vat_rate: 15,
+    bag_weight_kg: num(p?.bag_weight_kg),
   }));
 }
 
@@ -56,6 +54,7 @@ export async function createProduct(input: ProductUpsert) {
   const payload = {
     ...input,
     units_per_box: num(input.units_per_box),
+    bag_weight_kg: num(input.bag_weight_kg),
     cost_price: num(input.cost_price),
     selling_price: num(input.selling_price),
     reorder_level: num(input.reorder_level),
@@ -77,6 +76,7 @@ export async function updateProduct(id: number, input: ProductUpsert) {
   const payload = {
     ...input,
     units_per_box: num(input.units_per_box),
+    bag_weight_kg: num(input.bag_weight_kg),
     cost_price: num(input.cost_price),
     selling_price: num(input.selling_price),
     reorder_level: num(input.reorder_level),

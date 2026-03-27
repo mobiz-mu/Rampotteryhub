@@ -1,4 +1,3 @@
-// src/components/print/RamPotteryDoc.tsx
 import React, { useMemo } from "react";
 import "@/styles/rpdoc.css";
 
@@ -6,7 +5,7 @@ type Party = {
   name?: string | null;
   address?: string | null;
   phone?: string | null;
-  whatsapp?: string | null;   // ✅ ADD THIS
+  whatsapp?: string | null;
   brn?: string | null;
   vat_no?: string | null;
   customer_code?: string | null;
@@ -94,9 +93,16 @@ export type RamPotteryDocProps = {
   showFooterBar?: boolean;
 };
 
-/** ✅ REQUIRED PAGINATION */
-const PAGE1_ROWS = 10; // page 1 table height
-const PAGE_N_ROWS = 20; // page 2+ table height
+/**
+ * Required behavior:
+ * - 10 lines or less => keep all on one page with footer
+ * - 11 to 23 lines   => keep all product lines on page 1, footer on page 2
+ * - more than 23     => page 1 keeps 23 lines, overflow continues, footer only on last page
+ */
+const SINGLE_PAGE_ROWS = 10;
+const FIRST_PAGE_ROWS = 23;
+const MIDDLE_PAGE_ROWS = 26;
+const LAST_PAGE_ROWS = 7;
 
 function n2(v: any) {
   const x = Number(v ?? 0);
@@ -123,7 +129,6 @@ function customerPhones(customer: Party) {
   return phone || whatsapp || "";
 }
 
-/** normalize uom to BOX/PCS/KG/G/BAG */
 function normUom(it: RamPotteryDocItem): "BOX" | "PCS" | "KG" | "G" | "BAG" {
   const raw = String(it.uom || it.box || "BOX").trim().toUpperCase();
   if (raw === "PCS") return "PCS";
@@ -158,7 +163,6 @@ function qtyInput(it: RamPotteryDocItem): number | null {
     const v = (it as any).bags_qty;
     if (v !== null && v !== undefined && v !== "") return n2(v);
 
-    // ✅ InvoiceCreate passes BAG count in box_qty
     const bx = it.box_qty;
     if (bx !== null && bx !== undefined && bx !== "") return n2(bx);
 
@@ -180,12 +184,13 @@ function upb(it: RamPotteryDocItem): number | null {
   const num = n2(v);
   if (!Number.isFinite(num) || num <= 0) return u === "BAG" ? 25 : null;
 
-  return Math.max(1, Math.trunc(num));
+  return u === "BAG" ? Number(num.toFixed(3)) : Math.max(1, Math.trunc(num));
 }
 
 function fmtQty(uom: "BOX" | "PCS" | "KG" | "G" | "BAG", v: number | null) {
   if (v === null) return "";
   if (uom === "KG") return String(Number(v.toFixed(3)));
+  if (uom === "BAG") return String(Number(v.toFixed(3)));
   return String(Math.trunc(v));
 }
 
@@ -358,11 +363,11 @@ function NotesTotals({ totals }: { totals: Totals }) {
 
         <div className="rpdoc-totalRow">
           <span>AMOUNT PAID</span>
-          <span></span>
+          <span>{money(totals?.amount_paid)}</span>
         </div>
         <div className="rpdoc-totalRow">
           <span>BALANCE REMAINING</span>
-          <span></span>
+          <span>{money(totals?.balance_remaining)}</span>
         </div>
       </div>
     </div>
@@ -400,11 +405,6 @@ function Signatures({ preparedBy, deliveredBy }: { preparedBy: string; delivered
   );
 }
 
-/**
- * ✅ FIXED FOOTER
- * Notes+Totals under table, then red line, then signing space (SHRINKABLE),
- * then signatures fully visible at bottom (no clipping).
- */
 function FooterArea({
   totals,
   preparedBy,
@@ -424,10 +424,8 @@ function FooterArea({
         minHeight: 0,
       }}
     >
-      {/* Notes + totals (always visible) */}
       <NotesTotals totals={totals} />
 
-      {/* Thin red line (always visible) */}
       <div
         style={{
           height: "1px",
@@ -439,16 +437,14 @@ function FooterArea({
         }}
       />
 
-      {/* Signing space: shrinkable so it never clips signatures */}
       <div
         style={{
-          flex: "1 1 12mm", // ✅ can grow, but can also shrink
+          flex: "1 1 12mm",
           minHeight: "10mm",
           maxHeight: "18mm",
         }}
       />
 
-      {/* Signatures always visible */}
       <div style={{ flex: "0 0 auto" }}>
         <Signatures preparedBy={preparedBy} deliveredBy={deliveredBy} />
       </div>
@@ -456,8 +452,8 @@ function FooterArea({
   );
 }
 
-/** chunk helper */
-function chunk<T>(arr: T[], size: number): T[][] {
+function chunk<T>(arr: T[], size: number) {
+  if (size <= 0) return [arr];
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
@@ -510,12 +506,50 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   const docItems = useMemo(() => (items || []).map((x, i) => ({ ...x, sn: x?.sn ?? i + 1 })), [items]);
   const count = docItems.length;
 
-  // Page 1: 10 rows; Page 2+: 20 rows each
-  const page1Items = useMemo(() => docItems.slice(0, PAGE1_ROWS), [docItems]);
-  const rest = useMemo(() => (count > PAGE1_ROWS ? docItems.slice(PAGE1_ROWS) : []), [count, docItems]);
-  const restPages = useMemo(() => chunk(rest, PAGE_N_ROWS), [rest]);
+  const pagination = useMemo(() => {
+    // 10 or less => all on one page with footer
+    if (count <= SINGLE_PAGE_ROWS) {
+      return {
+        page1Items: docItems,
+        middlePages: [] as RamPotteryDocItem[][],
+        lastPageItems: [] as RamPotteryDocItem[],
+        totalPages: 1,
+        showFooterOnPage1: true,
+      };
+    }
 
-  const totalPages = 1 + restPages.length;
+    // 11 to 23 => page 1 keeps all product lines, footer goes to page 2
+    if (count <= FIRST_PAGE_ROWS) {
+      return {
+        page1Items: docItems,
+        middlePages: [] as RamPotteryDocItem[][],
+        lastPageItems: [] as RamPotteryDocItem[],
+        totalPages: 2,
+        showFooterOnPage1: false,
+      };
+    }
+
+    // >23 => page 1 keeps 23 lines, last page keeps footer
+    const firstCount = FIRST_PAGE_ROWS;
+    let remaining = docItems.slice(firstCount);
+
+    const middlePages: RamPotteryDocItem[][] = [];
+    while (remaining.length > LAST_PAGE_ROWS) {
+      const take = Math.min(MIDDLE_PAGE_ROWS, remaining.length - LAST_PAGE_ROWS);
+      middlePages.push(remaining.slice(0, take));
+      remaining = remaining.slice(take);
+    }
+
+    return {
+      page1Items: docItems.slice(0, firstCount),
+      middlePages,
+      lastPageItems: remaining,
+      totalPages: 2 + middlePages.length,
+      showFooterOnPage1: false,
+    };
+  }, [count, docItems]);
+
+  const { page1Items, middlePages, lastPageItems, totalPages, showFooterOnPage1 } = pagination;
 
   const poLabel = variant === "QUOTATION" ? txt(purchaseOrderLabel) || "VALID UNTIL:" : "PO. No :";
 
@@ -638,37 +672,66 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
         {BoxesBlock}
 
         <div className="rpdoc-tableWrap">
-          <ItemsTable items={page1Items} minRows={PAGE1_ROWS} />
+          <ItemsTable items={page1Items} minRows={showFooterOnPage1 ? SINGLE_PAGE_ROWS : FIRST_PAGE_ROWS} />
         </div>
 
-        <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+        {showFooterOnPage1 ? (
+          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+        ) : null}
       </div>
     </section>
   );
 
-  const OtherPages = restPages.map((chunkItems, i) => {
+  const MiddlePages = middlePages.map((chunkItems, i) => {
     const pageNo = i + 2;
+
     return (
-      <section className="rpdoc-page" key={`p-${pageNo}`}>
+      <section className="rpdoc-page" key={`p-mid-${pageNo}`}>
         <div className="rpdoc-pageNumber">
           Page {pageNo} / {totalPages}
         </div>
 
         <div className="rpdoc-frame">
           <div className="rpdoc-tableWrap">
-            <ItemsTable items={chunkItems} minRows={PAGE_N_ROWS} />
+            <ItemsTable items={chunkItems} minRows={MIDDLE_PAGE_ROWS} />
           </div>
-
-          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
         </div>
       </section>
     );
   });
 
+  const LastPage =
+    !showFooterOnPage1 && count <= FIRST_PAGE_ROWS ? (
+      <section className="rpdoc-page" key="p-last-footer-only">
+        <div className="rpdoc-pageNumber">
+          Page 2 / 2
+        </div>
+
+        <div className="rpdoc-frame">
+          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+        </div>
+      </section>
+    ) : !showFooterOnPage1 ? (
+      <section className="rpdoc-page" key="p-last">
+        <div className="rpdoc-pageNumber">
+          Page {totalPages} / {totalPages}
+        </div>
+
+        <div className="rpdoc-frame">
+          <div className="rpdoc-tableWrap">
+            <ItemsTable items={lastPageItems} minRows={LAST_PAGE_ROWS} />
+          </div>
+
+          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+        </div>
+      </section>
+    ) : null;
+
   return (
     <div className="rpdoc-pages" id="rpdoc-root">
       {Page1}
-      {OtherPages}
+      {MiddlePages}
+      {LastPage}
     </div>
   );
 }

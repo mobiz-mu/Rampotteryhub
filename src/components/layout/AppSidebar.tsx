@@ -113,7 +113,16 @@ export function AppSidebar() {
       { title: "Stock Movements", href: "/stock-movements", icon: ArrowLeftRight, show: can("stock.view") },
       { title: "Customers", href: "/customers", icon: Users, show: can("customers.view") },
       { title: "Suppliers", href: "/suppliers", icon: Truck, show: can("ap.view") },
-      { title: "Reports", href: "/reports", icon: BarChart3, show: can("reports.view") },
+      {
+        title: "Reports",
+        icon: BarChart3,
+        show: can("reports.view"),
+        children: [
+    { title: "All Reports", href: "/reports", show: can("reports.view") },
+    { title: "Summary Reports", href: "/reports/summary", show: can("reports.view") },
+    { title: "Aging Report", href: "/aging", show: can("reports.view") },
+  ],
+},
       { title: "Users & Permissions", href: "/users", icon: Shield, show: isAdmin || can("users.manage") },
     ],
     [isAdmin, user?.id, profile?.role, profile?.permissions]
