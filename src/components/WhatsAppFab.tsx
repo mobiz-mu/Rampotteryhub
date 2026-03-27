@@ -2,7 +2,7 @@ import React from "react";
 import { waLink } from "@/lib/whatsapp";
 import { useLocation } from "react-router-dom";
 
-const WA_SUPPORT_PHONE = "2307788884";
+const WA_SUPPORT_PHONE = "23057788884";
 
 export default function WhatsAppFab() {
   const loc = useLocation();
