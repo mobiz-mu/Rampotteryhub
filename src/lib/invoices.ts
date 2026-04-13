@@ -67,6 +67,8 @@ async function fetchPublicInvoicePrint(invoiceId: number, token: string) {
 
 type StockMovementType = "IN" | "OUT" | "ADJUSTMENT";
 
+const CANCELLED_DRAFT_TAG = "[CANCELLED DRAFT]";
+
 function safeDateISO(d?: string | null) {
   if (!d) return new Date().toISOString();
   const x = new Date(d);
@@ -248,6 +250,7 @@ export async function listInvoices(params?: {
   const q = (params?.q || "").trim();
   const status = params?.status ?? "ALL";
   const limit = params?.limit ?? 200;
+  
 
   let query = supabase
     .from("invoices")
@@ -257,7 +260,7 @@ export async function listInvoices(params?: {
       amount_paid,credits_applied,previous_balance,balance_remaining,notes,created_at,updated_at,vat_percent,
       discount_percent,discount_amount,sales_rep_phone,sales_rep,gross_total,purchase_order_no,
       total_excl_vat,total_incl_vat,balance_due,stock_deducted_at,invoice_year,invoice_seq,
-      customers:customer_id ( id,name,customer_code,phone,whatsapp )
+      customers:customer_id ( id,name,customer_code,phone,whatsapp,brn )
       `
     )
     .order("invoice_date", { ascending: false })
@@ -281,6 +284,7 @@ export async function listInvoices(params?: {
     customer: r?.customers ?? null,
     customer_name: r?.customers?.name ?? null,
     customer_code: r?.customers?.customer_code ?? null,
+    customer_brn: r?.customers?.brn ?? null,
   })) as any as InvoiceRow[];
 
   if (!q) return rows;
@@ -374,10 +378,10 @@ export async function getInvoiceById(id: string | number) {
   if (itemsErr) throw itemsErr;
 
   const mappedItems = (items || []).map((r: any) => ({
-    ...r,
-    product: r.products ?? null,
-    item_code: r?.products?.item_code || r?.products?.sku || "",
-  }));
+  ...r,
+  product: r.products ?? null,
+  item_code: String(r?.products?.item_code ?? r?.products?.sku ?? "").trim(),
+}));
 
   return { ...inv, items: mappedItems };
 }
@@ -480,17 +484,33 @@ export async function createInvoice(payload: any) {
   const items = (payload.items || []) as any[];
   if (!items.length) return inv;
 
+  const discountPct = clampPct(payload.discountPercent ?? (inv as any).discount_percent ?? 0);
+
+  // Informational only: row prices are already discounted in InvoiceCreate.tsx
+  const payloadDiscountAmount = round2(
+    items.reduce((sum, it) => {
+      const qty = n2(it.total_qty);
+      const rowEx = n2(it.unit_price_excl_vat);
+      const baseEx = n2(it.base_unit_price_excl_vat ?? rowEx);
+      const overridden = !!it.price_overridden;
+
+      const baseLineEx = round2(qty * baseEx);
+      const lineEx = round2(qty * rowEx);
+      const rowDiscount = overridden ? 0 : round2(Math.max(0, baseLineEx - lineEx));
+
+      return sum + rowDiscount;
+    }, 0)
+  );
+
   const insertRows = items.map((it) => {
     const uom = normUom(it.uom);
 
-    // qty fields (decimals allowed)
     const boxQty = roundTo(nonNeg(it.box_qty ?? 0), 3);
     const pcsQty = roundTo(nonNeg(it.pcs_qty ?? 0), 3);
 
     let upb = n2(it.units_per_box ?? 1);
     if (!Number.isFinite(upb) || upb <= 0) upb = 1;
 
-    // enforce BAG and G conversions at insert level too (DB trigger will also normalize)
     if (uom === "BAG" && (!it.units_per_box || n2(it.units_per_box) <= 0)) upb = 25;
     if (uom === "G") upb = 0.001;
     if (uom === "PCS" || uom === "KG") upb = 1;
@@ -504,13 +524,13 @@ export async function createInvoice(payload: any) {
       pcs_qty: uom === "PCS" ? pcsQty : 0,
 
       units_per_box: upb,
-      total_qty: n2(it.total_qty ?? 0), // trigger will correct if needed
+      total_qty: n2(it.total_qty ?? 0),
 
-      unit_price_excl_vat: n2(it.unit_price_excl_vat ?? 0),
+      unit_price_excl_vat: round2(n2(it.unit_price_excl_vat ?? 0)),
       vat_rate: n2(it.vat_rate ?? (inv as any).vat_percent ?? 15),
-      unit_vat: n2(it.unit_vat ?? 0),
-      unit_price_incl_vat: n2(it.unit_price_incl_vat ?? 0),
-      line_total: n2(it.line_total ?? 0),
+      unit_vat: round2(n2(it.unit_vat ?? 0)),
+      unit_price_incl_vat: round2(n2(it.unit_price_incl_vat ?? 0)),
+      line_total: round2(n2(it.line_total ?? 0)),
 
       description: it.description ?? null,
     };
@@ -521,50 +541,29 @@ export async function createInvoice(payload: any) {
 
   const fresh = await listInvoiceItemsForTotals(inv.id);
 
-  const discountPct = clampPct((inv as any)?.discount_percent ?? payload.discountPercent ?? 0);
-
-  // Use rounded row values so displayed line totals add up exactly in footer
-  const rowBases = fresh.map((row: any) => round2(n2(row?.total_qty) * n2(row?.unit_price_excl_vat)));
-  const rowVats = fresh.map((row: any) => round2(n2(row?.total_qty) * n2(row?.unit_vat)));
-  const rowIncls = fresh.map((row: any) => round2(n2(row?.line_total)));
-
-  const subtotal = round2(rowBases.reduce((sum: number, v: number) => sum + v, 0));
-  const grossTotal = round2(rowIncls.reduce((sum: number, v: number) => sum + v, 0));
-
-  const discountAmount = round2(subtotal * (discountPct / 100));
-  const subtotalAfterDiscount = round2(Math.max(0, subtotal - discountAmount));
-
-  const vatAmount =
-    discountPct > 0
-      ? round2(
-          fresh.reduce((sum: number, row: any) => {
-            const rowBase = round2(n2(row?.total_qty) * n2(row?.unit_price_excl_vat));
-            const rowDiscount = round2(rowBase * (discountPct / 100));
-            const rowTaxable = round2(Math.max(0, rowBase - rowDiscount));
-            const rowVatRate = n2(row?.vat_rate ?? (inv as any)?.vat_percent ?? 15);
-            return sum + round2(rowTaxable * (rowVatRate / 100));
-          }, 0)
-        )
-      : round2(rowVats.reduce((sum: number, v: number) => sum + v, 0));
-
-  const totalAmount = discountPct > 0
-    ? round2(subtotalAfterDiscount + vatAmount)
-    : grossTotal;
-  const previousBalance = n2((inv as any)?.previous_balance);
-  const amountPaid = n2((inv as any)?.amount_paid);
-  const balanceRemaining = round2(previousBalance + totalAmount - amountPaid);
+  const t = computeAccurateTotalsFromSavedRows({
+    invoice: inv,
+    items: fresh,
+    discountAmount: payloadDiscountAmount,
+  });
 
   const { data, error } = await supabase
     .from("invoices")
     .update({
-      subtotal: subtotalAfterDiscount,
-      vat_amount: vatAmount,
-      total_amount: totalAmount,
-      gross_total: grossTotal,
+      subtotal: t.subtotal,
+      vat_amount: t.vatAmount,
+      total_amount: t.totalAmount,
+
+      total_excl_vat: t.subtotal,
+      total_incl_vat: t.totalAmount,
+
+      gross_total: t.grossTotal,
+
       discount_percent: discountPct,
-      discount_amount: discountAmount,
-      balance_remaining: balanceRemaining,
-      balance_due: balanceRemaining,
+      discount_amount: payloadDiscountAmount,
+
+      balance_remaining: t.balance,
+      balance_due: t.balance,
       updated_at: new Date().toISOString(),
     })
     .eq("id", inv.id)
@@ -578,68 +577,93 @@ export async function createInvoice(payload: any) {
 /* =========================
    Invoice items loader for totals
 ========================= */
+
 async function listInvoiceItemsForTotals(invoiceId: number) {
   const { data, error } = await supabase
     .from("invoice_items")
-    .select("id,invoice_id,total_qty,unit_price_excl_vat,unit_vat,vat_rate,line_total")
+    .select(
+      "id,invoice_id,total_qty,unit_price_excl_vat,unit_vat,unit_price_incl_vat,vat_rate,line_total"
+    )
     .eq("invoice_id", invoiceId);
 
   if (error) throw error;
   return (data || []) as any as InvoiceItem[];
 }
 
-/* =========================
-   OPTION A — totals computed with MANUAL invoice discount
-========================= */
-export function computeInvoiceTotalsOptionA(invoice: Invoice, items: InvoiceItem[]) {
-  const list = items || [];
-  const dp = clampPct((invoice as any).discount_percent ?? 0);
+function computeAccurateTotalsFromSavedRows(params: {
+  invoice: any;
+  items: Array<any>;
+  discountAmount?: number | null;
+}) {
+  const list = params.items || [];
 
-  const rowBases = list.map((it: any) => round2(n2(it.total_qty) * n2(it.unit_price_excl_vat)));
-  const rowVatsNoDisc = list.map((it: any) => round2(n2(it.total_qty) * n2(it.unit_vat)));
-  const rowIncls = list.map((it: any) => round2(n2(it.line_total)));
+  const rowBases = list.map((it: any) =>
+    round2(n2(it.total_qty) * round2(n2(it.unit_price_excl_vat)))
+  );
 
-  const baseSubtotalEx = round2(rowBases.reduce((sum, v) => sum + v, 0));
-  const discountAmount = dp > 0 ? round2((baseSubtotalEx * dp) / 100) : 0;
-  const subtotalAfterDiscount = round2(Math.max(0, baseSubtotalEx - discountAmount));
+  const rowVats = list.map((it: any) =>
+    round2(n2(it.total_qty) * round2(n2(it.unit_vat)))
+  );
 
-  const vatAmount =
-    dp > 0
-      ? round2(
-          list.reduce((sum, it: any) => {
-            const rowBase = round2(n2(it.total_qty) * n2(it.unit_price_excl_vat));
-            const rowDiscount = round2((rowBase * dp) / 100);
-            const rowTaxable = round2(Math.max(0, rowBase - rowDiscount));
-            const vatRate = n2((it as any).vat_rate ?? (invoice as any).vat_percent ?? 15);
-            return sum + round2((rowTaxable * vatRate) / 100);
-          }, 0)
-        )
-      : round2(rowVatsNoDisc.reduce((sum, v) => sum + v, 0));
+  const rowTotals = list.map((it: any) => {
+    const lineTotal = round2(n2(it.line_total));
+    if (lineTotal > 0) return lineTotal;
 
-  const totalAmount = dp > 0
-    ? round2(subtotalAfterDiscount + vatAmount)
-    : round2(rowIncls.reduce((sum, v) => sum + v, 0));
+    return round2(
+      n2(it.total_qty) * round2(n2(it.unit_price_incl_vat))
+    );
+  });
 
-  const prev = n2((invoice as any).previous_balance);
-  const paid = n2((invoice as any).amount_paid);
-  const credits = n2((invoice as any).credits_applied ?? 0);
+  const subtotal = round2(rowBases.reduce((sum, v) => sum + v, 0));
+  const vatAmount = round2(rowVats.reduce((sum, v) => sum + v, 0));
+  const totalAmount = round2(rowTotals.reduce((sum, v) => sum + v, 0));
+
+  const prev = round2(n2(params.invoice?.previous_balance));
+  const paid = round2(n2(params.invoice?.amount_paid));
+  const credits = round2(n2(params.invoice?.credits_applied ?? 0));
 
   const grossTotal = round2(totalAmount + prev);
   const balance = round2(Math.max(0, grossTotal - paid - credits));
 
   return {
-    baseSubtotalEx,
-    discountPercent: dp,
-    discountAmount,
-    subtotalAfterDiscount,
+    subtotal,
     vatAmount,
     totalAmount,
     grossTotal,
     balance,
+    discountPercent: clampPct(params.invoice?.discount_percent ?? 0),
+    discountAmount: round2(n2(params.discountAmount ?? params.invoice?.discount_amount ?? 0)),
   };
 }
 
-export async function recalcAndSaveInvoiceTotals(invoiceId: number, invoice: Invoice, items: InvoiceItem[]) {
+/* =========================
+   Totals / recalc
+========================= */
+
+export function computeInvoiceTotalsOptionA(invoice: Invoice, items: InvoiceItem[]) {
+  const t = computeAccurateTotalsFromSavedRows({
+    invoice,
+    items: items || [],
+    discountAmount: (invoice as any).discount_amount ?? 0,
+  });
+
+  return {
+    baseSubtotalEx: t.subtotal,
+    discountPercent: t.discountPercent,
+    discountAmount: t.discountAmount,
+    subtotalAfterDiscount: t.subtotal,
+    vatAmount: t.vatAmount,
+    totalAmount: t.totalAmount,
+    grossTotal: t.grossTotal,
+    balance: t.balance,
+  };
+}
+
+export async function recalcAndSaveInvoiceTotals(
+  invoiceId: number,
+  invoice: Invoice,
+  items: InvoiceItem[]
+) {
   const t = computeInvoiceTotalsOptionA(invoice, items);
 
   const patch: Partial<Invoice> = {
@@ -660,45 +684,46 @@ export async function recalcAndSaveInvoiceTotals(invoiceId: number, invoice: Inv
   return updateInvoiceHeader(invoiceId, patch);
 }
 
-export async function applyInvoiceDiscount(params: { invoiceId: number; discount_percent: number; items: InvoiceItem[] }) {
+export async function applyInvoiceDiscount(params: {
+  invoiceId: number;
+  discount_percent: number;
+  items: InvoiceItem[];
+}) {
   const { invoiceId, discount_percent, items } = params;
 
   const updated = await updateInvoiceHeader(invoiceId, {
     discount_percent: clampPct(discount_percent),
   } as any);
 
-  return recalcAndSaveInvoiceTotals(invoiceId, updated as any, items.length ? items : []);
+  return recalcAndSaveInvoiceTotals(
+    invoiceId,
+    updated as any,
+    items.length ? items : []
+  );
 }
 
-export async function recalcAndSaveBaseTotalsNoDiscount(invoiceId: number, invoice: Invoice, items: InvoiceItem[]) {
-  const list = items || [];
-
-  const rowBases = list.map((it: any) => round2(n2(it.total_qty) * n2(it.unit_price_excl_vat)));
-  const rowVats = list.map((it: any) => round2(n2(it.total_qty) * n2(it.unit_vat)));
-  const rowIncls = list.map((it: any) => round2(n2(it.line_total)));
-
-  const subtotalEx = round2(rowBases.reduce((sum, v) => sum + v, 0));
-  const vatAmount = round2(rowVats.reduce((sum, v) => sum + v, 0));
-  const totalAmount = round2(rowIncls.reduce((sum, v) => sum + v, 0));
-
-  const prev = n2((invoice as any).previous_balance);
-  const paid = n2((invoice as any).amount_paid);
-  const credits = n2((invoice as any).credits_applied ?? 0);
-
-  const grossTotal = round2(totalAmount + prev);
-  const balance = round2(Math.max(0, grossTotal - paid - credits));
+export async function recalcAndSaveBaseTotalsNoDiscount(
+  invoiceId: number,
+  invoice: Invoice,
+  items: InvoiceItem[]
+) {
+  const t = computeAccurateTotalsFromSavedRows({
+    invoice,
+    items: items || [],
+    discountAmount: (invoice as any).discount_amount ?? 0,
+  });
 
   const patch: Partial<Invoice> = {
-    subtotal: subtotalEx,
-    vat_amount: vatAmount,
-    total_amount: totalAmount,
+    subtotal: t.subtotal,
+    vat_amount: t.vatAmount,
+    total_amount: t.totalAmount,
 
-    total_excl_vat: subtotalEx,
-    total_incl_vat: totalAmount,
+    total_excl_vat: t.subtotal,
+    total_incl_vat: t.totalAmount,
 
-    gross_total: grossTotal,
-    balance_remaining: balance,
-    balance_due: balance,
+    gross_total: t.grossTotal,
+    balance_remaining: t.balance,
+    balance_due: t.balance,
   };
 
   return updateInvoiceHeader(invoiceId, patch);
@@ -863,6 +888,52 @@ export async function cancelDraftInvoice(arg: any) {
   return { ok: true, id: invoiceId };
 }
 
+export async function cancelDraftKeepInList(arg: any) {
+  const invoiceId = typeof arg === "object" ? Number(arg?.invoiceId) : Number(arg);
+  if (!Number.isFinite(invoiceId)) throw new Error("Invalid invoice id");
+
+  const inv = await getInvoice(invoiceId);
+
+  if (String(inv?.status || "").toUpperCase() !== "DRAFT") {
+    throw new Error("Only draft invoices can be cancelled.");
+  }
+
+  if ((inv as any)?.stock_deducted_at) {
+    throw new Error("Draft invoice cannot be cancelled because stock was already deducted.");
+  }
+
+  const paid = n2((inv as any)?.amount_paid);
+  const credits = n2((inv as any)?.credits_applied);
+
+  if (paid > 0 || credits > 0) {
+    throw new Error("Draft invoice cannot be cancelled because payments or credits were already applied.");
+  }
+
+  const { count: creditCount, error: creditErr } = await supabase
+    .from("credit_notes")
+    .select("id", { count: "exact", head: true })
+    .eq("invoice_id", invoiceId);
+
+  if (creditErr) throw creditErr;
+  if ((creditCount || 0) > 0) {
+    throw new Error("Draft invoice cannot be cancelled because it is linked to a credit note.");
+  }
+
+  const oldNotes = String((inv as any)?.notes ?? "").trim();
+  const cleanNotes = oldNotes.replace(/^\[CANCELLED DRAFT\]\s*/i, "").trim();
+  const nextNotes = cleanNotes ? `${CANCELLED_DRAFT_TAG} ${cleanNotes}` : CANCELLED_DRAFT_TAG;
+
+  return updateInvoiceHeader(invoiceId, {
+    status: "DRAFT",
+    notes: nextNotes,
+    amount_paid: 0,
+    credits_applied: 0,
+    balance_remaining: 0,
+    balance_due: 0,
+  } as any);
+}
+
+
 export async function voidInvoice(arg: any) {
   const invoiceId = typeof arg === "object" ? Number(arg?.invoiceId) : Number(arg);
   if (!Number.isFinite(invoiceId)) throw new Error("Invalid invoice id");
@@ -877,4 +948,59 @@ export async function getInvoicePdf(invoiceId: number | string) {
   const id = Number(invoiceId);
   if (!Number.isFinite(id)) throw new Error("Invalid invoice id");
   return `/invoices/${id}/print`;
+}
+
+export async function recalcAndSaveExistingInvoice(invoiceId: number) {
+  const invoice = await getInvoice(invoiceId);
+  const items = await listInvoiceItemsForTotals(invoiceId);
+
+  const t = computeAccurateTotalsFromSavedRows({
+    invoice,
+    items,
+    discountAmount: (invoice as any).discount_amount ?? 0,
+  });
+
+  return updateInvoiceHeader(invoiceId, {
+    subtotal: t.subtotal,
+    vat_amount: t.vatAmount,
+    total_amount: t.totalAmount,
+    total_excl_vat: t.subtotal,
+    total_incl_vat: t.totalAmount,
+    gross_total: t.grossTotal,
+    balance_remaining: t.balance,
+    balance_due: t.balance,
+  } as any);
+}
+
+export async function backfillAllInvoiceHeaderTotals() {
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id")
+    .order("id", { ascending: true });
+
+  if (error) throw error;
+
+  let updated = 0;
+  const failed: Array<{ id: number; error: string }> = [];
+
+  for (const row of data || []) {
+    const invoiceId = Number((row as any).id);
+    if (!Number.isFinite(invoiceId)) continue;
+
+    try {
+      await recalcAndSaveExistingInvoice(invoiceId);
+      updated += 1;
+    } catch (e: any) {
+      failed.push({
+        id: invoiceId,
+        error: e?.message || "Failed",
+      });
+    }
+  }
+
+  return {
+    total: (data || []).length,
+    updated,
+    failed,
+  };
 }

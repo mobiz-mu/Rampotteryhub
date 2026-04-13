@@ -46,7 +46,7 @@ const APP_ORIGIN = "https://rampotteryhub.com";
 
 type QuickDate = "ALL" | "TODAY" | "MONTH" | "CUSTOM";
 
-type PendingStatus = "ALL" | "DRAFT" | "ISSUED" | "PARTIALLY_PAID" | "VOID";
+type PendingStatus = "DRAFT";
 
 const n = (v: any) => {
   const x = Number(v ?? 0);
@@ -271,7 +271,7 @@ export default function PendingInvoices() {
   const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
 
-  const [status, setStatus] = useState<PendingStatus>("ALL");
+  const [status] = useState<PendingStatus>("DRAFT");
   const [customerFilter, setCustomerFilter] = useState<string>("ALL");
 
   const [quickDate, setQuickDate] = useState<QuickDate>("ALL");
@@ -309,15 +309,15 @@ export default function PendingInvoices() {
   }, [quickDate, todayIso, monthStartIso]);
 
   const invoicesQ = useQuery({
-    queryKey: ["pending_invoices", q],
-    queryFn: () => listInvoices({ q, status: "ALL" as any, limit: 1500 }),
+    queryKey: ["draft_invoices", q],
+    queryFn: () => listInvoices({ q, status: "DRAFT" as any, limit: 1500 }),
     staleTime: 10_000,
   });
 
   const allRows = invoicesQ.data || [];
 
   const pendingRows = useMemo(() => {
-    return allRows.filter((r: any) => normalizeStatus(r.status) !== "PAID");
+    return allRows.filter((r: any) => normalizeStatus(r.status) === "DRAFT");
   }, [allRows]);
 
   const customerOptions = useMemo(() => {
@@ -335,13 +335,11 @@ export default function PendingInvoices() {
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
   }, [pendingRows]);
 
-  const filteredRows = useMemo(() => {
-    return pendingRows.filter((r: any) => {
-      const st = normalizeStatus(r.status);
+   const filteredRows = useMemo(() => {
+     return pendingRows.filter((r: any) => {
       const custId = String(r.customer?.id || r.customer_id || "");
       const invDate = String(r.invoice_date || "").slice(0, 10);
 
-      if (status !== "ALL" && st !== status) return false;
       if (customerFilter !== "ALL" && custId !== customerFilter) return false;
 
       if (quickDate === "TODAY" && !isSameDay(invDate, todayIso)) return false;
@@ -386,7 +384,7 @@ export default function PendingInvoices() {
     onSuccess: async () => {
       setPayOpen(false);
       setPayInvoice(null);
-      await qc.invalidateQueries({ queryKey: ["pending_invoices"] });
+      await qc.invalidateQueries({ queryKey: ["draft_invoices"] });
       await qc.invalidateQueries({ queryKey: ["invoices"] });
       await qc.invalidateQueries({ queryKey: ["invoice"] });
       toast.success("Payment updated");
@@ -769,9 +767,9 @@ export default function PendingInvoices() {
               </span>
             </div>
             <p className="text-muted-foreground mt-2 text-sm sm:text-base">
-              Draft • Issued • Partially Paid • Void
+               Only draft invoices are shown on this page
             </p>
-          </div>
+           </div>
 
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <Button variant="outline" onClick={() => invoicesQ.refetch()} disabled={invoicesQ.isFetching}>
@@ -815,21 +813,6 @@ export default function PendingInvoices() {
               onChange={(e) => setQInput(e.target.value)}
               className="border-0 shadow-none bg-transparent focus-visible:ring-0 px-0"
             />
-          </div>
-
-          <div className="rp-filterBlock">
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-            <select
-              className="h-9 min-w-[160px] rounded-xl px-2 bg-transparent text-sm font-semibold text-foreground outline-none"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as PendingStatus)}
-            >
-              <option value="ALL">All Statuses</option>
-              <option value="DRAFT">Draft</option>
-              <option value="ISSUED">Issued</option>
-              <option value="PARTIALLY_PAID">Partially Paid</option>
-              <option value="VOID">Void</option>
-            </select>
           </div>
 
           <div className="rp-filterBlock">
@@ -936,7 +919,7 @@ export default function PendingInvoices() {
             ) : filteredRows.length === 0 ? (
               <tr className="rp-row">
                 <td colSpan={8} className="p-8 text-center text-sm text-muted-foreground">
-                  No pending invoices found.
+                  No draft invoices found.
                 </td>
               </tr>
             ) : (

@@ -1,4 +1,3 @@
-
 // src/pages/InvoicePrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -7,38 +6,47 @@ import { Button } from "@/components/ui/button";
 import html2pdf from "html2pdf.js";
 
 import { getInvoicePrintBundle } from "@/lib/invoices";
-import RamPotteryDoc, { RamPotteryDocItem } from "@/components/print/RamPotteryDoc";
+import RamPotteryDoc, { type RamPotteryDocItem } from "@/components/print/RamPotteryDoc";
 import { supabase } from "@/integrations/supabase/client";
 
 import "@/styles/rpdoc.css";
 
 const WA_PHONE = "2307788884";
 
-/* =========================
-   helpers
-========================= */
 function isValidId(v: any) {
   const x = Number(v);
   return Number.isFinite(x) && x > 0;
 }
+
 function n(v: any) {
   const x = Number(v ?? 0);
   return Number.isFinite(x) ? x : 0;
 }
-function rs(v: any) {
-  return `Rs ${n(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function r2(v: any) {
+  return Math.round(n(v) * 100) / 100;
 }
+
+function rs(v: any) {
+  return `Rs ${n(v).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function fmtDDMMYYYY(v: any) {
   const s = String(v || "").trim();
   if (!s) return "";
+
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
 
   const d = new Date(s);
   if (!Number.isNaN(d.getTime())) {
     const pad = (x: number) => String(x).padStart(2, "0");
-    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+    return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
   }
+
   return s;
 }
 
@@ -46,7 +54,6 @@ function txt(v: any) {
   return String(v ?? "").trim();
 }
 
-/** Wait until images inside an element finish loading */
 async function waitForImages(root: HTMLElement) {
   const imgs = Array.from(root.querySelectorAll("img"));
   await Promise.all(
@@ -62,7 +69,6 @@ async function waitForImages(root: HTMLElement) {
   );
 }
 
-/** Safe JSON parse */
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
@@ -73,27 +79,21 @@ async function safeJson(res: Response) {
   }
 }
 
-/** A4 px (approx) at 96dpi */
-const A4_W_PX = 794;
-const A4_H_PX = 1123;
-
 export default function InvoicePrint() {
   const { id } = useParams();
   const invoiceId = Number(id);
   const nav = useNavigate();
 
   const [sp] = useSearchParams();
+  const embedMode = sp.get("embed") === "1";
   const publicToken = (sp.get("t") || "").trim();
   const isPublicMode = !!publicToken;
 
-  // auth check (only needed for internal mode)
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-
-  // document root
-  const docRootRef = useRef<HTMLDivElement | null>(null);
-
   const [printPreparing, setPrintPreparing] = useState(false);
+
+  const docRootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -109,6 +109,7 @@ export default function InvoicePrint() {
 
       const { data } = await supabase.auth.getSession();
       if (!alive) return;
+
       setIsLoggedIn(!!data?.session);
       setAuthChecked(true);
     })();
@@ -118,15 +119,14 @@ export default function InvoicePrint() {
     };
   }, [isPublicMode]);
 
-  /* =========================
-     Load invoice
-  ========================= */
   const invoiceQ = useQuery({
     queryKey: ["invoice_print_bundle", invoiceId, publicToken],
     enabled: isValidId(invoiceId) && (isPublicMode ? true : authChecked),
     queryFn: async () => {
       if (isPublicMode) {
-        const res = await fetch(`/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`);
+        const res = await fetch(
+          `/api/public/invoice-print?id=${invoiceId}&t=${encodeURIComponent(publicToken)}`
+        );
         const json = await safeJson(res);
         if (!json?.ok) throw new Error(json?.error || "Failed to load");
         return json as { ok: true; invoice: any; items: any[]; customer?: any };
@@ -144,31 +144,35 @@ export default function InvoicePrint() {
   const items = payload?.items || [];
   const customer = payload?.customer || inv?.customers || inv?.customer || null;
 
-  /* =========================
-     Normalize customer fields
-  ========================= */
   const printCustomer = useMemo(() => {
     return {
       name: txt(customer?.name || customer?.customer_name),
       address: txt(customer?.address),
       phone: txt(customer?.phone || customer?.tel || customer?.telephone),
-      whatsapp: txt(customer?.whatsapp || customer?.whats_app || customer?.mobile || customer?.mobile_no),
+      whatsapp: txt(
+        customer?.whatsapp || customer?.whats_app || customer?.mobile || customer?.mobile_no
+      ),
       brn: txt(customer?.brn),
       vat_no: txt(customer?.vat_no || customer?.vat),
       customer_code: txt(customer?.customer_code || customer?.code),
     };
   }, [customer]);
 
-  /* =========================
-     Build doc items
-  ========================= */
   const docItems: RamPotteryDocItem[] = useMemo(() => {
     return (items || []).map((it: any, idx: number) => {
       const p = it.product || it.products || null;
 
       const rawUom = String(it.uom || it.unit || "BOX").trim().toUpperCase();
-      const uom: "BOX" | "PCS" | "KG" =
-        rawUom === "PCS" ? "PCS" : rawUom === "KG" || rawUom === "KGS" ? "KG" : "BOX";
+      const uom: "BOX" | "PCS" | "KG" | "G" | "BAG" =
+        rawUom === "PCS"
+          ? "PCS"
+          : rawUom === "KG" || rawUom === "KGS"
+          ? "KG"
+          : rawUom === "G" || rawUom === "GRAM" || rawUom === "GRAMS"
+          ? "G"
+          : rawUom === "BAG" || rawUom === "BAGS"
+          ? "BAG"
+          : "BOX";
 
       return {
         sn: idx + 1,
@@ -183,14 +187,45 @@ export default function InvoicePrint() {
         unit_vat: Number(it.unit_vat ?? 0),
         unit_price_incl_vat: Number(it.unit_price_incl_vat ?? 0),
         line_total: Number(it.line_total ?? 0),
-      } as any;
+      } as RamPotteryDocItem;
     });
   }, [items]);
 
-  /* =========================
-     WhatsApp link (public)
-  ========================= */
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
+  const printTotals = useMemo(() => {
+  const subtotal = r2(
+    docItems.reduce((sum, it) => {
+      const qty = n(it.total_qty);
+      const unitEx = r2(it.unit_price_excl_vat);
+      return sum + r2(qty * unitEx);
+    }, 0)
+  );
+
+  const vat = r2(
+    docItems.reduce((sum, it) => {
+      const qty = n(it.total_qty);
+      const unitVat = r2(it.unit_vat);
+      return sum + r2(qty * unitVat);
+    }, 0)
+  );
+
+  const total = r2(
+    docItems.reduce((sum, it) => {
+      const qty = n(it.total_qty);
+      const unitInc = r2(it.unit_price_incl_vat);
+      return sum + r2(qty * unitInc);
+    }, 0)
+  );
+
+  return {
+    subtotal,
+    vat,
+    total,
+    previousBalance: r2(inv?.previous_balance || 0),
+  };
+}, [docItems, inv]);
+
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
 
   const viewUrl = isPublicMode
     ? `${origin}/invoices/${invoiceId}/print?t=${encodeURIComponent(publicToken)}`
@@ -221,23 +256,70 @@ export default function InvoicePrint() {
       .join("\n");
 
     return `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`;
-  }, [inv, printCustomer.name, viewUrl, isPublicMode]);
+  }, [inv, isPublicMode, printCustomer.name, viewUrl]);
 
-  /* =========================
-     Print
-  ========================= */
   useEffect(() => {
     const after = () => {
       document.body.classList.remove("rp-printing");
       setPrintPreparing(false);
     };
+
     window.addEventListener("afterprint", after);
     return () => window.removeEventListener("afterprint", after);
   }, []);
 
+  useEffect(() => {
+    if (!embedMode || !docRootRef.current || !inv) return;
+
+    let cancelled = false;
+
+    const sendHeight = async () => {
+      try {
+        // @ts-ignore
+        if (document?.fonts?.ready) await document.fonts.ready;
+      } catch {}
+
+      const root = docRootRef.current;
+      if (!root || cancelled) return;
+
+      await waitForImages(root);
+      if (cancelled) return;
+
+      const height = Math.max(
+        root.scrollHeight,
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      );
+
+      window.parent?.postMessage(
+        {
+          type: "rp-invoice-embed-height",
+          invoiceId,
+          height,
+        },
+        "*"
+      );
+    };
+
+    const t = window.setTimeout(() => {
+      void sendHeight();
+    }, 160);
+
+    const onResize = () => {
+      void sendHeight();
+    };
+
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [embedMode, invoiceId, inv, items.length]);
+
   async function doPrint() {
-    if (!docRootRef.current) return;
-    if (printPreparing) return;
+    if (!docRootRef.current || printPreparing) return;
 
     setPrintPreparing(true);
     document.body.classList.add("rp-printing");
@@ -254,13 +336,15 @@ export default function InvoicePrint() {
     }, 200);
   }
 
-  /* =========================
-     PDF download
-  ========================= */
   async function downloadPdfClient() {
     if (!docRootRef.current || !inv) return;
 
     const node = docRootRef.current;
+    const prevWidth = node.style.width;
+    const prevMaxWidth = node.style.maxWidth;
+
+    node.style.width = "210mm";
+    node.style.maxWidth = "210mm";
 
     try {
       // @ts-ignore
@@ -269,30 +353,35 @@ export default function InvoicePrint() {
 
     await waitForImages(node);
 
-    await html2pdf()
-      .set({
-        filename: `Invoice-${inv.invoice_number || inv.id}.pdf`,
-        margin: 0,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: {
-          scale: 2.2,
-          useCORS: true,
-          backgroundColor: "#ffffff",
-          scrollY: 0,
-          scrollX: 0,
-          windowWidth: A4_W_PX,
-          windowHeight: A4_H_PX,
-        },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-        pagebreak: { mode: ["css", "legacy"] },
-      })
-      .from(node)
-      .save();
+    try {
+      await html2pdf()
+        .set({
+          filename: `Invoice-${inv.invoice_number || inv.id}.pdf`,
+          margin: 0,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: {
+            scale: 2.6,
+            useCORS: true,
+            backgroundColor: "#ffffff",
+            scrollY: 0,
+            scrollX: 0,
+            windowWidth: node.scrollWidth,
+            windowHeight: node.scrollHeight,
+          },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: {
+            mode: ["css", "legacy"],
+            avoid: ["tr", ".rpdoc-footerGrid", ".rpdoc-signatures"],
+          },
+        })
+        .from(node)
+        .save();
+    } finally {
+      node.style.width = prevWidth;
+      node.style.maxWidth = prevMaxWidth;
+    }
   }
 
-  /* =========================
-     Returns
-  ========================= */
   if (!isValidId(invoiceId)) {
     return <div className="p-6 text-sm text-muted-foreground">Invalid invoice id.</div>;
   }
@@ -315,48 +404,52 @@ export default function InvoicePrint() {
             Public links must include a valid token (<b>?t=...</b>)
           </div>
         ) : (
-          <div className="mt-2 text-xs text-muted-foreground">Please check invoice ID and your access.</div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Please check invoice ID and your access.
+          </div>
         )}
       </div>
     );
   }
 
   return (
-    <div className="print-shell p-4">
-      {/* Toolbar */}
-      <div className="no-print mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm text-muted-foreground">Invoice {inv.invoice_number || `#${inv.id}`}</div>
+    <div className={embedMode ? "print-shell" : "print-shell p-4"}>
+      {!embedMode ? (
+        <div className="no-print mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm text-muted-foreground">
+            Invoice {inv.invoice_number || `#${inv.id}`}
+          </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              if (isPublicMode) nav("/auth");
-              else nav(-1);
-            }}
-          >
-            {isPublicMode ? "Close" : "Back"}
-          </Button>
-
-          {isPublicMode ? (
-            <Button variant="outline" asChild>
-              <a href={waHref} target="_blank" rel="noreferrer">
-                WhatsApp
-              </a>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (isPublicMode) nav("/auth");
+                else nav(-1);
+              }}
+            >
+              {isPublicMode ? "Close" : "Back"}
             </Button>
-          ) : null}
 
-          <Button variant="outline" onClick={downloadPdfClient}>
-            Download PDF
-          </Button>
+            {isPublicMode ? (
+              <Button variant="outline" asChild>
+                <a href={waHref} target="_blank" rel="noreferrer">
+                  WhatsApp
+                </a>
+              </Button>
+            ) : null}
 
-          <Button onClick={doPrint} disabled={printPreparing}>
-            {printPreparing ? "Preparing…" : "Print"}
-          </Button>
+            <Button variant="outline" onClick={downloadPdfClient}>
+              Download PDF
+            </Button>
+
+            <Button onClick={doPrint} disabled={printPreparing}>
+              {printPreparing ? "Preparing…" : "Print"}
+            </Button>
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      {/* Document */}
       <div className="print-stage">
         <div ref={docRootRef} id="rpdoc-print-root">
           <RamPotteryDoc
@@ -383,18 +476,16 @@ export default function InvoicePrint() {
             salesRepPhone={inv.sales_rep_phone || ""}
             items={docItems}
             totals={{
-              subtotal: Number(inv.subtotal || 0),
+              subtotal: printTotals.subtotal,
               vatLabel: `VAT ${Number(inv.vat_percent ?? 15)}%`,
-              vat_amount: Number(inv.vat_amount || 0),
-              total_amount: Number(inv.total_amount || 0),
-              previous_balance: Number(inv.previous_balance || 0),
-
-              /* always blank */
+              vat_amount: printTotals.vat,
+              total_amount: printTotals.total,
+              previous_balance: printTotals.previousBalance,
               amount_paid: null,
               balance_remaining: null,
             }}
-            preparedBy={"Manish"}
-            deliveredBy={""}
+            preparedBy="Manish"
+            deliveredBy=""
           />
         </div>
       </div>

@@ -54,6 +54,9 @@ type Totals = {
   vatLabel?: string;
   vatPercentLabel?: string;
 
+  discount_percent?: number | null;
+  discount_amount?: number | null;
+
   vat_amount?: number | null;
   total_amount?: number | null;
   previous_balance?: number | null;
@@ -94,7 +97,7 @@ export type RamPotteryDocProps = {
 };
 
 /**
- * Required behavior:
+ * Practical print behavior:
  * - 10 lines or less => keep all on one page with footer
  * - 11 to 23 lines   => keep all product lines on page 1, footer on page 2
  * - more than 23     => page 1 keeps 23 lines, overflow continues, footer only on last page
@@ -112,6 +115,15 @@ function money(v: any) {
   const x = Number(v ?? 0);
   if (!Number.isFinite(x)) return "";
   return x.toLocaleString("en-MU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function moneyBlank(v: any) {
+  if (v === null || v === undefined || String(v).trim() === "") return "";
+  const x = Number(v);
+  if (!Number.isFinite(x)) return "";
+  return x.toLocaleString("en-MU", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 function txt(v: any) {
   return String(v ?? "").trim();
@@ -154,9 +166,13 @@ function qtyInput(it: RamPotteryDocItem): number | null {
   }
 
   if (u === "G") {
-    const v = (it as any).grams_qty;
-    if (v === null || v === undefined || v === "") return fallbackTotal();
-    return n2(v);
+    const g = (it as any).grams_qty;
+    if (g !== null && g !== undefined && g !== "") return n2(g);
+
+    const bx = it.box_qty;
+    if (bx !== null && bx !== undefined && bx !== "") return n2(bx);
+
+    return fallbackTotal();
   }
 
   if (u === "BAG") {
@@ -189,9 +205,26 @@ function upb(it: RamPotteryDocItem): number | null {
 
 function fmtQty(uom: "BOX" | "PCS" | "KG" | "G" | "BAG", v: number | null) {
   if (v === null) return "";
-  if (uom === "KG") return String(Number(v.toFixed(3)));
-  if (uom === "BAG") return String(Number(v.toFixed(3)));
-  return String(Math.trunc(v));
+
+  const rounded3 = Number(v.toFixed(3));
+  const isWhole = Math.abs(rounded3 - Math.trunc(rounded3)) < 0.0005;
+
+  if (uom === "KG" || uom === "G" || uom === "BAG") {
+    return String(rounded3);
+  }
+
+  return isWhole ? String(Math.trunc(rounded3)) : String(rounded3);
+}
+
+function fmtTotalQty(v: any) {
+  if (v === null || v === undefined || v === "") return "";
+  const x = Number(v);
+  if (!Number.isFinite(x)) return txt(v);
+
+  const rounded3 = Number(x.toFixed(3));
+  const isWhole = Math.abs(rounded3 - Math.trunc(rounded3)) < 0.0005;
+
+  return isWhole ? String(Math.trunc(rounded3)) : String(rounded3);
 }
 
 function TableHeader() {
@@ -256,19 +289,19 @@ function ItemsTable({ items, minRows = 0 }: { items: RamPotteryDocItem[]; minRow
   return (
     <table className="rpdoc-table">
       <colgroup>
-        <col style={{ width: "5.2%" }} />
-        <col style={{ width: "8.5%" }} />
-        <col style={{ width: "8.0%" }} />
-        <col style={{ width: "9.0%" }} />
-        <col style={{ width: "8.5%" }} />
-        <col style={{ width: "21.5%" }} />
-        <col style={{ width: "9.2%" }} />
-        <col style={{ width: "6.8%" }} />
-        <col style={{ width: "9.2%" }} />
-        <col style={{ width: "14.1%" }} />
-      </colgroup>
-
-      <TableHeader />
+          <col style={{ width: "4.8%" }} />
+          <col style={{ width: "8.2%" }} />
+          <col style={{ width: "7.4%" }} />
+          <col style={{ width: "8.6%" }} />
+          <col style={{ width: "8.2%" }} />
+          <col style={{ width: "24.5%" }} />
+          <col style={{ width: "8.6%" }} />
+          <col style={{ width: "6.2%" }} />
+          <col style={{ width: "8.8%" }} />
+          <col style={{ width: "14.7%" }} />
+      </colgroup>      
+  
+    <TableHeader />
 
       <tbody>
         {(items || []).map((it, idx) => {
@@ -279,13 +312,15 @@ function ItemsTable({ items, minRows = 0 }: { items: RamPotteryDocItem[]; minRow
           const unitPerBox = upb(it);
           const unitPerBoxText = unitPerBox ? String(unitPerBox) : "";
 
+          const totalQtyText = fmtTotalQty(it.total_qty);
+
           return (
             <tr key={idx}>
               <td>{it.sn}</td>
               <td>{txt(it.item_code)}</td>
               <td>{qtyText ? `${qtyText} ${u}` : ""}</td>
               <td>{u === "BOX" || u === "BAG" ? unitPerBoxText : ""}</td>
-              <td>{txt(it.total_qty)}</td>
+              <td>{totalQtyText}</td>
               <td className="rpdoc-desc">{txt(it.description)}</td>
               <td>{money(it.unit_price_excl_vat)}</td>
               <td>{money(it.unit_vat)}</td>
@@ -363,11 +398,11 @@ function NotesTotals({ totals }: { totals: Totals }) {
 
         <div className="rpdoc-totalRow">
           <span>AMOUNT PAID</span>
-          <span>{money(totals?.amount_paid)}</span>
+          <span>{moneyBlank(totals?.amount_paid)}</span>
         </div>
         <div className="rpdoc-totalRow">
           <span>BALANCE REMAINING</span>
-          <span>{money(totals?.balance_remaining)}</span>
+          <span>{moneyBlank(totals?.balance_remaining)}</span>
         </div>
       </div>
     </div>
@@ -376,14 +411,7 @@ function NotesTotals({ totals }: { totals: Totals }) {
 
 function Signatures({ preparedBy, deliveredBy }: { preparedBy: string; deliveredBy: string }) {
   return (
-    <div
-      className="rpdoc-signatures"
-      style={{
-        marginTop: 0,
-        paddingTop: 2,
-        paddingBottom: 0,
-      }}
-    >
+    <div className="rpdoc-signatures">
       <div className="rpdoc-sig">
         <div className="rpdoc-sigLine" />
         <div className="rpdoc-sigTitle">Signature</div>
@@ -416,40 +444,40 @@ function FooterArea({
 }) {
   return (
     <div
-      style={{
-        marginTop: "3mm",
-        flex: "1 1 auto",
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-      }}
-    >
-      <NotesTotals totals={totals} />
+  style={{
+    marginTop: "2mm",
+    flex: "1 1 auto",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+  }}
+>
+  <NotesTotals totals={totals} />
 
-      <div
-        style={{
-          height: "1px",
-          background: "#c1121f",
-          width: "100%",
-          marginTop: "6px",
-          marginBottom: "0px",
-          flex: "0 0 auto",
-        }}
-      />
+  <div
+    style={{
+      height: "1px",
+      background: "#c1121f",
+      width: "100%",
+      marginTop: "4px",
+      marginBottom: "0px",
+      flex: "0 0 auto",
+    }}
+  />
 
-      <div
-        style={{
-          flex: "1 1 12mm",
-          minHeight: "10mm",
-          maxHeight: "18mm",
-        }}
-      />
+  <div
+    style={{
+      flex: "0 0 5mm",
+      minHeight: "5mm",
+      maxHeight: "5mm",
+    }}
+  />
 
-      <div style={{ flex: "0 0 auto" }}>
-        <Signatures preparedBy={preparedBy} deliveredBy={deliveredBy} />
-      </div>
-    </div>
-  );
+  <div style={{ flex: "0 0 auto" }}>
+    <Signatures preparedBy={preparedBy} deliveredBy={deliveredBy} />
+  </div>
+</div>  
+);
 }
 
 function chunk<T>(arr: T[], size: number) {
@@ -596,7 +624,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   const BoxesBlock = (
     <div className="rpdoc-boxes">
       <div className="rpdoc-box">
-        <div className="rpdoc-boxHead">CUSTOMER DETAILS</div>
+         <div className="rpdoc-boxHead">CUSTOMER DETAILS</div>
 
         <div className="rpdoc-boxBody">
           <div className="rpdoc-kv">
@@ -626,7 +654,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
         </div>
       </div>
 
-      <div className="rpdoc-box">
+      <div className="rpdoc-box rpdoc-box--invoiceMeta">
         <div className="rpdoc-boxHead">
           BRN: {txt(company?.brn) || "-"}
           <span className="rpdoc-dot">•</span>

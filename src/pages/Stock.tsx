@@ -103,6 +103,95 @@ function normalizePriceUnit(v: any): PriceUnit {
   return "PCS";
 }
 
+function compactText(v: any) {
+  return String(v ?? "").toLowerCase().replace(/\s+/g, "").trim();
+}
+
+function rawItemRef(p: Partial<Product> | null | undefined) {
+  return String((p as any)?.item_code || (p as any)?.sku || "").trim();
+}
+
+function itemCodeAliases(v: any) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return [];
+
+  const set = new Set<string>();
+  const compact = compactText(raw);
+
+  set.add(compact);
+  set.add(compact.replace(/[^a-z0-9]/g, ""));
+
+  if (/^\d+$/.test(raw)) {
+    const n = String(Number(raw));
+    set.add(compactText(n));
+    set.add(n.padStart(2, "0"));
+    set.add(n.padStart(3, "0"));
+  }
+
+  return Array.from(set);
+}
+
+function searchScoreProduct(p: Product, term: string) {
+  const q = compactText(term);
+  if (!q) return 0;
+
+  const ref = rawItemRef(p);
+  const refCompact = compactText(ref);
+  const refPlain = refCompact.replace(/[^a-z0-9]/g, "");
+  const sku = compactText((p as any).sku);
+  const name = compactText((p as any).name);
+  const desc = compactText((p as any).description);
+
+  const aliases = itemCodeAliases(ref);
+
+  if (aliases.includes(q)) return 1000;
+  if (refCompact === q) return 980;
+  if (sku === q) return 950;
+  if (refCompact.startsWith(q)) return 900;
+  if (refPlain.startsWith(q)) return 860;
+  if (sku.startsWith(q)) return 820;
+  if (aliases.some((x) => x.includes(q))) return 760;
+  if (refCompact.includes(q)) return 720;
+  if (sku.includes(q)) return 680;
+  if (name.includes(q)) return 420;
+  if (desc.includes(q)) return 260;
+
+  return 0;
+}
+
+function itemCodeSortValue(v: any) {
+  const raw = String(v ?? "").trim().toUpperCase();
+  if (!raw) return { kind: 3, major: Number.MAX_SAFE_INTEGER, minor: raw, raw };
+
+  const pureNum = raw.match(/^\d+$/);
+  if (pureNum) {
+    return { kind: 0, major: Number(raw), minor: "", raw };
+  }
+
+  const leadNum = raw.match(/^(\d+)(.*)$/);
+  if (leadNum) {
+    return {
+      kind: 1,
+      major: Number(leadNum[1]),
+      minor: leadNum[2].replace(/\s+/g, ""),
+      raw,
+    };
+  }
+
+  return { kind: 2, major: Number.MAX_SAFE_INTEGER, minor: raw.replace(/\s+/g, ""), raw };
+}
+
+function compareItemCodeAsc(a: any, b: any) {
+  const aa = itemCodeSortValue(a);
+  const bb = itemCodeSortValue(b);
+
+  if (aa.kind !== bb.kind) return aa.kind - bb.kind;
+  if (aa.major !== bb.major) return aa.major - bb.major;
+  if (aa.minor !== bb.minor) return aa.minor.localeCompare(bb.minor);
+  return aa.raw.localeCompare(bb.raw);
+}
+
+
 function genSku(prefix = "SKU") {
   const d = new Date();
   const y = d.getFullYear();
@@ -391,7 +480,7 @@ function Stat({
       : "border-slate-200 bg-white/85";
 
   return (
-    <Card className={`rounded-[24px] border p-4 shadow-[0_16px_40px_-28px_rgba(0,0,0,.22)] ${ring}`}>
+    <Card className={`rounded-[20px] border p-3 shadow-[0_16px_40px_-28px_rgba(0,0,0,.22)] ${ring}`}>
       <div className="flex items-center gap-3">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
           {icon}
@@ -461,7 +550,7 @@ export default function Stock() {
 
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
-  const [activeOnly, setActiveOnly] = useState(true);
+  const [activeOnly, setActiveOnly] = useState(false);
   const [lowOnly, setLowOnly] = useState(false);
 
   const [showCategories, setShowCategories] = useState(false);
@@ -507,10 +596,10 @@ export default function Stock() {
   }, [categories, catQ]);
 
   const productsQ = useQuery({
-    queryKey: ["products", { q: debouncedQ, activeOnly }],
-    queryFn: () => listProducts({ q: debouncedQ, activeOnly, limit: 5000 }),
+    queryKey: ["products", { activeOnly }],
+    queryFn: () => listProducts({ activeOnly, limit: 5000 }),
     staleTime: 25_000,
-  });
+ });
 
   const rows = (productsQ.data || []) as Product[];
 
@@ -563,12 +652,12 @@ export default function Stock() {
     onError: (e: any) => toast.error(e?.message || "Failed"),
   });
 
-  const [sort, setSort] = useState<{ key: "name" | "stock" | "price"; dir: "asc" | "desc" }>({
-    key: "name",
+  const [sort, setSort] = useState<{ key: "item_code" | "name" | "stock" | "price"; dir: "asc" | "desc" }>({
+    key: "item_code",
     dir: "asc",
-  });
+ });
 
-  const toggleSort = (key: "name" | "stock" | "price") => {
+  const toggleSort = (key: "item_code" | "name" | "stock" | "price") => {
     setSort((st) => {
       if (st.key === key) return { key, dir: st.dir === "asc" ? "desc" : "asc" };
       return { key, dir: "asc" };
@@ -579,46 +668,76 @@ export default function Stock() {
   };
 
   const rendered = useMemo(() => {
-    const filterId = filterCategoryId;
+  const term = debouncedQ.trim();
 
-    const base = rows.map((p) => {
-      const low = isLowStock(p);
-      const stock = stockDisplay(p);
-      const priceUnit = normalizePriceUnit((p as any).selling_price_unit);
-      const catIds = needLinks ? categoryIdsByProductId.get(p.id) || [] : [];
-      const reorder = n0((p as any).reorder_level);
+  const base = rows.map((p) => {
+    const low = isLowStock(p);
+    const stock = stockDisplay(p);
+    const priceUnit = normalizePriceUnit((p as any).selling_price_unit);
+    const catIds = needLinks ? categoryIdsByProductId.get(p.id) || [] : [];
+    const reorder = n0((p as any).reorder_level);
 
-      let stockN = 0;
-      if (stock.unit === "WEIGHT") stockN = n0((p as any).current_stock_grams) / 1000;
-      else stockN = n0((p as any).current_stock);
+    let stockN = 0;
+    if (stock.unit === "WEIGHT") stockN = n0((p as any).current_stock_grams) / 1000;
+    else stockN = n0((p as any).current_stock);
 
-      return {
-        p,
-        low,
-        stock,
-        stockN,
-        priceN: n0(p.selling_price),
-        priceUnit,
-        catIds,
-        reorder,
-      };
-    });
+    const searchScore = term ? searchScoreProduct(p, term) : 0;
 
-    const filtered = base.filter((r) => {
-      if (lowOnly && !r.low) return false;
-      if (filterCategoryId !== "ALL") return r.catIds.includes(filterId);
-      return true;
-    });
+    return {
+      p,
+      low,
+      stock,
+      stockN,
+      priceN: n0(p.selling_price),
+      priceUnit,
+      catIds,
+      reorder,
+      searchScore,
+      ref: rawItemRef(p),
+    };
+  });
 
-    const dirMul = sort.dir === "asc" ? 1 : -1;
+  const filtered = base.filter((r) => {
+    if (lowOnly && !r.low) return false;
+    if (filterCategoryId !== "ALL" && !r.catIds.includes(filterCategoryId)) return false;
+    if (term && r.searchScore <= 0) return false;
+    return true;
+  });
+
+  if (term) {
     filtered.sort((a, b) => {
-      if (sort.key === "price") return (a.priceN - b.priceN) * dirMul;
-      if (sort.key === "stock") return (a.stockN - b.stockN) * dirMul;
-      return a.p.name.localeCompare(b.p.name) * dirMul;
+      if (b.searchScore !== a.searchScore) return b.searchScore - a.searchScore;
+
+      const codeCmp = compareItemCodeAsc(a.ref, b.ref);
+      if (codeCmp !== 0) return codeCmp;
+
+      return String(a.p.name || "").localeCompare(String(b.p.name || ""));
     });
 
     return filtered;
-  }, [rows, needLinks, categoryIdsByProductId, filterCategoryId, lowOnly, sort]);
+  }
+
+  const dirMul = sort.dir === "asc" ? 1 : -1;
+
+  filtered.sort((a, b) => {
+    if (sort.key === "item_code") {
+      return compareItemCodeAsc(a.ref, b.ref) * dirMul;
+    }
+    if (sort.key === "price") {
+      return (a.priceN - b.priceN) * dirMul;
+    }
+    if (sort.key === "stock") {
+      return (a.stockN - b.stockN) * dirMul;
+    }
+
+    const byName = String(a.p.name || "").localeCompare(String(b.p.name || ""));
+    if (byName !== 0) return byName * dirMul;
+
+    return compareItemCodeAsc(a.ref, b.ref) * dirMul;
+  });
+
+  return filtered;
+}, [rows, needLinks, categoryIdsByProductId, filterCategoryId, lowOnly, sort, debouncedQ]);
 
   const kpis = useMemo(() => {
     const total = rows.length;
@@ -799,8 +918,13 @@ export default function Stock() {
       ]);
       setOpen(false);
     } catch (e: any) {
-      toast.error(e?.message || "Failed to save");
+      const msg = String(e?.message || "");
+      if (msg.includes("products_item_code_key")) {
+      toast.error(`Item code "${String(payload.item_code || "").trim()}" already exists.`);
+       return;
     }
+      toast.error(msg || "Failed to save");
+   }
   }
 
   async function applyStockUpdate() {
@@ -1044,7 +1168,7 @@ export default function Stock() {
   const Row = useCallback(
     ({ r }: { r: (typeof rendered)[number] }) => {
       const p = r.p;
-      const ref = (p.item_code || p.sku || "-").toString();
+      const ref = String(p.item_code || p.sku || "-").trim();
 
       const catIds = r.catIds || [];
       const catNames = catIds
@@ -1055,13 +1179,13 @@ export default function Stock() {
 
       return (
         <div
-          className={`group rounded-[26px] border bg-white px-5 py-4 shadow-[0_14px_36px_-26px_rgba(15,23,42,.22)] transition-all duration-200 hover:-translate-y-[1px] hover:shadow-[0_18px_42px_-24px_rgba(15,23,42,.26)] ${
+          className={`group rounded-[20px] border bg-white px-3.5 py-3 shadow-[0_14px_36px_-26px_rgba(15,23,42,.22)] transition-all duration-200 hover:-translate-y-[1px] hover:shadow-[0_18px_42px_-24px_rgba(15,23,42,.26)] ${
             r.low ? "border-amber-300/70 ring-1 ring-amber-500/15" : "border-slate-200/85"
           }`}
           onDoubleClick={() => openEdit(p)}
           title="Double click to edit"
         >
-          <div className="grid gap-4 xl:grid-cols-[150px_1.5fr_1fr_1.05fr_.9fr_170px] xl:items-center">
+          <div className="grid gap-3 xl:grid-cols-[130px_1.55fr_.9fr_1fr_.85fr_152px] xl:items-center">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <Pill tone={(p as any).is_active ? "ok" : "bad"}>{(p as any).is_active ? "ACTIVE" : "INACTIVE"}</Pill>
@@ -1072,12 +1196,14 @@ export default function Stock() {
                   </Pill>
                 ) : null}
               </div>
-              <div className="mt-3 break-all text-[12px] font-extrabold tracking-[0.12em] text-slate-700">{ref}</div>
+              <div className="mt-3 break-all rounded-xl bg-slate-50 px-2.5 py-1.5 text-[12px] font-extrabold tracking-[0.12em] text-slate-800 ring-1 ring-slate-200/80">
+              {ref}
+             </div>
             </div>
 
             <div className="min-w-0">
               <SectionLabel>Description</SectionLabel>
-              <div className="truncate text-[17px] font-extrabold tracking-tight text-slate-950">{p.name}</div>
+              <div className="truncate text-base font-extrabold tracking-tight text-slate-950">{p.name}</div>
               {p.description ? <div className="mt-1 line-clamp-1 text-sm text-slate-500">{p.description}</div> : null}
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                 <span className="rounded-full bg-slate-100 px-2.5 py-0.5 font-semibold text-slate-700">Type: {r.stock.unit}</span>
@@ -1111,7 +1237,7 @@ export default function Stock() {
 
             <div className="min-w-0 xl:text-right">
               <SectionLabel>Stock</SectionLabel>
-              <div className="truncate text-[18px] font-extrabold text-slate-950">{r.stock.primary}</div>
+              <div className="truncate text-base font-extrabold text-slate-950 sm:text-[18px]">{r.stock.primary}</div>
               <div className="mt-0.5 text-xs text-slate-500">{r.stock.secondary}</div>
               {r.reorder ? (
                 <div className="mt-1 text-xs text-slate-500">
@@ -1125,7 +1251,7 @@ export default function Stock() {
 
             <div className="min-w-0 xl:text-right">
               <SectionLabel>Price</SectionLabel>
-              <div className="truncate text-[18px] font-extrabold text-slate-950">
+              <div className="truncate text-base font-extrabold text-slate-950 sm:text-[18px]">
                 Rs {money(p.selling_price)} <span className="text-xs font-semibold text-slate-500">/ {r.priceUnit}</span>
               </div>
               <div className="mt-0.5 text-xs text-slate-500">
@@ -1136,7 +1262,7 @@ export default function Stock() {
             <div className="flex items-center justify-end gap-2">
               <Button
                 variant="outline"
-                className="h-10 w-10 rounded-2xl p-0"
+                className="h-9 w-9 rounded-xl p-0"
                 onClick={(e) => {
                   e.stopPropagation();
                   openEdit(p);
@@ -1148,7 +1274,7 @@ export default function Stock() {
 
               <Button
                 variant="outline"
-                className="h-10 w-10 rounded-2xl p-0"
+                className="h-9 w-9 rounded-xl p-0"
                 onClick={(e) => {
                   e.stopPropagation();
                   openHistory(p);
@@ -1160,7 +1286,7 @@ export default function Stock() {
 
               <Button
                 variant={r.low ? "default" : "outline"}
-                className="h-10 w-10 rounded-2xl p-0"
+                className="h-9 w-9 rounded-xl p-0"
                 onClick={(e) => {
                   e.stopPropagation();
                   openStockUpdate(p);
@@ -1186,7 +1312,7 @@ export default function Stock() {
   );
 
   return (
-    <div className="space-y-6 pb-10">
+    <div className="space-y-4 pb-6">
       <div className="pointer-events-none fixed inset-0 -z-10">
         <div className="absolute inset-0 bg-gradient-to-b from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-950 dark:to-slate-950" />
         <div className="absolute -top-40 -left-32 h-[420px] w-[420px] rounded-full bg-sky-500/10 blur-3xl" />
@@ -1201,14 +1327,14 @@ export default function Stock() {
               <Package className="h-7 w-7 text-primary" />
             </div>
             <div className="min-w-0">
-              <div className="text-4xl font-extrabold tracking-tight text-slate-950">Stock Register</div>
+              <div className="text-3xl font-extrabold tracking-tight text-slate-950 sm:text-4xl">Stock Register</div>
               <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
                 Premium inventory dashboard • smoother native scrolling • compact aligned register cards • same backend logic
               </div>
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <Stat icon={<Boxes className="h-4 w-4 text-slate-700" />} label="Total Items" value={kpis.total} />
             <Stat icon={<ShieldCheck className="h-4 w-4 text-emerald-700" />} label="Active" value={kpis.active} tone="ok" />
             <Stat icon={<AlertTriangle className="h-4 w-4 text-amber-700" />} label="Low Stock" value={kpis.low} tone="warn" />
@@ -1217,17 +1343,17 @@ export default function Stock() {
         </div>
 
         <div className="flex flex-wrap gap-2 xl:max-w-[620px] xl:justify-end">
-          <Button variant="outline" onClick={() => productsQ.refetch()} disabled={productsQ.isFetching} className="h-12 rounded-2xl">
+          <Button variant="outline" onClick={() => productsQ.refetch()} disabled={productsQ.isFetching} className="h-10 rounded-xl">
             <RefreshCw className={`mr-2 h-4 w-4 ${productsQ.isFetching ? "animate-spin" : ""}`} />
             {productsQ.isFetching ? "Refreshing…" : "Refresh"}
           </Button>
 
-          <Button variant="outline" onClick={downloadTemplateExcel} className="h-12 rounded-2xl">
+          <Button variant="outline" onClick={downloadTemplateExcel} className="h-10 rounded-xl">
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Template XLSX
           </Button>
 
-          <Button variant="outline" onClick={downloadTemplateCsv} className="h-12 rounded-2xl">
+          <Button variant="outline" onClick={downloadTemplateCsv} className="h-10 rounded-xl">
             <Download className="mr-2 h-4 w-4" />
             Template CSV
           </Button>
@@ -1235,19 +1361,19 @@ export default function Stock() {
           <Button
             variant="outline"
             onClick={() => document.getElementById("stock-import-file")?.click()}
-            className="h-12 rounded-2xl"
+            className="h-10 rounded-xl"
           >
             <Upload className="mr-2 h-4 w-4" />
             Import
           </Button>
           <input id="stock-import-file" type="file" accept=".csv,.xlsx" className="hidden" onChange={handleImportFile} />
 
-          <Button variant="outline" onClick={exportExcel} disabled={!rows.length} className="h-12 rounded-2xl">
+          <Button variant="outline" onClick={exportExcel} disabled={!rows.length} className="h-10 rounded-xl">
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Export XLSX
           </Button>
 
-          <Button variant="outline" onClick={exportCsv} disabled={!rows.length} className="h-12 rounded-2xl">
+          <Button variant="outline" onClick={exportCsv} disabled={!rows.length} className="h-10 rounded-xl">
             <Download className="mr-2 h-4 w-4" />
             Export CSV
           </Button>
@@ -1260,17 +1386,26 @@ export default function Stock() {
       </div>
 
       {/* FILTERS */}
-      <Card className="rounded-[30px] border-white/35 bg-white/82 p-5 shadow-[0_18px_48px_-28px_rgba(0,0,0,.24)] backdrop-blur">
+      <Card className="rounded-[24px] border-white/35 bg-white/82 p-4 shadow-[0_18px_48px_-28px_rgba(0,0,0,.24)] backdrop-blur">
         <div className="grid gap-4 xl:grid-cols-[1.25fr_.9fr_auto] xl:items-center">
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="h-13 rounded-2xl border-white/30 bg-white pl-11 text-base shadow-sm"
-              placeholder="Search by SKU, item code, name…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
+            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Input
+            className="h-12 rounded-2xl border-slate-200 bg-white pl-11 pr-24 text-sm shadow-[0_10px_28px_-18px_rgba(15,23,42,.22)] focus-visible:ring-2 focus-visible:ring-primary/20"  
+            placeholder="Search by item code, SKU, name, description…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+           {q ? (
+             <button
+               type="button"
+               onClick={() => setQ("")}
+               className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm hover:bg-slate-50"
+            >
+              Clear
+             </button>
+             ) : null}
+           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex items-center justify-between rounded-[24px] border bg-white px-4 py-3 shadow-sm">
@@ -1291,13 +1426,17 @@ export default function Stock() {
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button variant="outline" className="h-12 rounded-2xl" onClick={() => toggleSort("name")}>
+            <Button variant="outline" className="h-10 rounded-xl" onClick={() => toggleSort("item_code")}>
+             Code {sort.key === "item_code" ? sort.dir === "asc" ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" /> : null}
+            </Button>
+
+            <Button variant="outline" className="h-10 rounded-xl" onClick={() => toggleSort("name")}>
               Name {sort.key === "name" ? sort.dir === "asc" ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" /> : null}
             </Button>
-            <Button variant="outline" className="h-12 rounded-2xl" onClick={() => toggleSort("stock")}>
+            <Button variant="outline" className="h-10 rounded-xl" onClick={() => toggleSort("stock")}>
               Stock {sort.key === "stock" ? sort.dir === "asc" ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" /> : null}
             </Button>
-            <Button variant="outline" className="h-12 rounded-2xl" onClick={() => toggleSort("price")}>
+            <Button variant="outline" className="h-10 rounded-xl" onClick={() => toggleSort("price")}>
               Price {sort.key === "price" ? sort.dir === "asc" ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" /> : null}
             </Button>
           </div>
@@ -1381,7 +1520,7 @@ export default function Stock() {
           </div>
         </div>
 
-        <div ref={listRef} className="h-[70vh] overflow-auto bg-gradient-to-b from-slate-50/45 to-white px-4 py-4 sm:px-5">
+        <div ref={listRef} className="h-[62vh] overflow-auto bg-gradient-to-b from-slate-50/45 to-white px-4 py-4 sm:px-5">
           {productsQ.isLoading ? (
             <div className="rounded-[24px] border bg-white p-8 text-sm text-muted-foreground">Loading stock items…</div>
           ) : rendered.length === 0 ? (

@@ -13,6 +13,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { AppLayout } from "@/components/layout/AppLayout";
+import InvoiceBulkPrint from "@/pages/InvoiceBulkPrint";
 
 import WhatsAppFab from "@/components/WhatsAppFab";
 
@@ -101,14 +102,15 @@ export default function App() {
                 <Route path="/login" element={<Navigate to="/auth" replace />} />
                 <Route path="/auth" element={<Auth />} />
 
-                {/* =========================
-                    PUBLIC PRINT ROUTES (NO LOGIN)
-                ========================== */}
-                <Route path="/invoices/:id/print" element={<InvoicePrint />} />
-                <Route path="/credit-notes/:id/print" element={<CreditNotePrint />} />
-                <Route path="/quotations/:id/print" element={<QuotationPrint />} />
-                {/* <Route path="/statement/print" element={<StatementPrint />} /> */}
+               {/* =========================
+                      PUBLIC PRINT ROUTES (NO LOGIN)
+                    ========================== */}
+                 <Route path="/invoices/:id/print" element={<InvoicePrint />} />
+                 <Route path="/invoices/bulk-print" element={<InvoiceBulkPrint />} />
+                 <Route path="/credit-notes/:id/print" element={<CreditNotePrint />} />
+                 <Route path="/quotations/:id/print" element={<QuotationPrint />} />
 
+                
                 {/* =========================
                     PRIVATE APP (LOGIN REQUIRED)
                 ========================== */}
@@ -161,7 +163,7 @@ export default function App() {
                       </RequirePermission>
                     }
                   />
-
+                  
                   <Route
                     path="credit-notes"
                     element={

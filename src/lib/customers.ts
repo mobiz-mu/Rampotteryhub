@@ -13,8 +13,8 @@ export async function listCustomers(params?: {
   limit?: number;
 }) {
   const q = (params?.q || "").trim();
-  const activeOnly = params?.activeOnly ?? true;
-  const limit = params?.limit ?? 300;
+  const activeOnly = params?.activeOnly ?? false;
+  const limit = params?.limit ?? 10000;
 
   let query = supabase
     .from("customers")
@@ -32,9 +32,9 @@ export async function listCustomers(params?: {
     // escape comma in query - Supabase .or syntax uses commas
     const s = q.replaceAll(",", " ");
     query = query.or(
-      `name.ilike.%${s}%,phone.ilike.%${s}%,customer_code.ilike.%${s}%,whatsapp.ilike.%${s}%`
-    );
-  }
+  `name.ilike.%${s}%,client_name.ilike.%${s}%,phone.ilike.%${s}%,customer_code.ilike.%${s}%,whatsapp.ilike.%${s}%,address.ilike.%${s}%,email.ilike.%${s}%,brn.ilike.%${s}%,vat_no.ilike.%${s}%`
+); 
+}
 
   const { data, error } = await query;
   if (error) throw error;

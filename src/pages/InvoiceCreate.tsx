@@ -144,6 +144,155 @@ function intFmt(v: any) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.trunc(n(v)));
 }
 
+function fixed2OrBlank(v: any) {
+  const x = n(v);
+  return x === 0 ? "" : x.toFixed(2);
+}
+
+function rowAmounts(input: {
+  total_qty: any;
+  unit_price_excl_vat: any;
+  vat_rate: any;
+  base_unit_price_excl_vat?: any;
+  price_overridden?: boolean;
+}) {
+  const qty = Math.max(0, n(input.total_qty));
+  const unitEx = Math.max(0, n(input.unit_price_excl_vat));
+  const baseUnitEx = Math.max(0, n(input.base_unit_price_excl_vat ?? unitEx));
+  const rate = clampPct(input.vat_rate);
+
+  const unitVat = r2(unitEx * (rate / 100));
+  const unitInc = r2(unitEx + unitVat);
+
+  // Keep row totals consistent with displayed rounded unit prices
+  const lineEx = r2(qty * unitEx);
+  const lineVat = r2(qty * unitVat);
+  const lineTotal = r2(qty * unitInc);
+
+  const baseLineEx = r2(qty * baseUnitEx);
+  const discount = input.price_overridden ? 0 : Math.max(0, r2(baseLineEx - lineEx));
+
+  return {
+    qty,
+    rate,
+    unitEx,
+    baseUnitEx,
+    unitVat,
+    unitInc,
+    lineEx,
+    lineVat,
+    lineTotal,
+    baseLineEx,
+    discount,
+  };
+}
+
+function productRef(p?: { item_code?: string | null; sku?: string | null } | null) {
+  return String(p?.item_code ?? p?.sku ?? "").trim();
+}
+
+function productLabel(p?: { item_code?: string | null; sku?: string | null; name?: string | null } | null) {
+  const ref = productRef(p);
+  const name = String(p?.name ?? "").trim();
+  if (ref && name) return `${ref} — ${name}`;
+  return ref || name || "";
+}
+
+function compactSearch(v: any) {
+  return String(v ?? "").toLowerCase().replace(/\s+/g, "").trim();
+}
+
+function codeAliases(v: any) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return [];
+
+  const set = new Set<string>();
+  set.add(raw);
+  set.add(raw.toUpperCase());
+  set.add(raw.replace(/\s+/g, ""));
+  set.add(raw.toUpperCase().replace(/\s+/g, ""));
+
+  // Only for pure numeric codes: let 3 also match 03 / 003
+  if (/^\d+$/.test(raw)) {
+    const n = String(Number(raw));
+    set.add(n);
+    set.add(n.padStart(2, "0"));
+    set.add(n.padStart(3, "0"));
+  }
+
+  return Array.from(set);
+}
+
+function productMatchesQuery(p: ProductRow, term: string) {
+  const q = compactSearch(term);
+  if (!q) return true;
+
+  const refs = codeAliases(productRef(p)).map(compactSearch);
+  const sku = compactSearch(p.sku);
+  const name = compactSearch(p.name);
+  const desc = compactSearch(p.description);
+
+  return (
+    refs.some((x) => x.includes(q)) ||
+    sku.includes(q) ||
+    name.includes(q) ||
+    desc.includes(q)
+  );
+}
+
+function compareTextAsc(a: any, b: any) {
+  return String(a ?? "").localeCompare(String(b ?? ""), undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function customerSearchScore(c: CustomerRow, term: string) {
+  const q = compactSearch(term);
+  if (!q) return 0;
+
+  const rawName = String(c.name || "").trim();
+  const name = compactSearch(rawName);
+  const words = rawName
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => compactSearch(w))
+    .filter(Boolean);
+
+  const code = compactSearch(c.customer_code);
+  const phone = compactSearch(c.phone);
+  const addr = compactSearch(c.address);
+
+  if (name === q) return 3000;
+  if (words.some((w) => w === q)) return 2800;
+  if (name.startsWith(q)) return 2600;
+  if (words.some((w) => w.startsWith(q))) return 2400;
+
+  if (code === q) return 2200;
+  if (code.startsWith(q)) return 2000;
+
+  if (phone.startsWith(q)) return 1600;
+  if (addr.startsWith(q)) return 1400;
+
+  if (name.includes(q)) return 1200;
+  if (code.includes(q)) return 1000;
+  if (phone.includes(q)) return 900;
+  if (addr.includes(q)) return 800;
+
+  return 0;
+}
+
+function productSortKey(p: ProductRow) {
+  return String(p.item_code || p.sku || p.name || "").trim();
+}
+
+function compareProductAsc(a: ProductRow, b: ProductRow) {
+  const byCode = compareTextAsc(productSortKey(a), productSortKey(b));
+  if (byCode !== 0) return byCode;
+
+  return compareTextAsc(a.name, b.name);
+}
+
 /** ✅ For inputs: show empty string when 0, allow decimals */
 function rawNum(v: any) {
   const x = n(v);
@@ -220,23 +369,26 @@ function recalc(row: InvoiceLine): InvoiceLine {
   }
 
   const rate = clampPct(row.vat_rate);
+  const amounts = rowAmounts({
+   total_qty,
+   unit_price_excl_vat: row.unit_price_excl_vat,
+   vat_rate: rate,
+   base_unit_price_excl_vat: row.base_unit_price_excl_vat,
+   price_overridden: row.price_overridden,
+ });
 
-  const unitEx = Math.max(0, n(row.unit_price_excl_vat));
-  const unitVatRaw = unitEx * (rate / 100);
-  const unitIncRaw = unitEx + unitVatRaw;
-
-  return {
-    ...row,
-    uom,
-    box_qty,
-    pcs_qty,
-    units_per_box: upb,
-    total_qty,
-    vat_rate: rate,
-    unit_vat: roundTo(unitVatRaw, 3),
-    unit_price_incl_vat: roundTo(unitIncRaw, 3),
-    line_total: r2(total_qty * unitIncRaw),
-  };
+return {
+   ...row,
+   uom,
+   box_qty,
+   pcs_qty,
+   units_per_box: upb,
+   total_qty,
+   vat_rate: rate,
+   unit_vat: amounts.unitVat,
+   unit_price_incl_vat: amounts.unitInc,
+   line_total: amounts.lineTotal,
+ };
 }
 
 function blankLine(defaultVat: number): InvoiceLine {
@@ -364,46 +516,53 @@ export default function InvoiceCreate() {
   /* =========================
      Data
   ========================= */
-  const customersQ = useQuery({
-    queryKey: ["customers"],
-    queryFn: () => listCustomers({ limit: 5000 }),
-    staleTime: 30_000,
-  });
+const customersQ = useQuery({
+  queryKey: ["customers", { activeOnly: false }],
+  queryFn: () => listCustomers({ activeOnly: false, limit: 10000 }),
+  staleTime: 30_000,
+});
 
-  const productsQ = useQuery({
-    queryKey: ["products"],
-    queryFn: () => listProducts({ limit: 5000 }),
-    staleTime: 30_000,
-  });
+const productsQ = useQuery({
+  queryKey: ["products", { activeOnly: false }],
+  queryFn: () => listProducts({ activeOnly: false, limit: 10000 }),
+  staleTime: 30_000,
+});
 
-  const customers = (customersQ.data || []) as CustomerRow[];
-  const products = (productsQ.data || []) as ProductRow[];
+const customers = (customersQ.data || []) as CustomerRow[];
+const products = (productsQ.data || []) as ProductRow[];
 
-  const customer = useMemo(() => customers.find((c) => c.id === customerId) || null, [customers, customerId]);
+const sortedCustomers = useMemo(() => {
+  return [...customers].sort((a, b) => compareTextAsc(a.name, b.name));
+}, [customers]);
 
-  const filteredCustomers = useMemo(() => {
-    const t = customerSearchTerm.trim().toLowerCase();
-    if (!t) return customers;
-    return customers.filter((c) => {
-      const name = String(c.name || "").toLowerCase();
-      const phone = String(c.phone || "").toLowerCase();
-      const code = String(c.customer_code || "").toLowerCase();
-      const addr = String(c.address || "").toLowerCase();
-      return name.includes(t) || phone.includes(t) || code.includes(t) || addr.includes(t);
-    });
-  }, [customers, customerSearchTerm]);
+const sortedProducts = useMemo(() => {
+  return [...products].sort(compareProductAsc);
+}, [products]);
 
-  const filteredProducts = useMemo(() => {
-    const t = productSearchTerm.trim().toLowerCase();
-    if (!t) return products;
-    return products.filter((p) => {
-      const code = String(p.item_code || "").toLowerCase();
-      const sku = String(p.sku || "").toLowerCase();
-      const name = String(p.name || "").toLowerCase();
-      const desc = String(p.description || "").toLowerCase();
-      return code.includes(t) || sku.includes(t) || name.includes(t) || desc.includes(t);
-    });
-  }, [products, productSearchTerm]);
+const customer = useMemo(() => customers.find((c) => c.id === customerId) || null, [customers, customerId]);
+
+const filteredCustomers = useMemo(() => {
+  const t = customerSearchTerm.trim();
+  if (!t) return sortedCustomers;
+
+  return sortedCustomers
+    .map((c) => ({
+      row: c,
+      score: customerSearchScore(c, t),
+    }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return compareTextAsc(a.row.name, b.row.name);
+    })
+    .map((x) => x.row);
+}, [sortedCustomers, customerSearchTerm]);
+
+const filteredProducts = useMemo(() => {
+  const t = productSearchTerm.trim();
+  if (!t) return sortedProducts;
+  return sortedProducts.filter((p) => productMatchesQuery(p, t));
+}, [sortedProducts, productSearchTerm]);
 
   /* =========================
      Which name prints
@@ -522,31 +681,37 @@ export default function InvoiceCreate() {
   ========================= */
   const realLines = useMemo(() => lines.filter((l) => !!l.product_id), [lines]);
 
-  const subtotalEx = useMemo(() => {
-    return r2(realLines.reduce((sum, r) => sum + n(r.total_qty) * n(r.unit_price_excl_vat), 0));
-  }, [realLines]);
+  const lineFinancials = useMemo(() => {
+  return realLines.map((r) =>
+    rowAmounts({
+      total_qty: r.total_qty,
+      unit_price_excl_vat: r.unit_price_excl_vat,
+      vat_rate: r.vat_rate,
+      base_unit_price_excl_vat: r.base_unit_price_excl_vat,
+      price_overridden: r.price_overridden,
+    })
+  );
+}, [realLines]);
 
-  const discountAmount = useMemo(() => {
-    return r2(subtotalEx * (discountPercent / 100));
-  }, [subtotalEx, discountPercent]);
+const subtotalEx = useMemo(() => {
+  return r2(lineFinancials.reduce((sum, x) => sum + x.lineEx, 0));
+}, [lineFinancials]);
 
-  const subtotalAfterDiscount = useMemo(() => {
-    return r2(Math.max(0, subtotalEx - discountAmount));
-  }, [subtotalEx, discountAmount]);
+const discountAmount = useMemo(() => {
+  return r2(lineFinancials.reduce((sum, x) => sum + x.discount, 0));
+}, [lineFinancials]);
 
-  const vatAmount = useMemo(() => {
-    return r2(
-      realLines.reduce((sum, r) => {
-        const rate = clampPct(r.vat_rate);
-        const rowBase = n(r.total_qty) * n(r.unit_price_excl_vat);
-        const rowDiscount = r2(rowBase * (discountPercent / 100));
-        const rowTaxable = Math.max(0, rowBase - rowDiscount);
-        return sum + rowTaxable * (rate / 100);
-      }, 0)
-    );
-  }, [realLines, discountPercent]);
+const subtotalAfterDiscount = useMemo(() => {
+  return subtotalEx;
+}, [subtotalEx]);
 
-  const totalAmount = useMemo(() => r2(subtotalAfterDiscount + vatAmount), [subtotalAfterDiscount, vatAmount]);
+const vatAmount = useMemo(() => {
+  return r2(lineFinancials.reduce((sum, x) => sum + x.lineVat, 0));
+}, [lineFinancials]);
+
+const totalAmount = useMemo(() => {
+  return r2(lineFinancials.reduce((sum, x) => sum + x.lineTotal, 0));
+}, [lineFinancials]);
 
   const previousBalance = useMemo(() => n(previousBalanceText), [previousBalanceText]);
   const amountPaid = useMemo(() => n(amountPaidText), [amountPaidText]);
@@ -608,26 +773,39 @@ export default function InvoiceCreate() {
   }
 
   function setLinePriceEx(id: string, unitEx: number) {
-    setLines((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        return recalc({ ...r, unit_price_excl_vat: Math.max(0, n(unitEx)), price_overridden: true } as InvoiceLine);
-      })
-    );
-  }
+  setLines((prev) =>
+    prev.map((r) => {
+      if (r.id !== id) return r;
+
+      return recalc({
+        ...r,
+        unit_price_excl_vat: r2(Math.max(0, n(unitEx))),
+        price_overridden: true,
+      } as InvoiceLine);
+    })
+  );
+}
 
   function setLinePriceInc(id: string, unitInc: number) {
-    setLines((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        const rate = clampPct(r.vat_rate);
-        const inc = Math.max(0, n(unitInc));
-        const denom = 1 + rate / 100;
-        const ex = denom > 0 ? inc / denom : inc;
-        return recalc({ ...r, unit_price_excl_vat: Math.max(0, ex), price_overridden: true } as InvoiceLine);
-      })
-    );
-  }
+  setLines((prev) =>
+    prev.map((r) => {
+      if (r.id !== id) return r;
+
+      const rate = clampPct(r.vat_rate);
+      const inc = Math.max(0, n(unitInc));
+      const denom = 1 + rate / 100;
+
+      // IMPORTANT: round EX to 2 decimals so hidden precision does not leak into subtotal
+      const ex = denom > 0 ? r2(inc / denom) : r2(inc);
+
+      return recalc({
+        ...r,
+        unit_price_excl_vat: ex,
+        price_overridden: true,
+      } as InvoiceLine);
+    })
+  );
+}
 
   function addRowAndFocus() {
     const newRow = blankLine(vatDefault);
@@ -690,7 +868,7 @@ export default function InvoiceCreate() {
         return recalc({
           ...r,
           product_id: product.id,
-          item_code: String(product.item_code || product.sku || ""),
+          item_code: productRef(product),
           description: String(product.description || product.name || "").trim(),
           units_per_box: nextUpb,
           base_unit_price_excl_vat: baseEx,
@@ -763,70 +941,73 @@ export default function InvoiceCreate() {
         salesRepPhone: salesReps.map(repPhoneByName).filter(Boolean).join(", "),
 
         items: realLines.map((l) => {
-          const uom: Uom = (l.uom || "BOX") as Uom;
+        const uom: Uom = (l.uom || "BOX") as Uom;
 
-          const rate = clampPct(l.vat_rate);
-          const unitEx = Math.max(0, n(l.unit_price_excl_vat));
-          const unitVat = r2(unitEx * (rate / 100));
-          const unitInc = r2(unitEx + unitVat);
+        const rate = clampPct(l.vat_rate);
+        const unitEx = Math.max(0, n(l.unit_price_excl_vat));
 
-          // Normalize qty per UOM for DB storage
-          let box_qty = 0;
-          let pcs_qty = 0;
-          let units_per_box = 1;
-          let total_qty = 0;
+        // Normalize qty per UOM for DB storage
+        let box_qty = 0;
+        let pcs_qty = 0;
+        let units_per_box = 1;
+        let total_qty = 0;
 
-          if (uom === "BOX") {
-            units_per_box = defaultUnitsPerBoxFor("BOX", l.units_per_box);
-            box_qty = roundTo(n(l.box_qty), 3);
-            total_qty = roundTo(box_qty * units_per_box, 3);
-          } else if (uom === "PCS") {
-            pcs_qty = roundTo(n(l.pcs_qty), 3);
-            box_qty = 0;
-            units_per_box = 1;
-            total_qty = roundTo(pcs_qty, 3);
-          } else if (uom === "KG") {
-            box_qty = roundTo(n(l.box_qty), 3);
-            pcs_qty = 0;
-            units_per_box = 1;
-            total_qty = roundTo(box_qty, 3);
-          } else if (uom === "G") {
-            // store box_qty as grams; total_qty as kg
-            box_qty = roundTo(n(l.box_qty), 3);
-            pcs_qty = 0;
-            units_per_box = 1;
-            total_qty = roundTo(box_qty / 1000, 3);
-          } else {
-            // BAG
-            units_per_box = defaultUnitsPerBoxFor("BAG", l.units_per_box);
-            box_qty = roundTo(n(l.box_qty), 3);
-            pcs_qty = 0;
-            total_qty = roundTo(box_qty * units_per_box, 3);
-          }
+  if (uom === "BOX") {
+    units_per_box = defaultUnitsPerBoxFor("BOX", l.units_per_box);
+    box_qty = roundTo(n(l.box_qty), 3);
+    total_qty = roundTo(box_qty * units_per_box, 3);
+  } else if (uom === "PCS") {
+    pcs_qty = roundTo(n(l.pcs_qty), 3);
+    box_qty = 0;
+    units_per_box = 1;
+    total_qty = roundTo(pcs_qty, 3);
+  } else if (uom === "KG") {
+    box_qty = roundTo(n(l.box_qty), 3);
+    pcs_qty = 0;
+    units_per_box = 1;
+    total_qty = roundTo(box_qty, 3);
+  } else if (uom === "G") {
+    box_qty = roundTo(n(l.box_qty), 3);
+    pcs_qty = 0;
+    units_per_box = 1;
+    total_qty = roundTo(box_qty / 1000, 3);
+  } else {
+    units_per_box = defaultUnitsPerBoxFor("BAG", l.units_per_box);
+    box_qty = roundTo(n(l.box_qty), 3);
+    pcs_qty = 0;
+    total_qty = roundTo(box_qty * units_per_box, 3);
+  }
 
-          return {
-            product_id: l.product_id,
-            description: l.description || null,
-            uom,
+  const amounts = rowAmounts({
+    total_qty,
+    unit_price_excl_vat: unitEx,
+    vat_rate: rate,
+    base_unit_price_excl_vat: n(l.base_unit_price_excl_vat),
+    price_overridden: !!l.price_overridden,
+  });
 
-            box_qty,
-            pcs_qty,
+  return {
+    product_id: l.product_id,
+    description: l.description || null,
+    uom,
 
-            units_per_box,
-            total_qty,
+    box_qty,
+    pcs_qty,
 
-            unit_price_excl_vat: unitEx,
-            vat_rate: rate,
-            unit_vat: unitVat,
-            unit_price_incl_vat: unitInc,
-            line_total: r2(total_qty * unitInc),
+    units_per_box,
+    total_qty,
 
-            price_overridden: !!l.price_overridden,
-            base_unit_price_excl_vat: n(l.base_unit_price_excl_vat),
-          };
-        }),
-      };
+    unit_price_excl_vat: unitEx,
+    vat_rate: rate,
+    unit_vat: amounts.unitVat,
+    unit_price_incl_vat: amounts.unitInc,
+    line_total: amounts.lineTotal,
 
+    price_overridden: !!l.price_overridden,
+    base_unit_price_excl_vat: n(l.base_unit_price_excl_vat),
+  };
+}),
+};
       const res: any = await createInvoice(payload);
       const invNo = String(res?.invoice_number || res?.invoiceNumber || res?.invoice_no || res?.number || "(Saved)");
       toast.success(`Invoice saved: ${invNo}`);
@@ -945,7 +1126,7 @@ export default function InvoiceCreate() {
                     onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : null)}
                   >
                     <option value="">Select…</option>
-                    {customers.map((c) => (
+                    {sortedCustomers.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
                       </option>
@@ -1196,10 +1377,10 @@ export default function InvoiceCreate() {
                             }}
                           >
                             <option value="">Select…</option>
-                            {products.map((p) => (
+                            {sortedProducts.map((p) => (
                               <option key={p.id} value={p.id}>
-                                {(p.item_code || p.sku || "").toString()} — {(p.name || "").toString()}
-                              </option>
+                               {productLabel(p)}
+                             </option>
                             ))}
                           </select>
                         </td>
@@ -1311,7 +1492,7 @@ export default function InvoiceCreate() {
                           <input
                             className="inv-input inv-input--right"
                             inputMode="decimal"
-                            placeholder="0.0000"
+                            placeholder="0.00"
                             value={editingEx[r.id] !== undefined ? editingEx[r.id] : rawNum(r.unit_price_excl_vat)}
                             onChange={(e) => {
                               const v = e.target.value.replace(/,/g, "");
@@ -1383,8 +1564,8 @@ export default function InvoiceCreate() {
                           <input
                             className="inv-input inv-input--right"
                             inputMode="decimal"
-                            placeholder="0.0000"
-                            value={editingInc[r.id] !== undefined ? editingInc[r.id] : rawNum(r.unit_price_incl_vat)}
+                            placeholder="0.00"
+                            value={editingInc[r.id] !== undefined ? editingInc[r.id] : fixed2OrBlank(r.unit_price_incl_vat)}
                             onChange={(e) => {
                               const v = e.target.value.replace(/,/g, "");
                               if (v !== "" && v !== "." && !/^\d*\.?\d*$/.test(v)) return;
@@ -1557,7 +1738,7 @@ export default function InvoiceCreate() {
                     }}
                   >
                     <div className="inv-modal-item-title">
-                      <b>{p.item_code || p.sku}</b> — {p.name}
+                      <b>{productRef(p)}</b> — {p.name}
                     </div>
                     <div className="inv-modal-item-sub">
                       UNIT: {intFmt(p.units_per_box ?? 1)} · Unit Ex: {money(p.selling_price ?? 0)}

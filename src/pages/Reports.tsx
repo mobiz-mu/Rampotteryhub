@@ -77,6 +77,30 @@ function startOfYearISO() {
 function ymKey(dateISO: string) {
   return String(dateISO || "").slice(0, 7);
 }
+function fmtDateDMY(dateISO: string) {
+  const s = String(dateISO || "").slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s || "—";
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+function fmtMonthDMY(monthISO: string) {
+  const s = String(monthISO || "").trim();
+  const m = s.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return s || "—";
+  return `01-${m[2]}-${m[1]}`;
+}
+
+function fmtDateTimeDMY(v: any) {
+  const d = new Date(String(v || ""));
+  if (Number.isNaN(d.getTime())) return String(v || "");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}-${mm}-${yy} ${hh}:${mi}`;
+}
 function chunk<T>(arr: T[], size: number) {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -452,7 +476,10 @@ export default function Reports() {
   const [navSearch, setNavSearch] = useState("");
 
   // frozen timestamp for print header
-  const printStamp = useMemo(() => new Date().toLocaleString(), [activeReport, from, to, generatedAt]);
+  const printStamp = useMemo(
+  () => fmtDateTimeDMY(new Date().toISOString()),
+  [activeReport, from, to, generatedAt]
+);
 
   // statuses
   const salesStatuses = useMemo(() => ["ISSUED", "PARTIALLY_PAID", "PAID"], []);
@@ -2044,7 +2071,7 @@ export default function Reports() {
               {activeMeta?.label || activeReport}
             </div>
             <div className="text-[11px] text-muted-foreground mt-1">
-              Period: <b>{from}</b> → <b>{to}</b> • Granularity: <b>{granularity}</b>
+              Period: <b>{fmtDateDMY(from)}</b> → <b>{fmtDateDMY(to)}</b> • Granularity: <b>{granularity}</b>
             </div>
           </div>
 
@@ -2081,7 +2108,7 @@ export default function Reports() {
                 </div>
 
                 <div className="text-right">
-                  <div className="text-sm font-semibold">Period: {from} → {to}</div>
+                  <div className="text-sm font-semibold">Period: {fmtDateDMY(from)} → {fmtDateDMY(to)}</div>
                   <div className="text-xs text-muted-foreground">Generated: {printStamp}</div>
                 </div>
               </div>
@@ -2247,7 +2274,7 @@ export default function Reports() {
                               {/* Opening row */}
                               <tr className="bg-muted/10">
                                 <td className="p-3 font-semibold">—</td>
-                                <td className="p-3 font-medium">{from}</td>
+                                <td className="p-3 font-medium">{fmtDateDMY(from)}</td>
                                 <td className="p-3">—</td>
                                 <td className="p-3 text-muted-foreground">Opening balance (before period)</td>
                                 <td className="p-3 text-right tabular-nums">Rs {money(statementPack.opening)}</td>
@@ -2255,9 +2282,9 @@ export default function Reports() {
                               </tr>
 
                               {statementPack.rowsInRange.map((r, idx) => (
-                                <tr key={`${r.type}|${r.ref}|${r.date}|${idx}`}>
+                                <tr key={`${r.type}|${r.ref}|${fmtDateDMY(r.date)}|${idx}`}>
                                   <td className="p-3 font-semibold">{idx + 1}</td>
-                                  <td className="p-3 font-medium">{r.date}</td>
+                                  <td className="p-3 font-medium">{fmtDateDMY(r.date)}</td>
                                   <td className="p-3 font-semibold">{r.ref}</td>
                                   <td className="p-3 text-muted-foreground">{r.details}</td>
                                   <td className="p-3 text-right tabular-nums font-semibold">
@@ -2308,7 +2335,7 @@ export default function Reports() {
                       <tbody className="divide-y">
                         {dailyInvoices.map((r) => (
                           <tr key={r.date} className="hover:bg-muted/30">
-                            <td className="p-3 font-medium">{r.date}</td>
+                            <td className="p-3 font-medium">{fmtDateDMY(r.date)}</td>
                             <td className="p-3 text-right tabular-nums">{r.invoices}</td>
                             <td className="p-3 text-right tabular-nums">{r.credit_notes}</td>
                             <td className="p-3 text-right tabular-nums">{r.unique_customers}</td>
@@ -2415,7 +2442,7 @@ export default function Reports() {
                       <tbody className="divide-y">
                         {customersDaily.map((r) => (
                           <tr key={r.date} className="hover:bg-muted/30">
-                            <td className="p-3 font-medium">{r.date}</td>
+                            <td className="p-3 font-medium">{fmtDateDMY(r.date)}</td>
                             <td className="p-3 text-right tabular-nums">{r.unique_customers}</td>
                             <td className="p-3 text-right tabular-nums">{r.invoices}</td>
                             <td className="p-3 text-right tabular-nums">{r.credit_notes}</td>
@@ -2460,7 +2487,7 @@ export default function Reports() {
                       overscan={12}
                       renderRow={(r: any) => (
                         <div className="grid grid-cols-[140px_1.3fr_110px_130px_140px_160px] gap-0 px-3 py-3 text-sm border-b last:border-b-0 hover:bg-muted/30">
-                          <div className="font-medium">{r.date}</div>
+                          <div className="font-medium">{fmtDateDMY(r.date)}</div>
                           <div className="min-w-0">
                             <div className="font-medium truncate">{r.rep}</div>
                             {r.rep_phone ? <div className="text-xs text-muted-foreground truncate">{r.rep_phone}</div> : null}
@@ -2496,8 +2523,8 @@ export default function Reports() {
                       </thead>
                       <tbody className="divide-y">
                         {repMonthly.map((r) => (
-                          <tr key={`${r.month}|${r.rep}`} className="hover:bg-muted/30">
-                            <td className="p-3 font-medium">{r.month}</td>
+                          <tr key={`${fmtMonthDMY(r.month)}|${r.rep}`} className="hover:bg-muted/30">
+                            <td className="p-3 font-medium">{fmtMonthDMY(r.month)}</td>
                             <td className="p-3 font-medium">{r.rep}</td>
                             <td className="p-3 text-right tabular-nums">{r.invoices}</td>
                             <td className="p-3 text-right tabular-nums">{r.credit_notes}</td>
@@ -2535,8 +2562,8 @@ export default function Reports() {
                       </thead>
                       <tbody className="divide-y">
                         {customerMonthly.map((r) => (
-                          <tr key={`${r.month}|${r.customer_id}`} className="hover:bg-muted/30">
-                            <td className="p-3 font-medium">{r.month}</td>
+                          <tr key={`${fmtMonthDMY(r.month)}|${r.customer_id}`} className="hover:bg-muted/30">
+                            <td className="p-3 font-medium">{fmtMonthDMY(r.month)}</td>
                             <td className="p-3">
                               <div className="font-medium">{r.customer}</div>
                               {r.secondary ? <div className="text-xs text-muted-foreground">{r.secondary}</div> : null}

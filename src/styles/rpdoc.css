@@ -798,3 +798,250 @@ html, body{
   margin-top: 0 !important;         /* remove auto/big margins */
   padding-top: 3mm !important;      /* small clean spacing */
 }
+
+/* ==========================================
+   FINAL INVOICE PRINT POLISH
+========================================== */
+
+/* 1) Bigger invoice details box text */
+.rpdoc-box--invoiceMeta .rpdoc-boxBody{
+  font-size: 12.8px !important;
+  line-height: 1.28 !important;
+}
+
+.rpdoc-box--invoiceMeta .rpdoc-kv{
+  grid-template-columns: 34mm 1fr !important;
+  gap: 3.5mm !important;
+  padding: 3px 0 !important;
+}
+
+.rpdoc-box--invoiceMeta .rpdoc-kv .k{
+  font-size: 13px !important;
+  line-height: 1.22 !important;
+}
+
+.rpdoc-box--invoiceMeta .rpdoc-kv .v{
+  font-size: 13px !important;
+  line-height: 1.22 !important;
+  font-weight: 800 !important;
+}
+
+/* 2) Bigger totals figures */
+.rpdoc-totalsBox{
+  font-size: 13px !important;
+}
+
+.rpdoc-totalRow{
+  padding: 7px 10px !important;
+  align-items: center !important;
+}
+
+.rpdoc-totalRow span:first-child{
+  font-size: 12.5px !important;
+}
+
+.rpdoc-totalRow span:last-child{
+  font-size: 15px !important;
+  font-weight: 900 !important;
+}
+
+.rpdoc-totalRowBig{
+  padding-top: 9px !important;
+  padding-bottom: 9px !important;
+}
+
+.rpdoc-totalRowBig span:first-child{
+  font-size: 13px !important;
+}
+
+.rpdoc-totalRowBig span:last-child{
+  font-size: 18px !important;
+  font-weight: 900 !important;
+}
+
+/* 3) Better row height + description wrapping for PDF */
+.rpdoc-table td{
+  padding: 5px 4px !important;
+  line-height: 1.18 !important;
+}
+
+.rpdoc-desc{
+  text-align: left !important;
+  padding-left: 7px !important;
+  padding-right: 6px !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  line-height: 1.24 !important;
+}
+
+/* keep long descriptions readable in print and PDF */
+@media print{
+  .rpdoc-desc{
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+    line-height: 1.24 !important;
+  }
+}
+
+/* ==========================================
+   FINAL FIX — DATE / SIGNATURE VISIBILITY
+   Keep this block LAST in file
+========================================== */
+
+.rpdoc-signatures{
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: flex-start !important;
+  gap: 8mm !important;
+  margin-top: 3.5mm !important;
+  padding-top: 3.5mm !important;
+  padding-bottom: 4mm !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-size: 11px !important;
+  line-height: 1.15 !important;
+  flex: 0 0 auto !important;
+  overflow: visible !important;
+}
+
+.rpdoc-sig{
+  width: 33.33% !important;
+  text-align: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  min-height: 16mm !important;
+  overflow: visible !important;
+}
+
+.rpdoc-sigLine{
+  width: 100% !important;
+  border-top: 1px solid #111 !important;
+  margin-bottom: 5px !important;
+}
+
+.rpdoc-sigTitle{
+  font-weight: 900 !important;
+  line-height: 1.08 !important;
+  margin: 0 0 2px 0 !important;
+  padding: 0 !important;
+}
+
+.rpdoc-sigSub{
+  margin-top: 2px !important;
+  line-height: 1.18 !important;
+  font-size: 11px !important;
+  white-space: normal !important;
+  overflow: visible !important;
+}
+
+.rpdoc-footerGrid{
+  margin-top: 2mm !important;
+}
+
+@media print{
+  .rpdoc-signatures{
+    padding-bottom: 4.5mm !important;
+  }
+
+  .rpdoc-sig{
+    min-height: 17mm !important;
+  }
+
+  .rpdoc-sigTitle,
+  .rpdoc-sigSub{
+    overflow: visible !important;
+  }
+}
+
+/* ==========================================
+   BULK PRINT FIX
+   Keep this block LAST in rpdoc.css
+========================================== */
+
+@media print{
+  body.rp-bulk-printing .print-shell,
+  body.rp-bulk-printing .bulk-stage,
+  body.rp-bulk-printing .bulk-doc,
+  body.rp-bulk-printing #rpdoc-print-root,
+  body.rp-bulk-printing .rpdoc-pages{
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 210mm !important;
+    max-width: 210mm !important;
+    background: #fff !important;
+  }
+
+  body.rp-bulk-printing .bulk-divider{
+    display: none !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-page{
+    margin: 0 !important;
+    break-after: page !important;
+    page-break-after: always !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-page:last-child{
+    break-after: auto !important;
+    page-break-after: auto !important;
+  }
+
+  /* Slightly tighter footer/totals only for bulk print */
+  body.rp-bulk-printing .rpdoc-footerGrid{
+    margin-top: 1.2mm !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-totalRow{
+    padding: 6px 9px !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-totalRow span:first-child{
+    font-size: 12px !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-totalRow span:last-child{
+    font-size: 13.5px !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-totalRowBig{
+    padding-top: 7px !important;
+    padding-bottom: 7px !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-totalRowBig span:first-child{
+    font-size: 12.5px !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-totalRowBig span:last-child{
+    font-size: 16px !important;
+  }
+
+  /* Pull signatures up a little and make them fit on same page */
+  body.rp-bulk-printing .rpdoc-signatures{
+    margin-top: 1.8mm !important;
+    padding-top: 1.8mm !important;
+    padding-bottom: 2mm !important;
+    gap: 7mm !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-sig{
+    min-height: 12mm !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-sigLine{
+    margin-bottom: 3px !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-sigTitle{
+    font-size: 10.5px !important;
+    margin: 0 0 1px 0 !important;
+  }
+
+  body.rp-bulk-printing .rpdoc-sigSub{
+    font-size: 10px !important;
+    line-height: 1.1 !important;
+  }
+}
