@@ -5,7 +5,7 @@ import cors from "cors";
 
 import publicPrint from "./routes/publicPrint.js";
 import { supaAdmin } from "./supabaseAdmin.js"; // ✅ KEEP this (single source of truth)
-import summaryReportsRouter from "./routes/summaryReports";
+import summaryReportsRouter from "./routes/summaryReports.js";
 
 import { adminUsersRouter } from "./routes/adminUsers.js";
 import { publicLinksRouter } from "./routes/publicLinks.js";
