@@ -90,6 +90,7 @@ type InvoiceLine = {
   line_total: number;
 
   price_overridden?: boolean;
+  unit_inc_overridden?: boolean;
 };
 
 type PrintNameMode = "CUSTOMER" | "CLIENT";
@@ -101,7 +102,7 @@ const SALES_REPS = [
   { name: "Mr Koushal", phone: "59193239" },
   { name: "Mr Akash", phone: "59194918" },
   { name: "Mr Manish", phone: "57788884" },
-  { name: "Mr Adesh", phone: "57788884" },
+  { name: "Mr Adesh", phone: "58060268" },
 ] as const;
 
 type SalesRepName = (typeof SALES_REPS)[number]["name"];
@@ -155,16 +156,28 @@ function rowAmounts(input: {
   vat_rate: any;
   base_unit_price_excl_vat?: any;
   price_overridden?: boolean;
+  unit_price_incl_vat?: any;
+  unit_inc_overridden?: boolean;
 }) {
   const qty = Math.max(0, n(input.total_qty));
-  const unitEx = Math.max(0, n(input.unit_price_excl_vat));
-  const baseUnitEx = Math.max(0, n(input.base_unit_price_excl_vat ?? unitEx));
   const rate = clampPct(input.vat_rate);
+  const baseUnitEx = Math.max(0, n(input.base_unit_price_excl_vat ?? input.unit_price_excl_vat));
 
-  const unitVat = r2(unitEx * (rate / 100));
-  const unitInc = r2(unitEx + unitVat);
+  let unitEx = Math.max(0, n(input.unit_price_excl_vat));
+  let unitVat = 0;
+  let unitInc = 0;
 
-  // Keep row totals consistent with displayed rounded unit prices
+  // If UNIT INC was manually edited, keep it exact
+  if (input.unit_inc_overridden) {
+    unitInc = r2(Math.max(0, n(input.unit_price_incl_vat)));
+    unitEx = r2(rate > 0 ? unitInc / (1 + rate / 100) : unitInc);
+    unitVat = r2(unitInc - unitEx);
+  } else {
+    unitEx = r2(unitEx);
+    unitVat = r2(unitEx * (rate / 100));
+    unitInc = r2(unitEx + unitVat);
+  }
+
   const lineEx = r2(qty * unitEx);
   const lineVat = r2(qty * unitVat);
   const lineTotal = r2(qty * unitInc);
@@ -370,25 +383,29 @@ function recalc(row: InvoiceLine): InvoiceLine {
 
   const rate = clampPct(row.vat_rate);
   const amounts = rowAmounts({
-   total_qty,
-   unit_price_excl_vat: row.unit_price_excl_vat,
-   vat_rate: rate,
-   base_unit_price_excl_vat: row.base_unit_price_excl_vat,
-   price_overridden: row.price_overridden,
- });
+  total_qty,
+  unit_price_excl_vat: row.unit_price_excl_vat,
+  unit_price_incl_vat: row.unit_price_incl_vat,
+  unit_inc_overridden: row.unit_inc_overridden,
+  vat_rate: rate,
+  base_unit_price_excl_vat: row.base_unit_price_excl_vat,
+  price_overridden: row.price_overridden,
+});
 
 return {
-   ...row,
-   uom,
-   box_qty,
-   pcs_qty,
-   units_per_box: upb,
-   total_qty,
-   vat_rate: rate,
-   unit_vat: amounts.unitVat,
-   unit_price_incl_vat: amounts.unitInc,
-   line_total: amounts.lineTotal,
- };
+  ...row,
+  uom,
+  box_qty,
+  pcs_qty,
+  units_per_box: upb,
+  total_qty,
+  vat_rate: rate,
+  unit_price_excl_vat: amounts.unitEx,
+  unit_vat: amounts.unitVat,
+  unit_price_incl_vat: amounts.unitInc,
+  line_total: amounts.lineTotal,
+  unit_inc_overridden: !!row.unit_inc_overridden,
+};
 }
 
 function blankLine(defaultVat: number): InvoiceLine {
@@ -408,6 +425,7 @@ function blankLine(defaultVat: number): InvoiceLine {
     unit_vat: 0,
     unit_price_incl_vat: 0,
     line_total: 0,
+    unit_inc_overridden: false,
     price_overridden: false,
   });
 }
@@ -667,6 +685,7 @@ const filteredProducts = useMemo(() => {
             unit_price_incl_vat: n(it.unit_price_incl_vat || 0),
             line_total: n(it.line_total || 0),
             price_overridden: !!it.price_overridden,
+            unit_inc_overridden: false,
           } as InvoiceLine)
         );
 
@@ -686,6 +705,8 @@ const filteredProducts = useMemo(() => {
     rowAmounts({
       total_qty: r.total_qty,
       unit_price_excl_vat: r.unit_price_excl_vat,
+      unit_price_incl_vat: r.unit_price_incl_vat,
+      unit_inc_overridden: r.unit_inc_overridden,
       vat_rate: r.vat_rate,
       base_unit_price_excl_vat: r.base_unit_price_excl_vat,
       price_overridden: r.price_overridden,
@@ -772,7 +793,7 @@ const totalAmount = useMemo(() => {
     );
   }
 
-  function setLinePriceEx(id: string, unitEx: number) {
+ function setLinePriceEx(id: string, unitEx: number) {
   setLines((prev) =>
     prev.map((r) => {
       if (r.id !== id) return r;
@@ -780,32 +801,28 @@ const totalAmount = useMemo(() => {
       return recalc({
         ...r,
         unit_price_excl_vat: r2(Math.max(0, n(unitEx))),
+        unit_inc_overridden: false,
         price_overridden: true,
       } as InvoiceLine);
     })
   );
 }
 
-  function setLinePriceInc(id: string, unitInc: number) {
+
+ function setLinePriceInc(id: string, unitInc: number) {
   setLines((prev) =>
     prev.map((r) => {
       if (r.id !== id) return r;
 
-      const rate = clampPct(r.vat_rate);
-      const inc = Math.max(0, n(unitInc));
-      const denom = 1 + rate / 100;
-
-      // IMPORTANT: round EX to 2 decimals so hidden precision does not leak into subtotal
-      const ex = denom > 0 ? r2(inc / denom) : r2(inc);
-
       return recalc({
         ...r,
-        unit_price_excl_vat: ex,
+        unit_price_incl_vat: r2(Math.max(0, n(unitInc))),
+        unit_inc_overridden: true,
         price_overridden: true,
       } as InvoiceLine);
     })
   );
-}
+} 
 
   function addRowAndFocus() {
     const newRow = blankLine(vatDefault);
@@ -839,6 +856,7 @@ const totalAmount = useMemo(() => {
             box_qty: 0,
             pcs_qty: 0,
             price_overridden: false,
+            unit_inc_overridden: false,
           } as InvoiceLine);
         }
 
@@ -878,6 +896,7 @@ const totalAmount = useMemo(() => {
           box_qty: nextBoxQty,
           pcs_qty: nextPcsQty,
           price_overridden: false,
+          unit_inc_overridden: false,
         } as InvoiceLine);
       })
     );
@@ -943,8 +962,7 @@ const totalAmount = useMemo(() => {
         items: realLines.map((l) => {
         const uom: Uom = (l.uom || "BOX") as Uom;
 
-        const rate = clampPct(l.vat_rate);
-        const unitEx = Math.max(0, n(l.unit_price_excl_vat));
+        const rate = clampPct(l.vat_rate)
 
         // Normalize qty per UOM for DB storage
         let box_qty = 0;
@@ -979,12 +997,14 @@ const totalAmount = useMemo(() => {
   }
 
   const amounts = rowAmounts({
-    total_qty,
-    unit_price_excl_vat: unitEx,
-    vat_rate: rate,
-    base_unit_price_excl_vat: n(l.base_unit_price_excl_vat),
-    price_overridden: !!l.price_overridden,
-  });
+  total_qty,
+  unit_price_excl_vat: l.unit_price_excl_vat,
+  unit_price_incl_vat: l.unit_price_incl_vat,
+  unit_inc_overridden: l.unit_inc_overridden,
+  vat_rate: rate,
+  base_unit_price_excl_vat: n(l.base_unit_price_excl_vat),
+  price_overridden: !!l.price_overridden,
+});
 
   return {
     product_id: l.product_id,
@@ -997,7 +1017,7 @@ const totalAmount = useMemo(() => {
     units_per_box,
     total_qty,
 
-    unit_price_excl_vat: unitEx,
+    unit_price_excl_vat: amounts.unitEx,
     vat_rate: rate,
     unit_vat: amounts.unitVat,
     unit_price_incl_vat: amounts.unitInc,
