@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import html2pdf from "html2pdf.js";
 
 import { getInvoicePrintBundle } from "@/lib/invoices";
+import DotMatrixDocument, { type DotMatrixDocData } from "@/components/print/DotMatrixDocument";
 import RamPotteryDoc, { type RamPotteryDocItem } from "@/components/print/RamPotteryDoc";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -373,7 +374,7 @@ export default function InvoicePrint() {
             mode: ["css", "legacy"],
             avoid: ["tr", ".rpdoc-footerGrid", ".rpdoc-signatures"],
           },
-        })
+        } as any)
         .from(node)
         .save();
     } finally {
@@ -410,6 +411,40 @@ export default function InvoicePrint() {
         )}
       </div>
     );
+  }
+
+  const isDotMatrix = (sp.get("format") || "").trim().toLowerCase() === "dot-matrix";
+
+  if (isDotMatrix) {
+    const dmData: DotMatrixDocData = {
+      docType: "INVOICE",
+      docNo: inv.invoice_number || `#${inv.id}`,
+      date: fmtDDMMYYYY(inv.invoice_date),
+      po: inv.purchase_order_no || "",
+      salesRep: inv.sales_rep || "",
+      salesRepCell: inv.sales_rep_phone || "",
+      customer: {
+        name: printCustomer.name,
+        address: printCustomer.address,
+        cell: printCustomer.phone || printCustomer.whatsapp,
+        brn: printCustomer.brn,
+        vat_no: printCustomer.vat_no,
+      },
+      items: docItems,
+      totals: {
+        subtotal: printTotals.subtotal,
+        vat: printTotals.vat,
+        total: printTotals.total,
+        previousBalance: printTotals.previousBalance,
+        grossTotal: r2((printTotals.total || 0) + (printTotals.previousBalance || 0)),
+        amountPaid: inv.amount_paid ?? null,
+        balanceRemaining: inv.balance_remaining ?? inv.balance_due ?? null,
+      },
+      preparedBy: inv.sales_rep || "",
+      deliveredBy: "",
+      customerName: printCustomer.name,
+    };
+    return <DotMatrixDocument data={dmData} docKindLabel="Invoice" onBack={() => window.history.back()} />;
   }
 
   return (

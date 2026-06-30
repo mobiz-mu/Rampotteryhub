@@ -1,0 +1,216 @@
+/* =====================================================================
+   src/styles/dotMatrixPrint.css
+   Continuous / dot-matrix print for pre-printed RAM POTTERY stationery.
+
+   The physical paper is ~9.18in x 12.61in (661.28pt x 907.89pt) and already
+   contains the company header, labels, boxes, table headings, notes and
+   totals labels. In DATA-ONLY mode we overlay ONLY the variable values into
+   the correct blank positions. FULL-TEMPLATE mode also draws the static
+   labels (for printing on blank paper).
+
+   Field positions live in src/components/print/dotMatrixLayout.ts and are
+   applied with absolute positioning in points (1in = 72pt).
+   ===================================================================== */
+
+@page {
+  size: 9.18in 12.61in;
+  margin: 0;
+}
+
+/* The on-screen calibration toolbar is hidden when printing. */
+@media print {
+  .dm-no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  /* Hide the application chrome (sidebar/header) while printing. */
+  .app-sidebar,
+  .app-header,
+  [data-app-chrome] {
+    display: none !important;
+  }
+
+  /* ---------------------------------------------------------------
+     CRITICAL: other stylesheets (invoice.css / reports.css) declare
+     `@media print { body * { visibility: hidden } }`. Those rules would
+     blank out the dot-matrix overlay. We override them with higher
+     specificity + !important so the continuous-paper data ALWAYS prints.
+     --------------------------------------------------------------- */
+  .dm-print-root,
+  .dm-print-root * {
+    visibility: visible !important;
+  }
+  .dm-print-root {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .dm-screen-wrap {
+    display: block !important;
+    background: #fff !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    min-height: 0 !important;
+  }
+  .dot-matrix-page {
+    box-shadow: none !important;
+    outline: none !important;
+    margin: 0 !important;
+  }
+}
+
+.dm-screen-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: #f1f5f9;
+  min-height: 100vh;
+}
+
+.dot-matrix-page {
+  position: relative;
+  box-sizing: border-box;
+  /* width/height are set inline from calibration settings (default below) */
+  width: 9.18in;
+  height: 12.61in;
+  background: #ffffff;
+  color: #000000;
+  font-family: "Courier New", Courier, monospace;
+  overflow: hidden;
+  page-break-after: always;
+  break-after: page;
+}
+
+.dot-matrix-page:last-child {
+  page-break-after: auto;
+  break-after: auto;
+}
+
+/* On screen, show a light guide border + shadow so the user can see the page.
+   Both are removed when printing so nothing extra hits the paper. */
+@media screen {
+  .dot-matrix-page {
+    box-shadow: 0 4px 18px rgba(15, 23, 42, 0.18);
+    outline: 1px solid #e2e8f0;
+  }
+  /* Optional faint guide grid toggled by the toolbar */
+  .dot-matrix-page.dm-guides::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(rgba(2, 132, 199, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(2, 132, 199, 0.08) 1px, transparent 1px);
+    background-size: 36pt 36pt;
+    pointer-events: none;
+  }
+}
+
+/* A positioned field (value or, in full mode, a static label). */
+.dm-field {
+  position: absolute;
+  white-space: pre;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.dm-field.dm-right {
+  text-align: right;
+}
+.dm-field.dm-center {
+  text-align: center;
+}
+
+/* Document type title — centered horizontally, just below the pre-printed
+   "Web: www.rampottery.mu" line (~186pt) and above "CUSTOMER DETAILS" (~233pt). */
+.dm-document-title {
+  position: absolute;
+  top: 196pt; /* ~2.72in — sits under the Web line, above the details area */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3in;
+  text-align: center;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 18pt;
+  font-weight: 900;
+  color: #000;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+/* Static labels only render in full-template mode. */
+.dm-label {
+  color: #000;
+  font-weight: 600;
+}
+
+/* Full-template helper frame (only in full mode). */
+.dm-frame {
+  position: absolute;
+  border: 1px solid #000;
+}
+
+/* On-screen helper note (never printed). */
+.dm-helper {
+  max-width: 9.18in;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+.dm-helper h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.dm-helper ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.dm-toolbar {
+  max-width: 9.18in;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+.dm-toolbar .dm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 14px;
+}
+.dm-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #475569;
+}
+.dm-toolbar input,
+.dm-toolbar select {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: #0f172a;
+  background: #fff;
+}

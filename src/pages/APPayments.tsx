@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient , keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Card } from "@/components/ui/card";
@@ -282,7 +282,7 @@ export default function APPayments() {
     queryKey: ["apPaymentsPaged", q, supplierId || 0, page, pageSize],
     queryFn: () => listPaymentsPaged({ q, supplierId, page, pageSize }),
     staleTime: 12_000,
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
 
   const rows = paymentsQ.data?.rows || [];

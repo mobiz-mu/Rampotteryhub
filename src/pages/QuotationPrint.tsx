@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 
 import RamPotteryDoc from "@/components/print/RamPotteryDoc";
+import DotMatrixDocument, { type DotMatrixDocData } from "@/components/print/DotMatrixDocument";
 import { supabase } from "@/integrations/supabase/client";
 import { getQuotationPrintBundle } from "@/lib/quotations";
 
@@ -337,6 +338,39 @@ export default function QuotationPrint() {
         ) : null}
       </div>
     );
+  }
+
+  const isDotMatrix = (sp.get("format") || "").trim().toLowerCase() === "dot-matrix";
+  if (isDotMatrix) {
+    const dmData: DotMatrixDocData = {
+      docType: "QUOTATION",
+      docNo: quoteNo,
+      date: fmtDDMMYYYY(qRow.quotation_date),
+      po: qRow.valid_until ? fmtDDMMYYYY(qRow.valid_until) : "",
+      salesRep: String(qRow.sales_rep || ""),
+      salesRepCell: String(qRow.sales_rep_phone || ""),
+      customer: {
+        name: customer?.name || qRow.customer_name || "",
+        address: customer?.address || "",
+        cell: customer?.phone || customer?.whatsapp || "",
+        brn: customer?.brn || "",
+        vat_no: customer?.vat_no || "",
+      },
+      items: docItems,
+      totals: {
+        subtotal: n2(qRow.subtotal || 0),
+        vat: n2(qRow.vat_amount || 0),
+        total: n2(qRow.total_amount || 0),
+        previousBalance: 0,
+        grossTotal: n2(qRow.total_amount || 0),
+        amountPaid: null,
+        balanceRemaining: null,
+      },
+      preparedBy: String(qRow.prepared_by || ""),
+      deliveredBy: String(qRow.delivered_by || ""),
+      customerName: customer?.name || qRow.customer_name || "",
+    };
+    return <DotMatrixDocument data={dmData} docKindLabel="Quotation" onBack={() => window.history.back()} />;
   }
 
   const Doc = (

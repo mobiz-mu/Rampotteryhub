@@ -153,7 +153,7 @@ async function listBills(args: { q?: string; status?: "ALL" | BillStatus; suppli
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data || []) as SupplierBillRow[];
+  return (data || []) as unknown as SupplierBillRow[];
 }
 
 async function createBill(payload: SupplierBillUpsert) {
@@ -172,7 +172,7 @@ async function createBill(payload: SupplierBillUpsert) {
 
   const { data, error } = await supabase.from("supplier_bills").insert(row).select("*").single();
   if (error) throw error;
-  return data as SupplierBillRow;
+  return data as unknown as SupplierBillRow;
 }
 
 async function updateBill(id: number, payload: SupplierBillUpsert) {
@@ -191,7 +191,7 @@ async function updateBill(id: number, payload: SupplierBillUpsert) {
 
   const { data, error } = await supabase.from("supplier_bills").update(row).eq("id", id).select("*").single();
   if (error) throw error;
-  return data as SupplierBillRow;
+  return data as unknown as SupplierBillRow;
 }
 
 async function voidBill(id: number) {

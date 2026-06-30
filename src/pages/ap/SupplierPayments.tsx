@@ -137,7 +137,7 @@ async function listPayments(args: { q?: string; supplierId?: number | null; limi
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data || []) as SupplierPaymentRow[];
+  return (data || []) as unknown as SupplierPaymentRow[];
 }
 
 async function listOpenBillsForSupplier(supplierId: number) {

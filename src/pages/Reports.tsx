@@ -120,12 +120,11 @@ function downloadCSV(filename: string, rows: Array<Record<string, any>>) {
     return x;
   };
 
-  const headers = Array.from(
-    rows.reduce((set, r) => {
-      Object.keys(r || {}).forEach((k) => set.add(k));
-      return set;
-    }, new Set<string>())
-  );
+  const headerSet = new Set<string>();
+  for (const r of rows) {
+    Object.keys(r || {}).forEach((k) => headerSet.add(k));
+  }
+  const headers = Array.from(headerSet);
 
   const csv = [headers.join(","), ...rows.map((r) => headers.map((h) => safe((r as any)[h])).join(","))].join("\n");
 
@@ -1806,8 +1805,8 @@ export default function Reports() {
   ========================= */
   const filteredReports = useMemo(() => {
     const q = navSearch.trim().toLowerCase();
-    if (!q) return REPORTS as any[];
-    return (REPORTS as any[]).filter(
+    if (!q) return REPORTS as unknown as any[];
+    return (REPORTS as unknown as any[]).filter(
       (r) => String(r.label).toLowerCase().includes(q) || String(r.desc).toLowerCase().includes(q)
     );
   }, [navSearch, REPORTS]);

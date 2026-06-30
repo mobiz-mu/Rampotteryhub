@@ -15,6 +15,8 @@ import quotationsRouter from "./routes/quotations.js";
 import publicQuotations from "./routes/publicQuotations.js";
 import publicQuotationPrint from "./routes/publicQuotationPrint.js";
 
+import creditNotesRouter from "./routes/creditNotes.js";
+
 
 /* =========================
    Types
@@ -308,6 +310,10 @@ app.use(
 app.use("/api/quotations", quotationsRouter);
 app.use("/api/public", publicQuotations);
 app.use("/api/public", publicQuotationPrint);
+
+// Credit notes  (GET /, GET /:id, POST /create, /:id/void, /:id/refund,
+//                /:id/restore, /:id/public-link)
+app.use("/api/credit-notes", creditNotesRouter);
 
 app.use("/api/reports/summary", summaryReportsRouter);
 

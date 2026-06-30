@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 
 import RamPotteryDoc from "@/components/print/RamPotteryDoc";
+import DotMatrixDocument, { type DotMatrixDocData } from "@/components/print/DotMatrixDocument";
 import { supabase } from "@/integrations/supabase/client";
 
 import "@/styles/rpdoc.css";
@@ -356,6 +357,39 @@ export default function CreditNotePrint() {
         ) : null}
       </div>
     );
+  }
+
+  const isDotMatrix = (sp.get("format") || "").trim().toLowerCase() === "dot-matrix";
+  if (isDotMatrix) {
+    const dmData: DotMatrixDocData = {
+      docType: "CREDIT NOTE",
+      docNo: cnNo,
+      date: fmtDDMMYYYY(cn.credit_note_date),
+      po: cn.invoice_id ? String(cn.invoice_id) : "",
+      salesRep: "",
+      salesRepCell: "",
+      customer: {
+        name: customer?.name || "",
+        address: customer?.address || "",
+        cell: customer?.phone || customer?.whatsapp || "",
+        brn: customer?.brn || "",
+        vat_no: customer?.vat_no || "",
+      },
+      items: docItems,
+      totals: {
+        subtotal: n2(cn.subtotal || 0),
+        vat: n2(cn.vat_amount || 0),
+        total: n2(cn.total_amount || 0),
+        previousBalance: 0,
+        grossTotal: n2(cn.total_amount || 0),
+        amountPaid: null,
+        balanceRemaining: null,
+      },
+      preparedBy: "",
+      deliveredBy: "",
+      customerName: customer?.name || "",
+    };
+    return <DotMatrixDocument data={dmData} docKindLabel="Credit Note" onBack={() => window.history.back()} />;
   }
 
   const Doc = (

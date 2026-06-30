@@ -351,6 +351,12 @@ export default function CreditNoteView() {
     window.open(`/credit-notes/${cn.id}/print`, "_blank", "noopener,noreferrer");
   }
 
+  /** ✅ INTERNAL dot-matrix / continuous print */
+  function onPrintDotMatrix() {
+    if (!cn?.id) return;
+    window.open(`/credit-notes/${cn.id}/print?format=dot-matrix`, "_blank", "noopener,noreferrer");
+  }
+
   /** ✅ PUBLIC share link */
   async function onSharePrint() {
     if (!cn?.id) return;
@@ -478,7 +484,17 @@ export default function CreditNoteView() {
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={onPrint} className="rounded-xl" disabled={actionBusy}>
             <Printer className="mr-2 h-4 w-4" />
-            Print
+            Print PDF
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={onPrintDotMatrix}
+            className="rounded-xl"
+            disabled={actionBusy}
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            Print Dot Matrix
           </Button>
 
           <DropdownMenu>

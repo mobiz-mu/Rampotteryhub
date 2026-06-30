@@ -85,7 +85,7 @@ export default function Auth() {
       const res = await signIn(email, pwd);
       if (!res.ok) {
         // Don’t leak security details; keep generic.
-        setErr(res.error || "Invalid credentials or access is disabled.");
+        setErr(("error" in res ? res.error : "") || "Invalid credentials or access is disabled.");
         // cooldown reduces brute-force UI spam (server should also rate limit)
         setCooldown(3);
         return;

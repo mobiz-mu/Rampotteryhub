@@ -38,7 +38,7 @@ export async function listPayments(invoiceId: number) {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return (data || []) as InvoicePayment[];
+  return (data || []) as unknown as InvoicePayment[];
 }
 
 /* =========================
@@ -76,7 +76,7 @@ export async function addPayment(row: PaymentInsert) {
   // ✅ Auto-sync invoice totals after insert
   await syncInvoicePaidById(row.invoice_id);
 
-  return data as InvoicePayment;
+  return data as unknown as InvoicePayment;
 }
 
 /* =========================
@@ -97,7 +97,7 @@ export async function deletePayment(id: string, invoiceId: number) {
    Compute Status
 ========================= */
 
-export function computeInvoiceStatus(current: Invoice["status"], total: number, paid: number) {
+export function computeInvoiceStatus(current: Invoice["status"] | string, total: number, paid: number) {
   if (current === "DRAFT") return "DRAFT";
 
   const t = round2(n2(total));

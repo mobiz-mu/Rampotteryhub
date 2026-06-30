@@ -143,7 +143,7 @@ export default function Quotation() {
 
   const listQ = useQuery({
     queryKey: ["quotations", q, status],
-    queryFn: () => listQuotations({ q, status, limit: 500 }),
+    queryFn: () => listQuotations({ q, status: status as any, limit: 500 }),
     staleTime: 12_000,
   });
 
@@ -431,7 +431,20 @@ export default function Quotation() {
                             onClick={() => window.open(`/quotations/${r.id}/print`, "_blank", "noopener,noreferrer")}
                           >
                             <Printer className="mr-2 h-4 w-4" />
-                            Print / Save PDF
+                            Print PDF
+                          </DropdownMenuItem>
+
+                          <DropdownMenuItem
+                            onClick={() =>
+                              window.open(
+                                `/quotations/${r.id}/print?format=dot-matrix`,
+                                "_blank",
+                                "noopener,noreferrer"
+                              )
+                            }
+                          >
+                            <Printer className="mr-2 h-4 w-4" />
+                            Dot Matrix Print
                           </DropdownMenuItem>
 
                           <DropdownMenuItem onClick={() => nav(`/quotations/new?duplicate=${r.id}`)}>
@@ -448,8 +461,8 @@ export default function Quotation() {
 
                           <DropdownMenuItem
                             onClick={() => nav(`/quotations/${r.id}`)}
-                            disabled={!canConvert || st === "CONVERTED"}
-                            title={st === "CONVERTED" ? "Already converted" : ""}
+                            disabled={!canConvert || (st as string) === "CONVERTED"}
+                            title={(st as string) === "CONVERTED" ? "Already converted" : ""}
                           >
                             <ArrowRightLeft className="mr-2 h-4 w-4" />
                             Convert → Invoice

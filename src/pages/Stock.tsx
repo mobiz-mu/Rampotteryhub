@@ -12,7 +12,10 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
-import * as XLSX from "xlsx";
+// NOTE: Excel (.xlsx) import/export is handled via the maintained `exceljs`
+// package, lazy-loaded inside the relevant handlers. The previous `xlsx`
+// (SheetJS) dependency was removed due to unpatched Prototype-Pollution and
+// ReDoS advisories (GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9) that have no fix.
 
 import {
   Package,
@@ -288,13 +291,14 @@ function downloadCsv(filename: string, header: string[], rows: any[][]) {
   URL.revokeObjectURL(url);
 }
 
-function downloadXlsx(filename: string, sheetName: string, header: string[], rows: any[][]) {
-  const aoa = [header, ...rows];
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+async function downloadXlsx(filename: string, sheetName: string, header: string[], rows: any[][]) {
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(sheetName || "Sheet1");
+  ws.addRow(header);
+  rows.forEach((r) => ws.addRow(r));
 
-  const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const out = await wb.xlsx.writeBuffer();
   const blob = new Blob([out], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
@@ -307,6 +311,71 @@ function downloadXlsx(filename: string, sheetName: string, header: string[], row
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** Minimal RFC-4180-ish CSV parser (handles quotes, escaped quotes, CRLF). */
+function parseCsv(text: string): any[][] {
+  const rows: any[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  const src = String(text ?? "").replace(/^\uFEFF/, ""); // strip BOM
+
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (src[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      // handle CRLF: skip the \n following an \r
+      if (c === "\r" && src[i + 1] === "\n") i++;
+      row.push(field);
+      field = "";
+      rows.push(row);
+      row = [];
+    } else {
+      field += c;
+    }
+  }
+  // flush last field/row if any content remains
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** Convert a matrix (first row = headers) into header-keyed objects. */
+function matrixToObjects(matrix: any[][]): any[] {
+  if (!matrix || !matrix.length) return [];
+  const headers = (matrix[0] || []).map((h) => String(h ?? "").trim());
+  const out: any[] = [];
+  for (let r = 1; r < matrix.length; r++) {
+    const rowArr = matrix[r] || [];
+    // skip completely empty rows
+    if (rowArr.every((v) => String(v ?? "").trim() === "")) continue;
+    const obj: any = {};
+    headers.forEach((h, idx) => {
+      if (!h) return;
+      const v = rowArr[idx];
+      obj[h] = v === undefined || v === null ? "" : v;
+    });
+    out.push(obj);
+  }
+  return out;
 }
 
 /** build safe payload for DB */
@@ -1004,9 +1073,9 @@ export default function Stock() {
     toast.success("Downloaded stock-items.csv");
   };
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
     if (!rows.length) return toast.error("No stock items to export");
-    downloadXlsx("stock-items.xlsx", "StockItems", exportHeader, exportRows);
+    await downloadXlsx("stock-items.xlsx", "StockItems", exportHeader, exportRows);
     toast.success("Downloaded stock-items.xlsx");
   };
 
@@ -1024,8 +1093,8 @@ export default function Stock() {
     toast.success("Downloaded template CSV");
   };
 
-  const downloadTemplateExcel = () => {
-    downloadXlsx("stock-import-template.xlsx", "Template", exportHeader, templateRows);
+  const downloadTemplateExcel = async () => {
+    await downloadXlsx("stock-import-template.xlsx", "Template", exportHeader, templateRows);
     toast.success("Downloaded template XLSX");
   };
 
@@ -1043,33 +1112,46 @@ export default function Stock() {
     const isCsv = nameLower.endsWith(".csv");
 
     try {
-      let wb: XLSX.WorkBook;
+      // Build `json`: an array of row objects keyed by the header row,
+      // matching the previous `XLSX.utils.sheet_to_json(..., { defval: "" })`.
+      let json: any[] = [];
 
       if (isCsv) {
         const text = await file.text();
-        wb = XLSX.read(text, {
-          type: "string",
-          cellFormula: false,
-          cellNF: false,
-          cellText: true,
-          dense: true,
-        } as any);
+        const matrix = parseCsv(text);
+        json = matrixToObjects(matrix);
       } else {
+        const ExcelJS = (await import("exceljs")).default;
         const buf = await file.arrayBuffer();
-        wb = XLSX.read(buf, {
-          type: "array",
-          cellFormula: false,
-          cellNF: false,
-          cellText: true,
-          dense: true,
-        } as any);
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(buf);
+
+        const ws = wb.worksheets?.[0];
+        if (!ws) return toast.error("No sheets found");
+
+        const matrix: any[][] = [];
+        ws.eachRow({ includeEmpty: false }, (excelRow) => {
+          // exceljs row.values is 1-based (index 0 is undefined)
+          const vals = Array.isArray(excelRow.values)
+            ? (excelRow.values as any[]).slice(1)
+            : [];
+          matrix.push(
+            vals.map((v: any) => {
+              if (v == null) return "";
+              if (typeof v === "object") {
+                // hyperlink / rich-text / formula result objects
+                if ("text" in v) return (v as any).text;
+                if ("result" in v) return (v as any).result;
+                if ("richText" in v)
+                  return ((v as any).richText || []).map((t: any) => t.text).join("");
+                return String(v);
+              }
+              return v;
+            })
+          );
+        });
+        json = matrixToObjects(matrix);
       }
-
-      const firstSheet = wb.SheetNames?.[0];
-      if (!firstSheet) return toast.error("No sheets found");
-
-      const ws = wb.Sheets[firstSheet];
-      const json: any[] = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
 
       if (!json.length) return toast.error("Empty file");
 

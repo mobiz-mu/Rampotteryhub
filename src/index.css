@@ -276,3 +276,221 @@ main { -webkit-overflow-scrolling: touch; }
 }
 
 
+
+/* =====================================================================
+   Premium UI polish + responsiveness (additive, no logic changes)
+   Added during the UI/responsive pass. Safe global enhancements only.
+   ===================================================================== */
+
+/* Smooth, consistent interactions */
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+  button,
+  [role="button"] {
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease,
+      box-shadow 0.15s ease, transform 0.05s ease;
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--primary) / 0.45);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+/* Any wide table: clean, intentional horizontal scroll on small screens.
+   Apply by wrapping a <table> in <div class="rp-scroll-x"> (or it applies to
+   the project's existing .rp-tableWrap). */
+.rp-scroll-x,
+.rp-tableWrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.rp-scroll-x::-webkit-scrollbar,
+.rp-tableWrap::-webkit-scrollbar {
+  height: 8px;
+}
+.rp-scroll-x::-webkit-scrollbar-thumb,
+.rp-tableWrap::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.25);
+  border-radius: 999px;
+}
+
+/* Make data tables more legible (row hover + comfortable cell padding). */
+table tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+/* Dialogs / modals: never overflow the viewport on mobile, and float their
+   popovers (Select/Dropdown) above the overlay. */
+@media (max-width: 640px) {
+  [role="dialog"] {
+    max-width: calc(100vw - 24px) !important;
+  }
+}
+[data-radix-popper-content-wrapper] {
+  z-index: 100 !important;
+}
+
+/* Selects/dropdowns inside dialogs must always be readable (no invisible text). */
+[role="option"],
+[role="listbox"] {
+  color: hsl(var(--popover-foreground));
+}
+
+/* Premium page rhythm helpers (opt-in classes). */
+.rp-page {
+  max-width: 1400px;
+  margin-inline: auto;
+}
+.rp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+
+/* Soften cards a touch and unify radii without changing layout. */
+.rp-card,
+.card {
+  border-radius: 16px;
+}
+
+/* Hide application chrome during ANY print (A4 + dot matrix). */
+@media print {
+  .app-sidebar,
+  .app-header,
+  [data-app-chrome],
+  .no-print,
+  .dm-no-print {
+    display: none !important;
+  }
+}
+
+/* =====================================================================
+   Premium ERP visual layer v2 (app-wide, additive, no logic changes)
+   Targets stable hooks: project cards (.rp-card/.rp-hero), native tables,
+   Radix menus/selects/dialogs, badges. Safe to apply globally.
+   ===================================================================== */
+
+/* --- Surfaces / cards --- */
+.rp-card,
+.rp-hero {
+  border-radius: 18px !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -16px rgba(15, 23, 42, 0.18) !important;
+  background: hsl(var(--card));
+}
+.rp-hero {
+  background:
+    radial-gradient(120% 140% at 0% 0%, hsl(var(--primary) / 0.06), transparent 60%),
+    hsl(var(--card));
+}
+
+/* --- Page headers: a touch more breathing room --- */
+.rp-page > h1,
+.rp-page h1.page-title {
+  letter-spacing: -0.01em;
+}
+
+/* --- Tables: clean, legible, premium spacing --- */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+thead th {
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: hsl(var(--muted-foreground));
+  font-weight: 600;
+  background: hsl(var(--muted) / 0.5);
+}
+tbody td {
+  font-size: 13.5px;
+}
+tbody tr:hover {
+  background: hsl(var(--muted) / 0.45);
+}
+.rp-tableWrap table,
+.rp-scroll-x table {
+  width: 100%;
+}
+
+/* --- Radix dropdown / select / popover content: premium float --- */
+[data-radix-menu-content],
+[data-radix-dropdown-menu-content],
+[role="menu"],
+[data-radix-select-content],
+[data-radix-popover-content] {
+  border-radius: 14px !important;
+  border: 1px solid hsl(var(--border)) !important;
+  box-shadow: 0 10px 38px -10px rgba(15, 23, 42, 0.35), 0 2px 6px rgba(15, 23, 42, 0.06) !important;
+  overflow: hidden;
+  padding: 6px !important;
+}
+[role="menuitem"],
+[data-radix-collection-item] {
+  border-radius: 9px !important;
+  font-size: 13.5px;
+}
+
+/* --- Dialogs / modals: softer premium frame, mobile-safe --- */
+[role="dialog"] {
+  border-radius: 18px !important;
+  box-shadow: 0 24px 70px -24px rgba(15, 23, 42, 0.5) !important;
+}
+
+/* --- Buttons: consistent radius + subtle press --- */
+button:active {
+  transform: translateY(0.5px);
+}
+
+/* --- Badges: pill, legible --- */
+.badge,
+[class*="badge"] {
+  border-radius: 999px;
+}
+
+/* --- Inputs / selects: consistent rounded fields --- */
+input,
+select,
+textarea,
+[data-radix-select-trigger] {
+  border-radius: 10px;
+}
+
+/* --- Empty / loading states helpers (opt-in) --- */
+.rp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 16px;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+.rp-skeleton {
+  background: linear-gradient(90deg, hsl(var(--muted) / 0.5), hsl(var(--muted) / 0.8), hsl(var(--muted) / 0.5));
+  background-size: 200% 100%;
+  animation: rpShimmer 1.3s ease-in-out infinite;
+  border-radius: 8px;
+}
+@keyframes rpShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* --- Mobile niceties --- */
+@media (max-width: 640px) {
+  .rp-scroll {
+    padding: 12px 12px 20px 12px;
+  }
+  .rp-card,
+  .rp-hero {
+    border-radius: 16px !important;
+  }
+}

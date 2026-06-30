@@ -76,6 +76,7 @@ export function AppSidebar() {
         children: [
           { title: "All Invoices", href: "/invoices", show: can("ar.view") },
           { title: "Pending Invoices", href: "/invoices/pending", show: can("ar.view") },
+          { title: "Credits", href: "/credits", show: can("ar.view") },
           { title: "Create Invoice", href: "/invoices/create", show: can("ar.invoices") },
         ],
       },

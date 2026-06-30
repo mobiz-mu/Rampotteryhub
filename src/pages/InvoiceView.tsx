@@ -6,6 +6,17 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import {
+  ArrowLeft,
+  Printer,
+  Copy,
+  ExternalLink,
+  MessageCircle,
+  Trash2,
+  User,
+  Link2,
+  CheckCircle2,
+} from "lucide-react";
 
 import { getInvoice, updateInvoiceHeader, postInvoiceAndDeductStock } from "@/lib/invoices";
 import { listInvoiceItems, insertInvoiceItem, deleteInvoiceItem } from "@/lib/invoiceItems";
@@ -119,9 +130,20 @@ function originNow() {
 }
 
 async function postJson(url: string, body?: any) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+  // Attach the authenticated staff header that the Express API requires
+  // for protected routes (e.g. /api/invoices/:id/public-link).
+  try {
+    const rpUser = localStorage.getItem("rp_user");
+    if (rpUser) headers["x-rp-user"] = rpUser;
+  } catch {
+    // localStorage may be unavailable in some contexts; ignore.
+  }
+
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: body ? JSON.stringify(body) : "{}",
   });
 
@@ -177,18 +199,28 @@ function Pill(props: { children: React.ReactNode; tone?: "default" | "good" | "w
       : "bg-slate-500/10 text-slate-700 border-slate-500/20";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${cls}`}>
-      {props.children}
+    <span
+      className={`inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-semibold ${cls}`}
+    >
+      <span className="truncate">{props.children}</span>
     </span>
   );
 }
 
 function StatCard(props: { label: string; value: string; hint?: string; emphasize?: boolean }) {
   return (
-    <div className={`rounded-2xl border bg-background p-4 shadow-premium ${props.emphasize ? "ring-1 ring-rose-500/25" : ""}`}>
-      <div className="text-xs text-muted-foreground">{props.label}</div>
-      <div className="mt-1 text-lg font-semibold tracking-tight text-foreground">{props.value}</div>
-      {props.hint ? <div className="mt-1 text-xs text-muted-foreground">{props.hint}</div> : null}
+    <div
+      className={`flex h-full flex-col rounded-2xl border bg-card p-4 shadow-premium ${
+        props.emphasize ? "ring-1 ring-rose-500/25" : ""
+      }`}
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {props.label}
+      </div>
+      <div className="mt-1.5 text-xl font-bold tracking-tight tabular-nums text-foreground">
+        {props.value}
+      </div>
+      {props.hint ? <div className="mt-auto pt-1 text-xs text-muted-foreground">{props.hint}</div> : null}
     </div>
   );
 }
@@ -605,84 +637,168 @@ export default function InvoiceView() {
 
   return (
     <div className="iv-root iv-invoice-view space-y-5">
-      {/* HEADER */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-2xl font-semibold truncate text-foreground">Invoice {inv.invoice_number}</div>
-            <Pill tone={statusTone as any}>Status: {String(inv.status || "—")}</Pill>
-            <Pill>Customer: {(customer as any)?.name || `#${inv.customer_id}`}</Pill>
+      {/* HEADER CARD */}
+      <Card className="iv-headcard rounded-2xl shadow-premium p-4 md:p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          {/* Title + meta */}
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-2xl font-bold tracking-tight text-foreground leading-tight md:text-[26px]">
+                Invoice {inv.invoice_number}
+              </h1>
+              <span
+                className={`inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-bold uppercase tracking-wide ${
+                  statusTone === "good"
+                    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700"
+                    : statusTone === "warn"
+                    ? "border-amber-500/25 bg-amber-500/10 text-amber-800"
+                    : "border-slate-400/25 bg-slate-500/10 text-slate-700"
+                }`}
+              >
+                {String(inv.status || "—")}
+              </span>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="truncate font-semibold text-foreground">
+                  {(customer as any)?.name || `#${inv.customer_id}`}
+                </span>
+              </span>
+              <span className="hidden text-muted-foreground sm:inline">•</span>
+              <span className="text-muted-foreground">Invoice ID #{inv.id}</span>
+              <span className="hidden text-muted-foreground sm:inline">•</span>
+              <span className="text-muted-foreground">
+                Created {String(inv.created_at || "").slice(0, 10) || "—"}
+              </span>
+            </div>
           </div>
-          <div className="mt-1 text-sm text-muted-foreground truncate">
-            Invoice ID #{inv.id} • Created: {String(inv.created_at || "").slice(0, 10)}
+
+          {/* Primary actions */}
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <Button variant="outline" onClick={() => nav("/invoices")}>
+              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              Back
+            </Button>
+
+            <Button
+              className="gradient-primary text-primary-foreground shadow-glow"
+              onClick={() => {
+                if (!items?.length) return toast.error("Add at least 1 item before posting.");
+                postInvoiceM.mutate();
+              }}
+              disabled={
+                postInvoiceM.isPending ||
+                !!inv?.stock_deducted_at ||
+                String(inv?.status || "").toUpperCase() === "VOID"
+              }
+              title={
+                inv?.stock_deducted_at
+                  ? "Already posted (stock already deducted)"
+                  : "Post invoice and deduct stock (creates stock movements)"
+              }
+            >
+              {inv?.stock_deducted_at ? (
+                <>
+                  <CheckCircle2 className="mr-1.5 h-4 w-4" /> Posted
+                </>
+              ) : postInvoiceM.isPending ? (
+                "Posting..."
+              ) : (
+                "Post Invoice"
+              )}
+            </Button>
+
+            <Button variant="outline" onClick={() => nav(`/invoices/${invoiceId}/print`)}>
+              <Printer className="mr-1.5 h-4 w-4" />
+              Print PDF
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => nav(`/invoices/${invoiceId}/print?format=dot-matrix`)}
+            >
+              <Printer className="mr-1.5 h-4 w-4" />
+              Dot Matrix
+            </Button>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 shrink-0">
-          <Button variant="outline" onClick={() => nav("/invoices")}>
-            Back
-          </Button>
+        {/* Share toolbar */}
+        <div className="mt-4 border-t pt-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Public share link
+              </div>
+              <div className="mt-1.5 flex items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2">
+                <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span
+                  className={`truncate text-sm ${shareToken ? "text-foreground" : "text-muted-foreground"}`}
+                  title={shareToken ? publicPrintUrl : ""}
+                >
+                  {shareToken ? publicPrintUrl : "Not generated yet"}
+                </span>
+              </div>
+            </div>
 
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              <Button
+                variant="outline"
+                onClick={onGenerateShareLink}
+                disabled={shareLoading}
+                title="Creates a public token for sharing"
+              >
+                <Link2 className="mr-1.5 h-4 w-4" />
+                {shareLoading ? "Working..." : shareToken ? "Refresh Link" : "Generate Link"}
+              </Button>
 
-          <Button
-  className="gradient-primary text-primary-foreground shadow-glow"
-  onClick={() => {
-    if (!items?.length) return toast.error("Add at least 1 item before posting.");
-    postInvoiceM.mutate();
-  }}
-  disabled={postInvoiceM.isPending || !!inv?.stock_deducted_at || String(inv?.status || "").toUpperCase() === "VOID"}
-  title={
-    inv?.stock_deducted_at
-      ? "Already posted (stock already deducted)"
-      : "Post invoice and deduct stock (creates stock movements)"
-  }
->
-  {inv?.stock_deducted_at ? "Posted" : postInvoiceM.isPending ? "Posting..." : "Post Invoice"}
-</Button>
+              <Button variant="outline" onClick={onCopyShareLink} disabled={!shareToken}>
+                <Copy className="mr-1.5 h-4 w-4" />
+                Copy
+              </Button>
 
+              <Button
+                variant="outline"
+                onClick={() => window.open(publicPrintUrl, "_blank", "noopener,noreferrer")}
+                disabled={!shareToken}
+              >
+                <ExternalLink className="mr-1.5 h-4 w-4" />
+                Open Public Print
+              </Button>
 
-          <Button variant="outline" onClick={() => nav(`/invoices/${invoiceId}/print`)}>
-            Print
-          </Button>
+              <Button
+                onClick={onSendWhatsApp}
+                disabled={!waTo || !shareToken}
+                className="gradient-primary text-primary-foreground shadow-glow"
+                title={
+                  !shareToken
+                    ? "Generate share link first"
+                    : !waTo
+                    ? "No WhatsApp/phone found"
+                    : "Send invoice link"
+                }
+              >
+                <MessageCircle className="mr-1.5 h-4 w-4" />
+                WhatsApp
+              </Button>
 
-          <Button
-            variant="outline"
-            onClick={onGenerateShareLink}
-            disabled={shareLoading}
-            title="Creates a public token for sharing"
-          >
-            {shareLoading ? "Working..." : shareToken ? "Refresh Share Link" : "Generate Share Link"}
-          </Button>
-
-          <Button variant="outline" onClick={onCopyShareLink} disabled={!shareToken}>
-            Copy Link
-          </Button>
-
-          <Button
-            variant="outline"
-            onClick={() => window.open(publicPrintUrl, "_blank", "noopener,noreferrer")}
-            disabled={!shareToken}
-          >
-            Open Public Print
-          </Button>
-
-          <Button
-            onClick={onSendWhatsApp}
-            disabled={!waTo || !shareToken}
-            className="gradient-primary text-primary-foreground shadow-glow"
-            title={!shareToken ? "Generate share link first" : !waTo ? "No WhatsApp/phone found" : "Send invoice link"}
-          >
-            Send via WhatsApp
-          </Button>
-
-          <Button variant="outline" onClick={onRevokeShareLink} disabled={!shareToken || shareLoading}>
-            Revoke Link
-          </Button>
+              <Button
+                variant="outline"
+                onClick={onRevokeShareLink}
+                disabled={!shareToken || shareLoading}
+              >
+                <Trash2 className="mr-1.5 h-4 w-4" />
+                Revoke
+              </Button>
+            </div>
+          </div>
         </div>
-      </div>
+      </Card>
 
       {/* STATS STRIP */}
-      <div className="grid gap-3 md:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
         <StatCard label="Subtotal" value={rs(inv.subtotal)} />
         <StatCard label="VAT" value={rs(inv.vat_amount)} hint={`VAT %: ${money(inv.vat_percent ?? hdrVatPercent)}`} />
         <StatCard
@@ -965,7 +1081,7 @@ export default function InvoiceView() {
       </Card>
 
       {/* TOTALS */}
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
         <StatCard label="Subtotal" value={rs(inv.subtotal)} hint="From items (recalc uses VAT%)" />
         <StatCard label="VAT Amount" value={rs(inv.vat_amount)} hint={`VAT %: ${money(inv.vat_percent ?? hdrVatPercent)}`} />
         <StatCard label="Discount Amount" value={rs(inv.discount_amount)} hint="Manual discount (if used)" />

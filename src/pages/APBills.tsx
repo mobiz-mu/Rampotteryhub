@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient , keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Card } from "@/components/ui/card";
@@ -123,7 +123,7 @@ export default function APBills() {
   const billsQ = useQuery({
     queryKey: ["apBillsPaged", q, page],
     queryFn: () => listBillsPaged({ q, page, pageSize }),
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
 
   const rows = billsQ.data?.rows || [];

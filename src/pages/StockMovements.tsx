@@ -64,7 +64,7 @@ async function listMovements() {
     .limit(2000);
 
   if (error) throw error;
-  return data as Movement[];
+  return data as unknown as Movement[];
 }
 
 async function createMovement(payload: any) {

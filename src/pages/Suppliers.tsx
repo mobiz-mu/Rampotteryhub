@@ -1,7 +1,7 @@
 // src/pages/Suppliers.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient , keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Card } from "@/components/ui/card";
@@ -544,7 +544,7 @@ export default function Suppliers() {
     queryKey: ["suppliersPaged", q, status, page, pageSize],
     queryFn: () => listSuppliersPaged({ q, status, page, pageSize }),
     staleTime: 12_000,
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
 
   const rowsPage = suppliersQ.data?.rows || [];

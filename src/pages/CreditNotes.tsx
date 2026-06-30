@@ -546,7 +546,20 @@ export default function CreditNotes() {
                               }
                             >
                               <Printer className="mr-2 h-4 w-4" />
-                              Print
+                              Print PDF
+                            </DropdownMenuItem>
+
+                            <DropdownMenuItem
+                              onClick={() =>
+                                window.open(
+                                  `/credit-notes/${r.id}/print?format=dot-matrix`,
+                                  "_blank",
+                                  "noopener,noreferrer"
+                                )
+                              }
+                            >
+                              <Printer className="mr-2 h-4 w-4" />
+                              Dot Matrix Print
                             </DropdownMenuItem>
 
                             <DropdownMenuSeparator />

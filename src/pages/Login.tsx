@@ -25,7 +25,7 @@ export default function Login() {
     setBusy(true);
     try {
       const res = await signIn(email, password);
-      if (!res?.ok) throw new Error(res?.error || "Login failed");
+      if (!res?.ok) throw new Error((res && "error" in res ? res.error : "") || "Login failed");
       nav(from, { replace: true });
     } catch (ex: any) {
       setErr(ex?.message || "Login failed");

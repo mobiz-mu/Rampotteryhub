@@ -300,7 +300,21 @@ export default function QuotationView() {
             onClick={() => window.open(`/quotations/${quotationId}/print`, "_blank", "noopener,noreferrer")}
           >
             <Printer className="mr-2 h-4 w-4" />
-            Print
+            Print PDF
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() =>
+              window.open(
+                `/quotations/${quotationId}/print?format=dot-matrix`,
+                "_blank",
+                "noopener,noreferrer"
+              )
+            }
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            Print Dot Matrix
           </Button>
 
           <DropdownMenu>

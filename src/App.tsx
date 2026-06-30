@@ -28,6 +28,7 @@ const InvoiceCreate = lazy(() => import("./pages/InvoiceCreate"));
 const InvoiceView = lazy(() => import("./pages/InvoiceView"));
 const InvoicePrint = lazy(() => import("./pages/InvoicePrint"));
 const PendingInvoices = lazy(() => import("./pages/PendingInvoices"));
+const Credits = lazy(() => import("./pages/Credits"));
 
 const CreditNotes = lazy(() => import("./pages/CreditNotes"));
 const CreditNoteCreate = lazy(() => import("./pages/CreditNoteCreate"));
@@ -152,6 +153,14 @@ export default function App() {
                     element={
                       <RequirePermission perm="ar.view">
                         <PendingInvoices />
+                      </RequirePermission>
+                    }
+                   />
+                  <Route
+                    path="credits"
+                    element={
+                      <RequirePermission perm="ar.view">
+                        <Credits />
                       </RequirePermission>
                     }
                    />

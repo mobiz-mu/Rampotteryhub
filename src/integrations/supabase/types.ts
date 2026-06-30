@@ -1,3 +1,26 @@
+// =====================================================================
+// src/integrations/supabase/types.ts
+//
+// Supabase database types for Ram Pottery Hub.
+//
+// NOTE: These types were reconstructed to match the REAL schema that the
+// application code uses (products, invoice_payments, rp_users,
+// supplier_bills, supplier_payments, supplier_payment_allocations,
+// audit_logs, user_activity, qr_logins, *_public_links, product_categories
+// and the AP reporting views) rather than the older/stale schema
+// (stock_items, uuid invoice ids, lowercase statuses) that the previous
+// generated file contained.
+//
+// Where a column set is fully known (from the SQL migrations or the
+// application's own `src/types/*` definitions) the columns are typed
+// explicitly. Every table/view also carries an index signature so that
+// additional live-DB columns that cannot be introspected from this repo
+// do not break compilation. To regenerate canonical types against the
+// live project run:
+//
+//   supabase gen types typescript --project-id <ref> > src/integrations/supabase/types.ts
+// =====================================================================
+
 export type Json =
   | string
   | number
@@ -5,6 +28,9 @@ export type Json =
   | null
   | { [key: string]: Json | undefined }
   | Json[]
+
+/** Index-signature escape hatch for columns not statically known in this repo. */
+type Extra = { [key: string]: any }
 
 export type Database = {
   // Allows to automatically instantiate createClient with right options
@@ -16,802 +42,718 @@ export type Database = {
     Tables: {
       categories: {
         Row: {
-          created_at: string
-          description: string | null
           id: string
           name: string
+          description: string | null
+          created_at: string
           updated_at: string
-        }
+        } & Extra
         Insert: {
-          created_at?: string
-          description?: string | null
           id?: string
           name: string
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
           description?: string | null
+          created_at?: string
+          updated_at?: string
+        } & Extra
+        Update: {
           id?: string
           name?: string
+          description?: string | null
+          created_at?: string
           updated_at?: string
-        }
+        } & Extra
         Relationships: []
       }
-      credit_note_items: {
+
+      product_categories: {
         Row: {
-          created_at: string
-          credit_note_id: string
-          description: string
-          id: string
-          quantity: number
-          stock_item_id: string | null
-          tax_rate: number | null
-          total: number
-          unit_price: number
-        }
-        Insert: {
-          created_at?: string
-          credit_note_id: string
-          description: string
-          id?: string
-          quantity?: number
-          stock_item_id?: string | null
-          tax_rate?: number | null
-          total: number
-          unit_price: number
-        }
-        Update: {
-          created_at?: string
-          credit_note_id?: string
-          description?: string
-          id?: string
-          quantity?: number
-          stock_item_id?: string | null
-          tax_rate?: number | null
-          total?: number
-          unit_price?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "credit_note_items_credit_note_id_fkey"
-            columns: ["credit_note_id"]
-            isOneToOne: false
-            referencedRelation: "credit_notes"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "credit_note_items_stock_item_id_fkey"
-            columns: ["stock_item_id"]
-            isOneToOne: false
-            referencedRelation: "stock_items"
-            referencedColumns: ["id"]
-          },
-        ]
+          id: number
+          name: string | null
+          description: string | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: { id?: number; name?: string | null } & Extra
+        Update: { id?: number; name?: string | null } & Extra
+        Relationships: []
       }
-      credit_notes: {
+
+      products: {
         Row: {
-          created_at: string
-          created_by: string | null
-          credit_note_number: string
-          customer_id: string
-          id: string
-          invoice_id: string | null
-          issue_date: string
-          reason: string | null
-          status: string
-          subtotal: number
-          tax_amount: number
-          total: number
-          updated_at: string
-        }
+          id: number
+          sku: string
+          name: string
+          description: string | null
+          units_per_box: number | null
+          bag_weight_kg: number | null
+          cost_price: number | null
+          selling_price: number
+          current_stock: number
+          reorder_level: number | null
+          is_active: boolean
+          image_url: string | null
+          item_code: string | null
+          category_id: number | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
         Insert: {
-          created_at?: string
-          created_by?: string | null
-          credit_note_number: string
-          customer_id: string
-          id?: string
-          invoice_id?: string | null
-          issue_date?: string
-          reason?: string | null
-          status?: string
-          subtotal?: number
-          tax_amount?: number
-          total?: number
-          updated_at?: string
-        }
+          id?: number
+          sku: string
+          name: string
+          description?: string | null
+          units_per_box?: number | null
+          bag_weight_kg?: number | null
+          cost_price?: number | null
+          selling_price: number
+          current_stock?: number
+          reorder_level?: number | null
+          is_active?: boolean
+          image_url?: string | null
+          item_code?: string | null
+          category_id?: number | null
+        } & Extra
         Update: {
-          created_at?: string
-          created_by?: string | null
-          credit_note_number?: string
-          customer_id?: string
-          id?: string
-          invoice_id?: string | null
-          issue_date?: string
-          reason?: string | null
-          status?: string
-          subtotal?: number
-          tax_amount?: number
-          total?: number
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "credit_notes_customer_id_fkey"
-            columns: ["customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "credit_notes_invoice_id_fkey"
-            columns: ["invoice_id"]
-            isOneToOne: false
-            referencedRelation: "invoices"
-            referencedColumns: ["id"]
-          },
-        ]
+          id?: number
+          sku?: string
+          name?: string
+          description?: string | null
+          units_per_box?: number | null
+          bag_weight_kg?: number | null
+          cost_price?: number | null
+          selling_price?: number
+          current_stock?: number
+          reorder_level?: number | null
+          is_active?: boolean
+          image_url?: string | null
+          item_code?: string | null
+          category_id?: number | null
+          updated_at?: string | null
+        } & Extra
+        Relationships: []
       }
+
       customers: {
         Row: {
+          id: number
+          name: string
+          phone: string | null
+          email: string | null
           address: string | null
-          balance: number | null
-          city: string | null
-          country: string | null
-          created_at: string
-          credit_limit: number | null
-          email: string | null
-          id: string
-          name: string
-          phone: string | null
-          tax_id: string | null
-          updated_at: string
-        }
+          opening_balance: number | null
+          client: string | null
+          customer_code: string | null
+          discount_percent: number | null
+          vat_no: string | null
+          brn: string | null
+          whatsapp: string | null
+          is_active: boolean
+          import_batch_id: string | null
+          import_source: string | null
+          client_name: string | null
+          whatsapp_template_invoice: string | null
+          whatsapp_template_statement: string | null
+          whatsapp_template_overdue: string | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
         Insert: {
-          address?: string | null
-          balance?: number | null
-          city?: string | null
-          country?: string | null
-          created_at?: string
-          credit_limit?: number | null
-          email?: string | null
-          id?: string
+          id?: number
           name: string
           phone?: string | null
-          tax_id?: string | null
-          updated_at?: string
-        }
-        Update: {
-          address?: string | null
-          balance?: number | null
-          city?: string | null
-          country?: string | null
-          created_at?: string
-          credit_limit?: number | null
           email?: string | null
-          id?: string
+          address?: string | null
+          opening_balance?: number | null
+          client?: string | null
+          customer_code?: string | null
+          discount_percent?: number | null
+          vat_no?: string | null
+          brn?: string | null
+          whatsapp?: string | null
+          is_active?: boolean
+          client_name?: string | null
+        } & Extra
+        Update: {
+          id?: number
           name?: string
           phone?: string | null
-          tax_id?: string | null
-          updated_at?: string
-        }
+          email?: string | null
+          address?: string | null
+          opening_balance?: number | null
+          is_active?: boolean
+        } & Extra
         Relationships: []
       }
-      invoice_items: {
-        Row: {
-          created_at: string
-          description: string
-          discount_percent: number | null
-          id: string
-          invoice_id: string
-          quantity: number
-          stock_item_id: string | null
-          tax_rate: number | null
-          total: number
-          unit_price: number
-        }
-        Insert: {
-          created_at?: string
-          description: string
-          discount_percent?: number | null
-          id?: string
-          invoice_id: string
-          quantity?: number
-          stock_item_id?: string | null
-          tax_rate?: number | null
-          total: number
-          unit_price: number
-        }
-        Update: {
-          created_at?: string
-          description?: string
-          discount_percent?: number | null
-          id?: string
-          invoice_id?: string
-          quantity?: number
-          stock_item_id?: string | null
-          tax_rate?: number | null
-          total?: number
-          unit_price?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "invoice_items_invoice_id_fkey"
-            columns: ["invoice_id"]
-            isOneToOne: false
-            referencedRelation: "invoices"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "invoice_items_stock_item_id_fkey"
-            columns: ["stock_item_id"]
-            isOneToOne: false
-            referencedRelation: "stock_items"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      invoices: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          customer_id: string | null
-          discount_amount: number
-          due_date: string | null
-          id: string
-          invoice_number: string
-          issue_date: string
-          notes: string | null
-          paid_amount: number
-          status: string
-          subtotal: number
-          tax_amount: number
-          total: number
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          customer_id?: string | null
-          discount_amount?: number
-          due_date?: string | null
-          id?: string
-          invoice_number: string
-          issue_date?: string
-          notes?: string | null
-          paid_amount?: number
-          status?: string
-          subtotal?: number
-          tax_amount?: number
-          total?: number
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          customer_id?: string | null
-          discount_amount?: number
-          due_date?: string | null
-          id?: string
-          invoice_number?: string
-          issue_date?: string
-          notes?: string | null
-          paid_amount?: number
-          status?: string
-          subtotal?: number
-          tax_amount?: number
-          total?: number
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "invoices_customer_id_fkey"
-            columns: ["customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      payments: {
-        Row: {
-          amount: number
-          created_at: string
-          created_by: string | null
-          customer_id: string | null
-          id: string
-          invoice_id: string | null
-          notes: string | null
-          payment_date: string
-          payment_method: string | null
-          reference: string | null
-        }
-        Insert: {
-          amount: number
-          created_at?: string
-          created_by?: string | null
-          customer_id?: string | null
-          id?: string
-          invoice_id?: string | null
-          notes?: string | null
-          payment_date?: string
-          payment_method?: string | null
-          reference?: string | null
-        }
-        Update: {
-          amount?: number
-          created_at?: string
-          created_by?: string | null
-          customer_id?: string | null
-          id?: string
-          invoice_id?: string | null
-          notes?: string | null
-          payment_date?: string
-          payment_method?: string | null
-          reference?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "payments_customer_id_fkey"
-            columns: ["customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payments_invoice_id_fkey"
-            columns: ["invoice_id"]
-            isOneToOne: false
-            referencedRelation: "invoices"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      profiles: {
-        Row: {
-          avatar_url: string | null
-          created_at: string
-          email: string | null
-          full_name: string | null
-          id: string
-          phone: string | null
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          avatar_url?: string | null
-          created_at?: string
-          email?: string | null
-          full_name?: string | null
-          id?: string
-          phone?: string | null
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          avatar_url?: string | null
-          created_at?: string
-          email?: string | null
-          full_name?: string | null
-          id?: string
-          phone?: string | null
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
-      quotation_items: {
-        Row: {
-          created_at: string
-          description: string
-          discount_percent: number | null
-          id: string
-          quantity: number
-          quotation_id: string
-          stock_item_id: string | null
-          tax_rate: number | null
-          total: number
-          unit_price: number
-        }
-        Insert: {
-          created_at?: string
-          description: string
-          discount_percent?: number | null
-          id?: string
-          quantity?: number
-          quotation_id: string
-          stock_item_id?: string | null
-          tax_rate?: number | null
-          total: number
-          unit_price: number
-        }
-        Update: {
-          created_at?: string
-          description?: string
-          discount_percent?: number | null
-          id?: string
-          quantity?: number
-          quotation_id?: string
-          stock_item_id?: string | null
-          tax_rate?: number | null
-          total?: number
-          unit_price?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "quotation_items_quotation_id_fkey"
-            columns: ["quotation_id"]
-            isOneToOne: false
-            referencedRelation: "quotations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "quotation_items_stock_item_id_fkey"
-            columns: ["stock_item_id"]
-            isOneToOne: false
-            referencedRelation: "stock_items"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      quotations: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          customer_id: string | null
-          discount_amount: number
-          id: string
-          issue_date: string
-          notes: string | null
-          quotation_number: string
-          status: string
-          subtotal: number
-          tax_amount: number
-          total: number
-          updated_at: string
-          valid_until: string | null
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          customer_id?: string | null
-          discount_amount?: number
-          id?: string
-          issue_date?: string
-          notes?: string | null
-          quotation_number: string
-          status?: string
-          subtotal?: number
-          tax_amount?: number
-          total?: number
-          updated_at?: string
-          valid_until?: string | null
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          customer_id?: string | null
-          discount_amount?: number
-          id?: string
-          issue_date?: string
-          notes?: string | null
-          quotation_number?: string
-          status?: string
-          subtotal?: number
-          tax_amount?: number
-          total?: number
-          updated_at?: string
-          valid_until?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "quotations_customer_id_fkey"
-            columns: ["customer_id"]
-            isOneToOne: false
-            referencedRelation: "customers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      stock_items: {
-        Row: {
-          category_id: string | null
-          cost_price: number
-          created_at: string
-          description: string | null
-          id: string
-          name: string
-          quantity: number
-          reorder_level: number | null
-          sku: string | null
-          unit_price: number
-          updated_at: string
-        }
-        Insert: {
-          category_id?: string | null
-          cost_price?: number
-          created_at?: string
-          description?: string | null
-          id?: string
-          name: string
-          quantity?: number
-          reorder_level?: number | null
-          sku?: string | null
-          unit_price?: number
-          updated_at?: string
-        }
-        Update: {
-          category_id?: string | null
-          cost_price?: number
-          created_at?: string
-          description?: string | null
-          id?: string
-          name?: string
-          quantity?: number
-          reorder_level?: number | null
-          sku?: string | null
-          unit_price?: number
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "stock_items_category_id_fkey"
-            columns: ["category_id"]
-            isOneToOne: false
-            referencedRelation: "categories"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      stock_movements: {
-        Row: {
-          created_at: string
-          created_by: string | null
-          id: string
-          movement_type: string
-          notes: string | null
-          quantity: number
-          reference_id: string | null
-          reference_type: string | null
-          stock_item_id: string
-        }
-        Insert: {
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          movement_type: string
-          notes?: string | null
-          quantity: number
-          reference_id?: string | null
-          reference_type?: string | null
-          stock_item_id: string
-        }
-        Update: {
-          created_at?: string
-          created_by?: string | null
-          id?: string
-          movement_type?: string
-          notes?: string | null
-          quantity?: number
-          reference_id?: string | null
-          reference_type?: string | null
-          stock_item_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "stock_movements_stock_item_id_fkey"
-            columns: ["stock_item_id"]
-            isOneToOne: false
-            referencedRelation: "stock_items"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
+
       suppliers: {
         Row: {
+          id: number
+          name: string
+          email: string | null
+          phone: string | null
           address: string | null
-          balance: number | null
           city: string | null
           country: string | null
-          created_at: string
-          email: string | null
-          id: string
-          name: string
-          phone: string | null
           tax_id: string | null
-          updated_at: string
-        }
-        Insert: {
-          address?: string | null
-          balance?: number | null
-          city?: string | null
-          country?: string | null
-          created_at?: string
-          email?: string | null
-          id?: string
-          name: string
-          phone?: string | null
-          tax_id?: string | null
-          updated_at?: string
-        }
-        Update: {
-          address?: string | null
-          balance?: number | null
-          city?: string | null
-          country?: string | null
-          created_at?: string
-          email?: string | null
-          id?: string
-          name?: string
-          phone?: string | null
-          tax_id?: string | null
-          updated_at?: string
-        }
+          vat_no: string | null
+          brn: string | null
+          whatsapp: string | null
+          opening_balance: number | null
+          balance: number | null
+          is_active: boolean
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: { id?: number; name: string } & Extra
+        Update: { id?: number; name?: string } & Extra
         Relationships: []
       }
+
+      invoices: {
+        Row: {
+          id: number
+          invoice_number: string
+          customer_id: number | null
+          invoice_date: string
+          due_date: string | null
+          subtotal: number
+          vat_amount: number
+          total_amount: number
+          status: string
+          amount_paid: number
+          previous_balance: number | null
+          balance_remaining: number | null
+          balance_due: number | null
+          credits_applied: number | null
+          notes: string | null
+          vat_percent: number | null
+          discount_percent: number | null
+          discount_amount: number | null
+          sales_rep: string | null
+          sales_rep_phone: string | null
+          gross_total: number | null
+          purchase_order_no: string | null
+          total_excl_vat: number | null
+          total_incl_vat: number | null
+          stock_deducted_at: string | null
+          invoice_year: number | null
+          invoice_seq: number | null
+          public_token: string | null
+          created_by: string | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: {
+          id?: number
+          invoice_number?: string
+          customer_id?: number | null
+          invoice_date?: string
+          due_date?: string | null
+          subtotal?: number
+          vat_amount?: number
+          total_amount?: number
+          status?: string
+          amount_paid?: number
+          notes?: string | null
+        } & Extra
+        Update: {
+          id?: number
+          invoice_number?: string
+          customer_id?: number | null
+          invoice_date?: string
+          due_date?: string | null
+          subtotal?: number
+          vat_amount?: number
+          total_amount?: number
+          status?: string
+          amount_paid?: number
+          balance_remaining?: number | null
+          balance_due?: number | null
+          credits_applied?: number | null
+          notes?: string | null
+          updated_at?: string | null
+        } & Extra
+        Relationships: []
+      }
+
+      invoice_items: {
+        Row: {
+          id: number
+          invoice_id: number
+          product_id: number | null
+          description: string | null
+          box_qty: number | null
+          pcs_qty: number | null
+          uom: string | null
+          units_per_box: number | null
+          total_qty: number | null
+          unit_price_excl_vat: number | null
+          unit_vat: number | null
+          unit_price_incl_vat: number | null
+          vat_rate: number | null
+          line_total: number | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: {
+          id?: number
+          invoice_id: number
+          product_id?: number | null
+          description?: string | null
+        } & Extra
+        Update: { id?: number } & Extra
+        Relationships: []
+      }
+
+      invoice_payments: {
+        Row: {
+          id: string
+          invoice_id: number
+          invoice_id_bigint: number | null
+          payment_date: string
+          amount: number
+          method: string
+          reference: string | null
+          notes: string | null
+          is_auto: boolean | null
+          created_at: string | null
+        } & Extra
+        Insert: {
+          id?: string
+          invoice_id: number
+          invoice_id_bigint?: number | null
+          payment_date?: string
+          amount: number
+          method: string
+          reference?: string | null
+          notes?: string | null
+          is_auto?: boolean | null
+        } & Extra
+        Update: {
+          id?: string
+          payment_date?: string
+          amount?: number
+          method?: string
+          reference?: string | null
+          notes?: string | null
+          is_auto?: boolean | null
+        } & Extra
+        Relationships: []
+      }
+
+      payments: {
+        Row: {
+          id: string
+          invoice_id: string | null
+          customer_id: string | null
+          amount: number
+          payment_date: string
+          payment_method: string
+          reference: string | null
+          notes: string | null
+          created_by: string | null
+          created_at: string
+        } & Extra
+        Insert: { id?: string; amount: number } & Extra
+        Update: { id?: string } & Extra
+        Relationships: []
+      }
+
+      credit_notes: {
+        Row: {
+          id: number
+          credit_note_number: string
+          invoice_id: number | null
+          customer_id: number | null
+          issue_date: string | null
+          credit_note_date: string | null
+          subtotal: number | null
+          vat_amount: number | null
+          tax_amount: number | null
+          total: number | null
+          total_amount: number | null
+          status: string
+          reason: string | null
+          notes: string | null
+          public_token: string | null
+          created_by: string | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: {
+          id?: number
+          credit_note_number?: string
+          invoice_id?: number | null
+          customer_id?: number | null
+          status?: string
+          reason?: string | null
+        } & Extra
+        Update: {
+          id?: number
+          status?: string
+          reason?: string | null
+          public_token?: string | null
+          updated_at?: string | null
+        } & Extra
+        Relationships: []
+      }
+
+      credit_note_items: {
+        Row: {
+          id: number
+          credit_note_id: number
+          product_id: number | null
+          stock_item_id: string | null
+          description: string | null
+          quantity: number | null
+          unit_price: number | null
+          tax_rate: number | null
+          total: number | null
+          created_at: string | null
+        } & Extra
+        Insert: { id?: number; credit_note_id: number } & Extra
+        Update: { id?: number } & Extra
+        Relationships: []
+      }
+
+      credit_note_public_links: {
+        Row: {
+          id: string
+          credit_note_id: number
+          token: string
+          created_at: string | null
+          expires_at: string | null
+        } & Extra
+        Insert: { credit_note_id: number; token?: string } & Extra
+        Update: Extra
+        Relationships: []
+      }
+
+      quotations: {
+        Row: {
+          id: number
+          quotation_number: string | null
+          customer_id: number | null
+          quotation_date: string | null
+          valid_until: string | null
+          subtotal: number | null
+          vat_percent: number | null
+          vat_amount: number | null
+          discount_percent: number | null
+          discount_amount: number | null
+          total_amount: number | null
+          status: string | null
+          notes: string | null
+          sales_rep: string | null
+          sales_rep_phone: string | null
+          customer_name: string | null
+          customer_code: string | null
+          converted_invoice_id: number | null
+          converted_at: string | null
+          public_token: string | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: { id?: number; quotation_number?: string | null } & Extra
+        Update: { id?: number; status?: string | null } & Extra
+        Relationships: []
+      }
+
+      quotation_items: {
+        Row: {
+          id: number
+          quotation_id: number
+          product_id: number | null
+          description: string | null
+          uom: string | null
+          box_qty: number | null
+          pcs_qty: number | null
+          grams_qty: number | null
+          bags_qty: number | null
+          units_per_box: number | null
+          total_qty: number | null
+          base_unit_price_excl_vat: number | null
+          vat_rate: number | null
+          price_overridden: boolean | null
+          unit_price_excl_vat: number | null
+          unit_vat: number | null
+          unit_price_incl_vat: number | null
+          line_total: number | null
+          created_at: string | null
+        } & Extra
+        Insert: { id?: number; quotation_id: number } & Extra
+        Update: { id?: number } & Extra
+        Relationships: []
+      }
+
+      quotation_public_links: {
+        Row: {
+          id: string
+          quotation_id: number
+          token: string
+          created_at: string | null
+          expires_at: string | null
+        } & Extra
+        Insert: { quotation_id: number; token?: string } & Extra
+        Update: Extra
+        Relationships: []
+      }
+
+      stock_movements: {
+        Row: {
+          id: number
+          product_id: number | null
+          stock_item_id: string | null
+          movement_type: string
+          quantity: number
+          reference_type: string | null
+          reference_id: string | null
+          notes: string | null
+          created_by: string | null
+          created_at: string | null
+        } & Extra
+        Insert: { id?: number; movement_type: string; quantity: number } & Extra
+        Update: { id?: number } & Extra
+        Relationships: []
+      }
+
+      supplier_bills: {
+        Row: {
+          id: number
+          supplier_id: number | null
+          bill_number: string | null
+          bill_date: string | null
+          due_date: string | null
+          subtotal: number | null
+          vat_amount: number | null
+          total_amount: number | null
+          amount_paid: number | null
+          balance_due: number | null
+          status: string | null
+          notes: string | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: { id?: number; supplier_id?: number | null } & Extra
+        Update: { id?: number; status?: string | null } & Extra
+        Relationships: []
+      }
+
+      supplier_payments: {
+        Row: {
+          id: number
+          supplier_id: number | null
+          payment_date: string | null
+          amount: number | null
+          method: string | null
+          reference: string | null
+          notes: string | null
+          created_at: string | null
+        } & Extra
+        Insert: { id?: number; supplier_id?: number | null; amount?: number | null } & Extra
+        Update: { id?: number } & Extra
+        Relationships: []
+      }
+
+      supplier_payment_allocations: {
+        Row: {
+          id: number
+          payment_id: number
+          bill_id: number
+          amount_applied: number
+          created_at: string | null
+        } & Extra
+        Insert: {
+          payment_id: number
+          bill_id: number
+          amount_applied: number
+        } & Extra
+        Update: { id?: number } & Extra
+        Relationships: []
+      }
+
+      rp_users: {
+        Row: {
+          id: string
+          user_id: string | null
+          username: string | null
+          full_name: string | null
+          email: string | null
+          is_active: boolean | null
+          created_at: string | null
+          updated_at: string | null
+        } & Extra
+        Insert: { id?: string; username?: string | null } & Extra
+        Update: { id?: string; is_active?: boolean | null } & Extra
+        Relationships: []
+      }
+
+      user_activity: {
+        Row: {
+          id: string
+          user_id: string | null
+          action: string | null
+          detail: string | null
+          created_at: string | null
+        } & Extra
+        Insert: { user_id?: string | null; action?: string | null } & Extra
+        Update: Extra
+        Relationships: []
+      }
+
+      audit_logs: {
+        Row: {
+          id: string
+          entity_table: string | null
+          entity_id: string | number | null
+          action: string | null
+          actor: string | null
+          payload: Json | null
+          created_at: string | null
+        } & Extra
+        Insert: { entity_table?: string | null; entity_id?: string | null } & Extra
+        Update: Extra
+        Relationships: []
+      }
+
+      qr_logins: {
+        Row: {
+          id: string
+          token: string
+          status: string | null
+          user_id: string | null
+          created_at: string | null
+          expires_at: string | null
+          approved_at: string | null
+        } & Extra
+        Insert: { token: string; status?: string | null } & Extra
+        Update: { status?: string | null; approved_at?: string | null } & Extra
+        Relationships: []
+      }
+
+      docs: {
+        Row: {
+          id: string
+          kind: string | null
+          ref_id: string | null
+          token: string | null
+          created_at: string | null
+        } & Extra
+        Insert: Extra
+        Update: Extra
+        Relationships: []
+      }
+
+      profiles: {
+        Row: {
+          id: string
+          user_id: string
+          full_name: string | null
+          email: string | null
+          phone: string | null
+          avatar_url: string | null
+          created_at: string
+          updated_at: string
+        } & Extra
+        Insert: { id?: string; user_id: string } & Extra
+        Update: { id?: string } & Extra
+        Relationships: []
+      }
+
       user_roles: {
         Row: {
-          created_at: string
           id: string
-          role: Database["public"]["Enums"]["app_role"]
           user_id: string
-        }
+          role: Database["public"]["Enums"]["app_role"]
+          created_at: string
+        } & Extra
         Insert: {
-          created_at?: string
           id?: string
-          role: Database["public"]["Enums"]["app_role"]
           user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          role?: Database["public"]["Enums"]["app_role"]
-          user_id?: string
-        }
+          role: Database["public"]["Enums"]["app_role"]
+        } & Extra
+        Update: { id?: string } & Extra
         Relationships: []
       }
     }
+
     Views: {
-      [_ in never]: never
+      v_supplier_aging: {
+        Row: {
+          supplier_id: number | null
+          supplier_name: string | null
+          current: number | null
+          d30: number | null
+          d60: number | null
+          d90: number | null
+          older: number | null
+          total_due: number | null
+        } & Extra
+        Relationships: []
+      }
+      v_supplier_balances: {
+        Row: {
+          supplier_id: number | null
+          supplier_name: string | null
+          balance: number | null
+        } & Extra
+        Relationships: []
+      }
+      v_supplier_ledger_lines: {
+        Row: Extra
+        Relationships: []
+      }
+      v_ap_kpis: {
+        Row: {
+          total_outstanding: number | null
+          bills_count: number | null
+          overdue_amount: number | null
+        } & Extra
+        Relationships: []
+      }
+      v_ap_top_exposure_suppliers: {
+        Row: {
+          supplier_id: number | null
+          supplier_name: string | null
+          exposure: number | null
+        } & Extra
+        Relationships: []
+      }
+      v_customer_account_transactions: {
+        Row: Extra
+        Relationships: []
+      }
+      v_sales_rep_transactions: {
+        Row: Extra
+        Relationships: []
+      }
     }
+
     Functions: {
-      generate_credit_note_number: { Args: never; Returns: string }
-      generate_invoice_number: { Args: never; Returns: string }
-      generate_quotation_number: { Args: never; Returns: string }
+      rotate_invoice_public_token: {
+        Args: { p_invoice_id: number } | { [key: string]: any }
+        Returns: any
+      }
       has_role: {
-        Args: {
-          _role: Database["public"]["Enums"]["app_role"]
-          _user_id: string
-        }
+        Args: { _user_id: string; _role: Database["public"]["Enums"]["app_role"] }
         Returns: boolean
       }
-      is_employee: { Args: { _user_id: string }; Returns: boolean }
+      is_employee: {
+        Args: { _user_id: string }
+        Returns: boolean
+      }
+      generate_invoice_number: { Args: Record<string, never>; Returns: string }
+      generate_credit_note_number: { Args: Record<string, never>; Returns: string }
+      generate_quotation_number: { Args: Record<string, never>; Returns: string }
     }
+
     Enums: {
       app_role: "admin" | "manager" | "accountant" | "sales" | "viewer"
     }
-    CompositeTypes: {
-      [_ in never]: never
-    }
+
+    CompositeTypes: Record<string, never>
   }
 }
-
-type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
-
-type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
-
-export type Tables<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
-      Row: infer R
-    }
-    ? R
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R
-      }
-      ? R
-      : never
-    : never
-
-export type TablesInsert<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
-    }
-    ? I
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
-      }
-      ? I
-      : never
-    : never
-
-export type TablesUpdate<
-  DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
-    }
-    ? U
-    : never
-  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
-      }
-      ? U
-      : never
-    : never
-
-export type Enums<
-  DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
-> = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
-
-export type CompositeTypes<
-  PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
-  }
-    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
-> = PublicCompositeTypeNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
-}
-  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
-  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
-    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never
 
 export const Constants = {
   public: {

@@ -257,48 +257,56 @@ function KpiCard({
   sub,
   icon: Icon,
   tone = "default",
+  kind = "money",
 }: {
   title: string;
   value: string;
   sub?: string;
   icon: React.ComponentType<{ className?: string }>;
   tone?: "default" | "good" | "warn" | "bad" | "info";
+  kind?: "money" | "count";
 }) {
   const toneRing =
     tone === "good"
-      ? "bg-emerald-500/12 text-emerald-800 dark:text-emerald-200"
+      ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-200"
       : tone === "warn"
-      ? "bg-amber-500/12 text-amber-900 dark:text-amber-200"
+      ? "bg-amber-500/12 text-amber-800 dark:text-amber-200"
       : tone === "bad"
-      ? "bg-rose-500/12 text-rose-800 dark:text-rose-200"
+      ? "bg-rose-500/12 text-rose-700 dark:text-rose-200"
       : tone === "info"
-      ? "bg-sky-500/12 text-sky-900 dark:text-sky-200"
+      ? "bg-sky-500/12 text-sky-700 dark:text-sky-200"
       : "bg-primary/10 text-primary";
 
-  return (
-    <Card className="rp-card overflow-hidden">
-      <div className="p-4 sm:p-5 flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="rp-label">{title}</div>
+  const display = kind === "money" ? String(value).replace(/^Rs\s*/i, "") : value;
 
-          <div className="mt-2 flex items-baseline gap-2 min-w-0">
-            <span className="text-[12px] font-black text-muted-foreground">Rs</span>
-            <span
-              className={cn(
-                "tabular-nums font-extrabold text-foreground whitespace-nowrap leading-[1.05]",
-                "text-[clamp(16px,1.25vw,22px)]"
-              )}
-              title={value}
-            >
-              {String(value).replace(/^Rs\s*/i, "")}
-            </span>
+  return (
+    <Card className="rp-card h-full overflow-hidden">
+      <div className="flex h-full items-start justify-between gap-2.5 p-4">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="rp-label truncate" title={title}>
+            {title}
           </div>
 
-          {sub ? <div className="mt-1 text-xs text-muted-foreground">{sub}</div> : null}
+          {/* Full figure on one line — never truncated; scales down to fit */}
+          <div
+            className="mt-2 flex items-baseline gap-1 whitespace-nowrap font-extrabold leading-[1.05] tabular-nums text-foreground text-[clamp(13px,1.15vw,20px)]"
+            title={kind === "money" ? `Rs ${display}` : display}
+          >
+            {kind === "money" ? (
+              <span className="text-[0.62em] font-black text-muted-foreground">Rs</span>
+            ) : null}
+            <span>{display}</span>
+          </div>
+
+          {sub ? (
+            <div className="mt-auto pt-1.5 text-[11px] text-muted-foreground truncate" title={sub}>
+              {sub}
+            </div>
+          ) : null}
         </div>
 
-        <div className={cn("h-11 w-11 rounded-2xl grid place-items-center shrink-0", toneRing)}>
-          <Icon className="h-5 w-5" />
+        <div className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-2xl", toneRing)}>
+          <Icon className="h-[18px] w-[18px]" />
         </div>
       </div>
     </Card>
@@ -731,326 +739,231 @@ function printSelected() {
   return (
     <div className="rp-page">
       <style>{`
-/* =========================
-   INVOICES — EXECUTIVE PREMIUM
-========================= */
+/* =====================================================================
+   INVOICES — PREMIUM ERP REGISTER (visual only; logic unchanged)
+   ===================================================================== */
 
 .rp-page{
   width:100%;
   max-width:1480px;
   margin:0 auto;
-  padding:18px 22px 28px 22px;
+  padding:20px 24px 32px;
   display:flex;
   flex-direction:column;
-  gap:16px;
-  overflow-x:hidden;
+  gap:18px;
 }
 
-.rp-bg{
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  z-index:-10;
-}
+/* Ambient canvas */
+.rp-bg{ position:fixed; inset:0; pointer-events:none; z-index:-10; }
 .rp-bg::before{
   content:"";
-  position:absolute;
-  inset:0;
+  position:absolute; inset:0;
   background:
-    radial-gradient(circle at 14% 12%, rgba(185,28,28,.10), transparent 55%),
-    radial-gradient(circle at 88% 10%, rgba(2,6,23,.06), transparent 50%),
-    linear-gradient(to bottom, rgba(248,250,252,1), rgba(255,255,255,1));
+    radial-gradient(900px 420px at 12% -8%, rgba(190,18,60,.07), transparent 60%),
+    radial-gradient(820px 380px at 92% -10%, rgba(15,23,42,.05), transparent 55%),
+    linear-gradient(180deg, #f8fafc 0%, #ffffff 38%);
 }
 :root.dark .rp-bg::before{
   background:
-    radial-gradient(circle at 14% 12%, rgba(185,28,28,.22), transparent 55%),
-    radial-gradient(circle at 88% 10%, rgba(255,255,255,.06), transparent 50%),
-    linear-gradient(to bottom, rgba(2,6,23,.85), rgba(2,6,23,.60));
+    radial-gradient(900px 420px at 12% -8%, rgba(244,63,94,.16), transparent 60%),
+    radial-gradient(820px 380px at 92% -10%, rgba(255,255,255,.05), transparent 55%),
+    linear-gradient(180deg, rgba(2,6,23,.92), rgba(2,6,23,.72));
 }
 
-html, body, #root{
-  border:none !important;
-  outline:none !important;
-  box-shadow:none !important;
-}
-
+/* Surfaces */
 .rp-card{
-  border:none !important;
-  outline:none !important;
-  border-radius:18px;
-  background:linear-gradient(to bottom, rgba(255,255,255,.97), rgba(255,255,255,.91));
+  position:relative;
+  border:1px solid rgba(15,23,42,.06) !important;
+  border-radius:20px;
+  background:#ffffff;
   box-shadow:
-    0 16px 42px rgba(2,6,23,.06),
-    0 1px 0 rgba(255,255,255,.70) inset;
+    0 1px 2px rgba(15,23,42,.04),
+    0 18px 40px -28px rgba(15,23,42,.28);
 }
 :root.dark .rp-card{
-  background:linear-gradient(to bottom, rgba(2,6,23,.82), rgba(2,6,23,.62));
-  box-shadow:0 18px 55px rgba(0,0,0,.45);
+  border-color:rgba(255,255,255,.06) !important;
+  background:linear-gradient(180deg, rgba(15,23,42,.86), rgba(15,23,42,.66));
+  box-shadow:0 22px 60px -30px rgba(0,0,0,.6);
 }
 
 .rp-label{
-  font-size:11px;
-  font-weight:800;
-  letter-spacing:.10em;
+  font-size:10.5px;
+  font-weight:700;
+  letter-spacing:.14em;
   text-transform:uppercase;
-  color:rgba(15,23,42,.60);
+  color:rgba(15,23,42,.50);
 }
-:root.dark .rp-label{ color:rgba(226,232,240,.60); }
+:root.dark .rp-label{ color:rgba(226,232,240,.55); }
 
+/* Hero header */
 .rp-hero{
-  border-radius:18px;
-  padding:16px 18px;
+  position:relative;
+  border:1px solid rgba(15,23,42,.06);
+  border-radius:22px;
+  padding:22px 24px;
+  overflow:hidden;
   background:
-    radial-gradient(circle at 18% 22%, rgba(185,28,28,.10), transparent 52%),
-    radial-gradient(circle at 72% 30%, rgba(2,6,23,.06), transparent 50%),
-    linear-gradient(to bottom, rgba(255,255,255,.94), rgba(255,255,255,.86));
+    radial-gradient(620px 300px at 0% 0%, rgba(190,18,60,.06), transparent 60%),
+    linear-gradient(180deg, #ffffff, #fcfdfe);
   box-shadow:
-    0 12px 34px rgba(2,6,23,.06),
-    0 1px 0 rgba(255,255,255,.70) inset;
+    0 1px 2px rgba(15,23,42,.04),
+    0 20px 48px -32px rgba(15,23,42,.3);
+}
+.rp-hero::after{
+  content:"";
+  position:absolute; left:0; top:0; bottom:0; width:4px;
+  background:linear-gradient(180deg, #e11d48, #9f1239);
 }
 :root.dark .rp-hero{
+  border-color:rgba(255,255,255,.06);
   background:
-    radial-gradient(circle at 18% 22%, rgba(185,28,28,.20), transparent 52%),
-    radial-gradient(circle at 72% 30%, rgba(255,255,255,.06), transparent 50%),
-    linear-gradient(to bottom, rgba(2,6,23,.78), rgba(2,6,23,.56));
+    radial-gradient(620px 300px at 0% 0%, rgba(244,63,94,.14), transparent 60%),
+    linear-gradient(180deg, rgba(15,23,42,.82), rgba(15,23,42,.6));
 }
 
-.rp-searchShell{
-  position:relative;
-  min-width:320px;
-  flex:1 1 520px;
-}
-
+/* Search */
+.rp-searchShell{ position:relative; min-width:300px; flex:1 1 520px; }
 .rp-searchIcon{
-  position:absolute;
-  left:14px;
-  top:50%;
-  transform:translateY(-50%);
-  color:rgba(15,23,42,.45);
+  position:absolute; left:14px; top:50%; transform:translateY(-50%);
+  color:rgba(15,23,42,.42); pointer-events:none;
 }
-
 .rp-searchInput{
   height:46px !important;
   padding-left:42px !important;
-  padding-right:48px !important;
-  border:none !important;
-  outline:none !important;
-  border-radius:15px !important;
-  background:linear-gradient(to bottom, rgba(255,255,255,.98), rgba(248,250,252,.96)) !important;
-  box-shadow:
-    0 12px 28px rgba(2,6,23,.04),
-    0 0 0 1px rgba(148,163,184,.20) inset !important;
+  padding-right:46px !important;
+  border:1px solid rgba(15,23,42,.10) !important;
+  border-radius:14px !important;
+  background:#fff !important;
+  font-weight:500;
+  box-shadow:0 1px 2px rgba(15,23,42,.04) !important;
+  transition:border-color .15s ease, box-shadow .15s ease, background .15s ease;
 }
 .rp-searchInput:focus{
-  box-shadow:
-    0 12px 28px rgba(2,6,23,.06),
-    0 0 0 2px rgba(185,28,28,.18) inset !important;
+  border-color:rgba(225,29,72,.45) !important;
+  box-shadow:0 0 0 4px rgba(225,29,72,.12) !important;
+}
+:root.dark .rp-searchInput{
+  border-color:rgba(255,255,255,.10) !important;
+  background:rgba(2,6,23,.5) !important;
 }
 
 .rp-clearBtn{
-  position:absolute;
-  right:10px;
-  top:50%;
-  transform:translateY(-50%);
-  height:28px;
-  width:28px;
-  border:none;
-  outline:none;
-  border-radius:999px;
-  display:grid;
-  place-items:center;
-  background:rgba(2,6,23,.05);
-  color:rgba(15,23,42,.70);
+  position:absolute; right:10px; top:50%; transform:translateY(-50%);
+  height:28px; width:28px; border:0; border-radius:999px;
+  display:grid; place-items:center;
+  background:rgba(15,23,42,.06); color:rgba(15,23,42,.6);
+  transition:background .15s ease, color .15s ease;
 }
-:root.dark .rp-clearBtn{
-  background:rgba(255,255,255,.08);
-  color:rgba(226,232,240,.80);
-}
+.rp-clearBtn:hover{ background:rgba(225,29,72,.12); color:#9f1239; }
+:root.dark .rp-clearBtn{ background:rgba(255,255,255,.08); color:rgba(226,232,240,.8); }
 
+/* Filter + bulk bars */
 .rp-filterRow{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  align-items:center;
-  padding:14px;
+  display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:16px;
 }
-
 .rp-bulkBar{
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  align-items:center;
-  padding:14px;
-  border-top:1px solid rgba(148,163,184,.12);
+  display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+  padding:14px 16px; border-top:1px solid rgba(15,23,42,.06);
+  background:rgba(15,23,42,.015);
+  border-bottom-left-radius:20px; border-bottom-right-radius:20px;
 }
+:root.dark .rp-bulkBar{ border-top-color:rgba(255,255,255,.06); background:rgba(255,255,255,.02); }
 
 .rp-bulkTag{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  border-radius:999px;
-  padding:8px 12px;
-  background:rgba(185,28,28,.08);
-  color:rgba(127,29,29,1);
-  font-size:12px;
-  font-weight:800;
+  display:inline-flex; align-items:center; gap:8px;
+  border-radius:999px; padding:8px 13px;
+  background:rgba(225,29,72,.08); color:#9f1239;
+  font-size:12px; font-weight:700;
+  border:1px solid rgba(225,29,72,.14);
 }
-:root.dark .rp-bulkTag{
-  background:rgba(239,68,68,.16);
-  color:rgba(254,202,202,1);
-}
+:root.dark .rp-bulkTag{ background:rgba(244,63,94,.16); color:rgba(254,205,211,1); border-color:rgba(244,63,94,.22); }
 
-.rp-tableShell{
-  overflow:hidden;
-}
-
-.rp-table, .rp-table *{
-  border:none !important;
-  outline:none !important;
-  box-shadow:none !important;
-}
-
+/* Table */
+.rp-tableShell{ overflow:hidden; }
 .rp-table{
-  width:100%;
-  table-layout:fixed;
-  border-collapse:separate;
-  border-spacing:0;
+  width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0;
 }
-
 .rp-thead th{
-  padding:12px 14px;
-  font-size:11px;
-  font-weight:900;
-  letter-spacing:.12em;
-  text-transform:uppercase;
-  color:rgba(15,23,42,.60);
-  background:rgba(2,6,23,.02);
+  padding:13px 16px;
+  font-size:10.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase;
+  color:rgba(15,23,42,.5);
+  background:rgba(15,23,42,.025);
+  border-bottom:1px solid rgba(15,23,42,.06);
+  text-align:left;
 }
-:root.dark .rp-thead th{
-  color:rgba(226,232,240,.60);
-  background:rgba(255,255,255,.05);
-}
+.rp-thead th:first-child{ border-top-left-radius:0; }
+:root.dark .rp-thead th{ color:rgba(226,232,240,.55); background:rgba(255,255,255,.04); border-bottom-color:rgba(255,255,255,.06); }
 
+.rp-row{ transition:background .12s ease, box-shadow .12s ease; }
 .rp-row td{
-  padding:12px 14px;
+  padding:14px 16px;
+  background:#fff;
+  border-top:1px solid rgba(15,23,42,.05);
+  border-bottom:1px solid rgba(15,23,42,.05);
+  vertical-align:middle;
 }
-.rp-row{
-  background:transparent;
-  transition:background .12s ease, transform .12s ease;
-}
-.rp-row:hover{
-  background:rgba(2,6,23,.02);
-}
-:root.dark .rp-row:hover{
-  background:rgba(255,255,255,.04);
-}
+.rp-row td:first-child{ border-left:1px solid rgba(15,23,42,.05); border-top-left-radius:14px; border-bottom-left-radius:14px; }
+.rp-row td:last-child{ border-right:1px solid rgba(15,23,42,.05); border-top-right-radius:14px; border-bottom-right-radius:14px; }
+:root.dark .rp-row td{ background:rgba(15,23,42,.5); border-color:rgba(255,255,255,.05); }
 
-.rp-row.is-highlight{
-  background:rgba(185,28,28,.07);
-}
-:root.dark .rp-row.is-highlight{
-  background:rgba(239,68,68,.12);
-}
+.rp-row:hover td{ background:rgba(225,29,72,.035); }
+:root.dark .rp-row:hover td{ background:rgba(244,63,94,.08); }
 
-.rp-gapRow td{
-  padding:0;
-  height:8px;
-}
+.rp-row.is-highlight td{ background:rgba(225,29,72,.08); box-shadow:inset 0 0 0 1px rgba(225,29,72,.25); }
+:root.dark .rp-row.is-highlight td{ background:rgba(244,63,94,.14); }
 
+.rp-gapRow td{ padding:0; height:10px; background:transparent !important; border:0 !important; }
+
+/* Cells */
 .rp-invPill{
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  padding:8px 10px;
-  border-radius:14px;
-  background:rgba(2,6,23,.03);
-  font-weight:900;
-  letter-spacing:.2px;
-  color:rgba(2,6,23,.90);
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:7px 11px; border-radius:11px;
+  background:rgba(15,23,42,.04);
+  font-weight:800; letter-spacing:.2px; color:rgba(2,6,23,.9);
   max-width:100%;
 }
-:root.dark .rp-invPill{
-  background:rgba(255,255,255,.05);
-  color:rgba(226,232,240,.92);
-}
+:root.dark .rp-invPill{ background:rgba(255,255,255,.06); color:rgba(226,232,240,.92); }
 
-.rp-trunc{
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-  max-width:100%;
-}
+.rp-trunc{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
 
-.rp-sub{
-  margin-top:2px;
-  font-size:12px;
-  color:rgba(15,23,42,.55);
-}
-:root.dark .rp-sub{ color:rgba(226,232,240,.60); }
+.rp-sub{ margin-top:3px; font-size:11.5px; color:rgba(15,23,42,.5); }
+:root.dark .rp-sub{ color:rgba(226,232,240,.6); }
 
-.rp-money{
-  font-weight:900;
-  color:rgba(2,6,23,.88);
-}
+.rp-money{ font-weight:800; color:rgba(2,6,23,.86); }
 :root.dark .rp-money{ color:rgba(226,232,240,.92); }
 
-.rp-mini{
-  font-size:12px;
-  color:rgba(15,23,42,.55);
-}
-:root.dark .rp-mini{ color:rgba(226,232,240,.60); }
+.rp-mini{ font-size:11.5px; color:rgba(15,23,42,.5); }
+:root.dark .rp-mini{ color:rgba(226,232,240,.6); }
 
 .rp-creditTag{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  padding:7px 10px;
-  border-radius:14px;
-  background:rgba(16,185,129,.10);
-  color:rgba(6,95,70,1);
-  font-weight:950;
+  display:inline-flex; align-items:center; gap:7px;
+  padding:6px 10px; border-radius:11px;
+  background:rgba(16,185,129,.10); color:#047857; font-weight:800;
+  border:1px solid rgba(16,185,129,.18);
 }
-:root.dark .rp-creditTag{
-  background:rgba(16,185,129,.14);
-  color:rgba(167,243,208,1);
-}
-.rp-dot{
-  width:8px;
-  height:8px;
-  border-radius:999px;
-  background:rgba(16,185,129,1);
-}
+:root.dark .rp-creditTag{ background:rgba(16,185,129,.14); color:rgba(167,243,208,1); border-color:rgba(16,185,129,.22); }
+.rp-dot{ width:7px; height:7px; border-radius:999px; background:#10b981; }
 
 .rp-checkBtn{
-  height:20px;
-  width:20px;
-  display:grid;
-  place-items:center;
-  color:rgba(15,23,42,.75);
+  height:22px; width:22px; display:grid; place-items:center;
+  color:rgba(15,23,42,.6); border-radius:7px; transition:color .15s ease, background .15s ease;
 }
-:root.dark .rp-checkBtn{
-  color:rgba(226,232,240,.80);
-}
+.rp-checkBtn:hover{ color:#9f1239; background:rgba(225,29,72,.08); }
+:root.dark .rp-checkBtn{ color:rgba(226,232,240,.7); }
 
-.rp-bulkPrintFrame:last-child{
-  page-break-after:auto;
-}
+/* Column widths */
+.col-select{ width:4.5%; }
+.col-inv{ width:11%; }
+.col-date{ width:10%; }
+.col-cust{ width:19%; }
+.col-total{ width:11%; }
+.col-credits{ width:10%; }
+.col-paid{ width:10%; }
+.col-balance{ width:10%; }
+.col-status{ width:9%; }
+.col-actions{ width:9.5%; }
 
-.col-select{ width: 4.5%; }
-.col-inv{ width: 11%; }
-.col-date{ width: 10%; }
-.col-cust{ width: 19%; }
-.col-total{ width: 11%; }
-.col-credits{ width: 10%; }
-.col-paid{ width: 10%; }
-.col-balance{ width: 10%; }
-.col-status{ width: 9%; }
-.col-actions{ width: 9.5%; }
-
-.rp-actionsCell{
-  padding-right:18px !important;
-  text-align:right;
-}
+.rp-actionsCell{ padding-right:18px !important; text-align:right; }
 
 @keyframes rpDotsShine {
   0% { transform: translateX(-80%); opacity: 0; }
@@ -1059,30 +972,29 @@ html, body, #root{
   100% { transform: translateX(80%); opacity: 0; }
 }
 
-@media (max-width: 1180px){
-  .rp-page{ padding:14px; }
-  .col-cust{ width:24%; }
-  .col-status{ width:12%; }
+/* Responsive: clean horizontal scroll instead of squashing columns */
+@media (max-width: 1100px){
+  .rp-tableShell{ overflow-x:auto; }
+  .rp-table{ min-width:940px; }
+}
+@media (max-width: 820px){
+  .rp-page{ padding:14px 14px 24px; gap:14px; }
+  .rp-hero{ padding:18px; border-radius:18px; }
+  .rp-card{ border-radius:16px; }
 }
 
+/* Print (bulk print frames) */
+@media print {
+  .rp-bg, .rp-hero, .rp-bulkBar, .rp-filterRow{ display:none !important; }
   .rp-bulkPrintRoot{
     display:block !important;
     position:static !important;
-    left:auto !important;
-    top:auto !important;
-    width:auto !important;
-    margin:0 auto !important;
+    left:auto !important; top:auto !important;
+    width:auto !important; margin:0 auto !important;
     background:#fff !important;
   }
-
-  .rp-bulkPrintFrame{
-    display:block !important;
-    page-break-after:always !important;
-  }
-
-  .rp-bulkPrintFrame:last-child{
-    page-break-after:auto !important;
-  }
+  .rp-bulkPrintFrame{ display:block !important; page-break-after:always !important; }
+  .rp-bulkPrintFrame:last-child{ page-break-after:auto !important; }
 }
       `}</style>
 
@@ -1125,13 +1037,14 @@ html, body, #root{
         </div>
       </div>
 
-      <div className="grid gap-3 sm:gap-4 lg:gap-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 items-stretch gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           title="Invoices"
           value={`${kpis.count}`}
           sub={`Issued: ${kpis.issued} • Partial: ${kpis.partial} • Paid: ${kpis.fullyPaid}`}
           icon={FileText}
           tone="info"
+          kind="count"
         />
         <KpiCard title="Total Value" value={rs(kpis.total)} sub="Excluding VOID" icon={CircleDollarSign} />
         <KpiCard
@@ -1410,25 +1323,15 @@ html, body, #root{
                             <button
                               type="button"
                               className={cn(
-                                "h-9 w-9 inline-flex items-center justify-center rounded-full",
-                                "bg-rose-600 text-white shadow-md shadow-rose-600/20",
-                                "hover:bg-rose-700 hover:shadow-lg hover:shadow-rose-700/25",
-                                "transition-all duration-200",
-                                "ring-1 ring-rose-500/30",
-                                "relative overflow-hidden group"
+                                "h-9 w-9 inline-flex items-center justify-center rounded-xl",
+                                "bg-white text-slate-600 ring-1 ring-slate-200 shadow-sm",
+                                "hover:text-rose-700 hover:bg-rose-50 hover:ring-rose-300",
+                                "dark:bg-slate-900/40 dark:text-slate-300 dark:ring-white/10",
+                                "transition-all duration-200"
                               )}
                               aria-label="Actions"
                             >
-                              <span
-                                className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                                style={{
-                                  background:
-                                    "linear-gradient(120deg, transparent 0%, rgba(255,255,255,.25) 40%, transparent 70%)",
-                                  transform: "translateX(-40%)",
-                                  animation: "rpDotsShine 1.6s ease-in-out infinite",
-                                }}
-                              />
-                              <MoreHorizontal className="h-5 w-5 relative z-[1]" />
+                              <MoreHorizontal className="h-5 w-5" />
                             </button>
                           </DropdownMenuTrigger>
 
@@ -1444,7 +1347,20 @@ html, body, #root{
                               }
                             >
                               <Printer className="mr-2 h-4 w-4" />
-                              Print (PDF)
+                              Print PDF
+                            </DropdownMenuItem>
+
+                            <DropdownMenuItem
+                              onClick={() =>
+                                window.open(
+                                  `/invoices/${r.id}/print?format=dot-matrix`,
+                                  "_blank",
+                                  "noopener,noreferrer"
+                                )
+                              }
+                            >
+                              <Printer className="mr-2 h-4 w-4" />
+                              Dot Matrix Print
                             </DropdownMenuItem>
 
                             <DropdownMenuItem onClick={() => rememberRowAndOpen(r, "edit")}>
