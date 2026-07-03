@@ -24,6 +24,7 @@ type Product = {
   id: number;
   name: string;
   sku: string;
+  item_code?: string | null;
   current_stock: number;
 };
 
@@ -46,7 +47,7 @@ type Movement = {
 async function listProducts() {
   const { data, error } = await supabase
     .from("products")
-    .select("id,name,sku,current_stock")
+    .select("id,name,sku,item_code,current_stock")
     .order("name");
 
   if (error) throw error;
@@ -58,7 +59,7 @@ async function listMovements() {
     .from("stock_movements")
     .select(`
       *,
-      product:products(id,name,sku,current_stock)
+      product:products(id,name,sku,item_code,current_stock)
     `)
     .order("movement_date", { ascending: false })
     .limit(2000);
@@ -201,7 +202,7 @@ export default function StockMovements() {
                 <td className="px-4 py-3">
                   {m.product?.name} <br />
                   <span className="text-xs text-muted-foreground">
-                    {m.product?.sku}
+                    {m.product?.item_code || m.product?.sku}
                   </span>
                 </td>
                 <td className="px-4 py-3">
@@ -243,7 +244,7 @@ export default function StockMovements() {
                 <option value="">Select product...</option>
                 {products.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} — {p.sku} (Stock: {p.current_stock})
+                    {p.name} — {p.item_code || p.sku} (Stock: {p.current_stock})
                   </option>
                 ))}
               </select>

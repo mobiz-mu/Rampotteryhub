@@ -1018,9 +1018,9 @@ export default function Reports() {
       const p2 = productById.get(pid);
 
       const name = p?.name || p2?.name || it.description || `Product #${pid}`;
-      const sku = p?.sku || p2?.sku || p2?.item_code || String(pid);
+      const product_ref = p?.item_code || p2?.item_code || p?.sku || p2?.sku || String(pid);
 
-      const cur = map.get(key) || { date, product_id: pid, sku, product: name, qty: 0, sales: 0, uom: it.uom || "—" };
+      const cur = map.get(key) || { date, product_id: pid, product_ref, product: name, qty: 0, sales: 0, uom: it.uom || "—" };
       cur.qty += n(it.total_qty);
       cur.sales += n(it.line_total);
       map.set(key, cur);
@@ -1039,9 +1039,9 @@ export default function Reports() {
       const p2 = pid ? productById.get(pid) : undefined;
 
       const name = p?.name || p2?.name || it.description || (pid ? `Product #${pid}` : "Returned item");
-      const sku = p?.sku || p2?.sku || p2?.item_code || (pid ? String(pid) : "—");
+      const product_ref = p?.item_code || p2?.item_code || p?.sku || p2?.sku || (pid ? String(pid) : "—");
 
-      const cur = map.get(key) || { date, product_id: pid, sku, product: name, qty: 0, sales: 0, uom: it.uom || "—" };
+      const cur = map.get(key) || { date, product_id: pid, product_ref, product: name, qty: 0, sales: 0, uom: it.uom || "—" };
       cur.qty -= n(it.total_qty);
       cur.sales -= n(it.line_total);
       map.set(key, cur);
@@ -1394,9 +1394,9 @@ export default function Reports() {
       const p2 = productById.get(pid);
 
       const name = p?.name || p2?.name || it.description || `Product #${pid}`;
-      const sku = p?.sku || p2?.sku || p2?.item_code || String(pid);
+      const product_ref = p?.item_code || p2?.item_code || p?.sku || p2?.sku || String(pid);
 
-      const cur = map.get(pid) || { product_id: pid, sku, product: name, qty: 0, sales: 0 };
+      const cur = map.get(pid) || { product_id: pid, product_ref, product: name, qty: 0, sales: 0 };
       cur.qty += n(it.total_qty);
       cur.sales += n(it.line_total);
       map.set(pid, cur);
@@ -1413,9 +1413,9 @@ export default function Reports() {
       const p2 = productById.get(pid);
 
       const name = p?.name || p2?.name || it.description || `Product #${pid}`;
-      const sku = p?.sku || p2?.sku || p2?.item_code || String(pid);
+      const product_ref = p?.item_code || p2?.item_code || p?.sku || p2?.sku || String(pid);
 
-      const cur = map.get(pid) || { product_id: pid, sku, product: name, qty: 0, sales: 0 };
+      const cur = map.get(pid) || { product_id: pid, product_ref, product: name, qty: 0, sales: 0 };
       cur.qty -= n(it.total_qty);
       cur.sales -= n(it.line_total);
       map.set(pid, cur);
@@ -2393,7 +2393,7 @@ export default function Reports() {
                                 <table className="w-full text-sm">
                                   <thead className="border-b bg-muted/20 sticky top-0">
                                     <tr>
-                                      <th className="text-left p-3">SKU</th>
+                                      <th className="text-left p-3">PRODUCT REF</th>
                                       <th className="text-left p-3">Product</th>
                                       <th className="text-right p-3">Qty (Net)</th>
                                       <th className="text-right p-3">Sales (Net)</th>
@@ -2401,8 +2401,8 @@ export default function Reports() {
                                   </thead>
                                   <tbody className="divide-y">
                                     {rows.map((r: any) => (
-                                      <tr key={`${r.date}|${r.product_id}|${r.sku}`} className="hover:bg-muted/30">
-                                        <td className="p-3 font-medium">{r.sku}</td>
+                                      <tr key={`${r.date}|${r.product_id}|${r.product_ref}`} className="hover:bg-muted/30">
+                                        <td className="p-3 font-medium">{r.product_ref}</td>
                                         <td className="p-3">{r.product}</td>
                                         <td className="p-3 text-right tabular-nums">{moneySigned(r.qty)}</td>
                                         <td className="p-3 text-right tabular-nums font-semibold">
@@ -2632,7 +2632,7 @@ export default function Reports() {
                     <table className="w-full text-sm">
                       <thead className="border-b bg-muted/20 sticky top-0">
                         <tr>
-                          <th className="text-left p-3">SKU</th>
+                          <th className="text-left p-3">PRODUCT REF</th>
                           <th className="text-left p-3">Product</th>
                           <th className="text-right p-3">Qty (Net)</th>
                           <th className="text-right p-3">Sales (Net)</th>
@@ -2641,7 +2641,7 @@ export default function Reports() {
                       <tbody className="divide-y">
                         {productsPeriod.map((r) => (
                           <tr key={r.product_id} className="hover:bg-muted/30">
-                            <td className="p-3 font-medium">{r.sku}</td>
+                            <td className="p-3 font-medium">{r.product_ref}</td>
                             <td className="p-3">{r.product}</td>
                             <td className="p-3 text-right tabular-nums">{moneySigned(r.qty)}</td>
                             <td className="p-3 text-right tabular-nums font-semibold">

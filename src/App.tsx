@@ -353,6 +353,14 @@ export default function App() {
                     }
                   />
                   <Route
+                    path="aging-report"
+                    element={
+                      <RequirePermission perm="reports.view">
+                        <AgingReport />
+                      </RequirePermission>
+                    }
+                  />
+                  <Route
                     path="statement/print"
                     element={
                       <RequirePermission perm="reports.view">

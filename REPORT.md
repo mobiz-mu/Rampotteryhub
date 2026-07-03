@@ -1,3 +1,133 @@
+# Ram Pottery Hub — Aging Report (general + detail modes)
+
+Opening **Aging Report** from the sidebar (`/aging`, no `customerId`) previously
+showed "Invalid customer". It now shows a full professional **all-customers aging
+overview**, while the existing **customer-specific detail** (`/aging?customerId=…`)
+is preserved with better empty/error states.
+
+## Validation (all passing)
+
+| Check | Result |
+|-------|--------|
+| `npm audit` | **0 vulnerabilities** |
+| `npx tsc -p tsconfig.app.json --noEmit` | **0 errors** |
+| `npm run build:server` | **0 errors** |
+| `npm run build` | **Success** |
+| `npm test` | **3 passed** |
+
+## What changed
+
+**`src/pages/AgingReport.tsx`** — split into two modes behind one entry component:
+
+- **General mode** (`/aging` or `/aging-report`, no `customerId`):
+  - Page title **Aging Report** + search box (customer name, phone, BRN, invoice number).
+  - Summary cards: **Total Outstanding, 0–30, 31–60, 61–90, 90+, Customers With Balance**.
+  - Responsive table **grouped strictly by `customer_id`** (same-name customers stay
+    separate): Customer, Phone/WhatsApp, BRN, Open, 0–30, 31–60, 61–90, 90+,
+    Outstanding, Actions.
+  - Per-row actions: **Detail → `/aging?customerId=…`** and **Statement → `/statement/print?customerId=…`**.
+  - Logic: only invoices with `balance_remaining > 0`; **Draft/Void excluded**; aging by
+    `invoice_date`; outstanding from `balance_remaining`. Missing customer records are
+    shown safely as `Customer #<id>` (no crash), and action buttons are disabled when
+    `customer_id` is 0.
+  - Loading state and two empty states (no balances / no search matches).
+
+- **Customer-specific mode** (`/aging?customerId=123`): existing detail report kept,
+  with improved states:
+  - **Customer not found** → premium error card ("Customer not found", **Back**,
+    **Go to All Aging Report**) instead of "Invalid customer".
+  - **No outstanding invoices** → clean empty state ("No outstanding invoices for this
+    customer.").
+  - Added an **All Aging Report** button in the toolbar.
+
+**`src/App.tsx`** — added an `/aging-report` alias route (same component) so both URLs
+work. The sidebar already links to `/aging` (general), so no sidebar change was needed.
+
+## Routes validated
+- Sidebar **Aging Report** → `/aging` → general overview (no more "Invalid customer").
+- Row **Detail** → `/aging?customerId=…` → customer detail (unchanged behaviour).
+- Row **Statement** / detail **Statement PDF** → `/statement/print?customerId=…`.
+- Direct `/aging?customerId=<missing>` → premium "Customer not found" card.
+- `/aging-report` → same general overview.
+
+## UI
+Clean white cards, page header, six summary cards, responsive table (horizontal scroll
+on small screens), search with clear button, professional loading/empty/error states,
+grouped by `customer_id`.
+
+---
+---
+
+# Ram Pottery Hub — Reports: SKU → PRODUCT REF
+
+The client does not want the generated `SKU` (e.g. `SKU-20260226-YEFFXN`) shown in
+reports. All product-based reports now display the product's **reference code**
+(`item_code`) under a **PRODUCT REF** header. `sku` is kept internally for
+lookups/search/DB logic — only the client-facing report output changed.
+
+## Validation (all passing)
+
+| Check | Result |
+|-------|--------|
+| `npm audit` | **0 vulnerabilities** |
+| `npx tsc -p tsconfig.app.json --noEmit` | **0 errors** |
+| `npm run build:server` | **0 errors** |
+| `npm run build` | **Success** |
+| `npm test` | **3 passed** |
+
+## What changed
+
+**`src/pages/Reports.tsx`** — the "Report by Products Sold" (Daily • Net) and
+"Report by Products Sold (Period • Net)" tables:
+- Column header **`SKU` → `PRODUCT REF`** (both tables).
+- The product-reference value now prefers the real reference:
+  `item_code → sku → id` (was `sku → item_code → id`). The report row field was
+  renamed `sku → product_ref` so the value, the on-screen cell, the React key,
+  **and the CSV export column** all read `product_ref` instead of `sku`.
+- CSV export (`products_sold_period_net_*.csv`, `daily_products_sold_net_*.csv`)
+  now emits a `product_ref` column instead of `sku`.
+
+**`src/pages/StockMovements.tsx`** — the stock/product movement report:
+- Product line now shows `item_code || sku` (Product Ref) instead of `sku`.
+- Product picker option shows `item_code || sku`.
+- Queries now also select `item_code` (still select `sku` internally):
+  `products(id,name,sku,item_code,current_stock)`.
+
+## Reports inspected
+
+- **Products Sold (Daily • Net)** — updated (PRODUCT REF).
+- **Products Sold (Period • Net)** — updated (PRODUCT REF).
+- **Net products / product sales** — these ARE the two product reports above
+  (net = sales minus credit-note returns); updated.
+- **Stock / product movement report** — updated (PRODUCT REF value).
+- **Summary Reports** — inspected: no product SKU shown (customer/sales summaries
+  only) → no change needed.
+- **Aging Report / Statements** — inspected: no product SKU shown → no change.
+- **Customers Report** — inspected: no product SKU (customer code only) → no change.
+- **CSV / print output** — product report CSV now uses `product_ref`; the report
+  print view uses the same tables, so print shows PRODUCT REF too.
+
+## Notes / scope
+- Product **lookup, search and DB writes still use `sku`** internally — nothing in
+  data logic was changed; only report display fields were remapped to `item_code`.
+- Fallback: if a product has no `item_code`, the report falls back to `sku`, then
+  to the product id, so no cell is ever blank.
+- The invoice **Add-Item product picker** (`InvoiceView.tsx`) still shows `SKU:` as
+  a data-entry aid — it is a create/edit picker, **not a report**, so it was left
+  as-is per the report-scoped request. Say the word if you want SKU hidden there
+  too (it's a one-line change to `item_code || sku`).
+
+## Run locally
+```bash
+cp .env.example .env   # fill in Supabase values
+npm install
+npm run dev:all
+npm run build && npm test
+```
+
+---
+---
+
 # Ram Pottery Hub — Launch-Readiness Report
 
 Final pass: centered Dot-Matrix document title, removed the on-screen helper
