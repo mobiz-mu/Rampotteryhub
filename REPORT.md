@@ -1,3 +1,99 @@
+
+
+## Dot Matrix final fine-tuning: details up, columns left, prepared-by lower
+
+- Kept 8.5in x 12in paper, 11pt Courier New, and 12 rows per page.
+- Moved customer and document detail values up by 7pt.
+- Shifted item row columns left while pulling Total Qty further left to create more gap before Description.
+- Added cleaner spacing across Description, Unit Price Excl VAT, VAT, Unit Price Incl VAT, and Total Amount.
+- Moved Prepared by / Delivered by values lower and slightly right so names sit closer to the printed Prepared by / Delivered by area.
+- Dot Matrix remains data-only; A4/PDF print unchanged.
+
+# Dot Matrix multi-page alignment hotfix (8.5in × 12in, 12 rows/page)
+
+- Kept the client-requested **12 rows per page** flow.
+- Repeated document/customer details on every dot-matrix page, so page 2/page 3 still print customer and invoice details on the new pre-printed sheet.
+- Moved customer and document detail values slightly upward.
+- Tuned item column X positions for 11pt Courier and added clipping so long descriptions/SKUs do not overlap price/VAT columns.
+- Added more spacing between Description, Unit Price Excl VAT, VAT, Unit Price Incl VAT, and Total columns.
+- Moved totals slightly left and tuned Y positions for the printed totals boxes.
+- Moved Prepared by / Delivered by values closer to the signature label area; bottom customer-name value remains removed.
+- Paper remains **8.5in × 12in** and Dot Matrix data font remains **11pt**. A4/PDF output is untouched.
+
+# Ram Pottery Hub — Dot Matrix alignment (8.5in × 12in)
+
+Only the **Dot Matrix / continuous stationery** print was changed. **A4 / PDF
+printing is untouched** (`RamPotteryDoc` has no dot-matrix imports; the A4 branch
+of each print page was not modified).
+
+## Validation (all passing)
+
+| Check | Result |
+|-------|--------|
+| `npm audit` | **0 vulnerabilities** |
+| `npx tsc -p tsconfig.app.json --noEmit` | **0 errors** |
+| `npm run build:server` | **0 errors** |
+| `npm run build` | **Success** |
+| `npm test` | **3 passed** |
+
+## What changed
+
+**Paper size → 8.5in × 12in (612pt × 864pt)** everywhere:
+- `src/lib/printSettings.ts`: `paperWidthIn 9.18 → 8.5`, `paperHeightIn 12.61 → 12`.
+- `src/styles/dotMatrixPrint.css`: `@page { size: 8.5in 12in }`, `.dot-matrix-page`
+  default `8.5in × 12in`.
+- The `<style>@page>` injected by `DotMatrixDocument` uses these settings, so the
+  print preview and printed page are both 8.5in × 12in.
+
+**Bigger, clearer data font:**
+- `printSettings.ts`: `fontSize 9 → 11`, `lineHeight 10 → 12`.
+- `dotMatrixPrint.css` `.dm-field`: `font-weight: 600`, Courier New, black.
+- Document title kept **18pt / 900**, centred; its vertical position rescaled to
+  `top: 186pt` (just under the pre-printed "Web:" line, above CUSTOMER DETAILS).
+
+**Coordinates rescaled to the real paper** (`src/components/print/dotMatrixLayout.ts`):
+- `DM_PAGE_W/H` → `612 / 864`.
+- All field/column/totals/label/frame X positions ×0.9255 and Y positions ×0.9517
+  (mapping the original 661.28×907.89 canvas onto 612×864), so document details,
+  customer details, **item rows** (first row `top` + column X for item code, qty,
+  U/box, total qty, description, unit price excl, VAT, unit price incl, total incl)
+  and **totals values** (right-aligned into the amount boxes) line up on the smaller
+  page.
+- Item flow in `printSettings.ts`: `firstRowTop 392 → 373`, `rowHeight 18 → 17`
+  (rows still start below the orange header, inside the first white row; 12 rows/page).
+
+**Signature area:**
+- The bottom **"Customer name" value is no longer printed**. Removed the
+  `customerName` entry from `SIGNATURE_FIELDS` (layout) and from `sigMap`
+  (`DotMatrixDocument.tsx`); also removed the now-unused `customerName:` field from
+  the dot-matrix data in `InvoicePrint.tsx`, `QuotationPrint.tsx`,
+  `CreditNotePrint.tsx`.
+- **Prepared by / Delivered by** now print the **value only** (e.g. "Mr Akash"),
+  positioned just above their pre-printed labels (`top: 794pt`), no extra label or
+  line drawn.
+
+**Still data-only:** no company name/address, labels, boxes, table headers, notes,
+totals labels or signature labels are printed — only the centred document title and
+the variable values.
+
+## Files changed
+- `src/lib/printSettings.ts`
+- `src/styles/dotMatrixPrint.css`
+- `src/components/print/dotMatrixLayout.ts`
+- `src/components/print/DotMatrixDocument.tsx`
+- `src/pages/InvoicePrint.tsx`, `src/pages/QuotationPrint.tsx`, `src/pages/CreditNotePrint.tsx`
+  (removed the unused dot-matrix `customerName` field only; A4 branch unchanged)
+
+## Note on fine calibration
+Coordinates were rescaled from the original measured template onto 8.5in × 12in.
+If a specific dot-matrix printer is a hair off, nudge the constants in
+`dotMatrixLayout.ts` (column X / row Y / totals) and `printSettings.ts`
+(`firstRowTop`, `rowHeight`). There are no on-screen calibration controls, by the
+client's earlier request.
+
+---
+---
+
 # Ram Pottery Hub — Aging Report (general + detail modes)
 
 Opening **Aging Report** from the sidebar (`/aging`, no `customerId`) previously

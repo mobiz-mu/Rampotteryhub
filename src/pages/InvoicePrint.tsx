@@ -442,7 +442,6 @@ export default function InvoicePrint() {
       },
       preparedBy: inv.sales_rep || "",
       deliveredBy: "",
-      customerName: printCustomer.name,
     };
     return <DotMatrixDocument data={dmData} docKindLabel="Invoice" onBack={() => window.history.back()} />;
   }

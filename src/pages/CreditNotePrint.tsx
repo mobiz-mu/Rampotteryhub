@@ -387,7 +387,6 @@ export default function CreditNotePrint() {
       },
       preparedBy: "",
       deliveredBy: "",
-      customerName: customer?.name || "",
     };
     return <DotMatrixDocument data={dmData} docKindLabel="Credit Note" onBack={() => window.history.back()} />;
   }

@@ -2,7 +2,7 @@
    src/styles/dotMatrixPrint.css
    Continuous / dot-matrix print for pre-printed RAM POTTERY stationery.
 
-   The physical paper is ~9.18in x 12.61in (661.28pt x 907.89pt) and already
+   The physical paper is 8.5in x 12in (612pt x 864pt) and already
    contains the company header, labels, boxes, table headings, notes and
    totals labels. In DATA-ONLY mode we overlay ONLY the variable values into
    the correct blank positions. FULL-TEMPLATE mode also draws the static
@@ -13,7 +13,7 @@
    ===================================================================== */
 
 @page {
-  size: 9.18in 12.61in;
+  size: 8.5in 12in;
   margin: 0;
 }
 
@@ -81,8 +81,8 @@
   position: relative;
   box-sizing: border-box;
   /* width/height are set inline from calibration settings (default below) */
-  width: 9.18in;
-  height: 12.61in;
+  width: 8.5in;
+  height: 12in;
   background: #ffffff;
   color: #000000;
   font-family: "Courier New", Courier, monospace;
@@ -121,6 +121,11 @@
   white-space: pre;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  font-family: "Courier New", Courier, monospace;
+  font-weight: 600;
+  color: #000;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 .dm-field.dm-right {
@@ -134,7 +139,7 @@
    "Web: www.rampottery.mu" line (~186pt) and above "CUSTOMER DETAILS" (~233pt). */
 .dm-document-title {
   position: absolute;
-  top: 196pt; /* ~2.72in — sits under the Web line, above the details area */
+  top: 186pt; /* sits under the Web line (~177pt), above CUSTOMER DETAILS (~222pt) */
   left: 50%;
   transform: translateX(-50%);
   width: 3in;
@@ -162,7 +167,7 @@
 
 /* On-screen helper note (never printed). */
 .dm-helper {
-  max-width: 9.18in;
+  max-width: 8.5in;
   width: 100%;
   background: #fff;
   border: 1px solid #e2e8f0;
@@ -184,7 +189,7 @@
   line-height: 1.5;
 }
 .dm-toolbar {
-  max-width: 9.18in;
+  max-width: 8.5in;
   width: 100%;
   background: #fff;
   border: 1px solid #e2e8f0;

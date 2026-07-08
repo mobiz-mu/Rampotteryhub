@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+﻿import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import DotMatrixDocument from "@/components/print/DotMatrixDocument";
 
-// jsdom has no window.print — stub it so auto-print doesn't throw.
+// jsdom has no window.print â€” stub it so auto-print doesn't throw.
 beforeEach(() => {
   cleanup();
   window.print = vi.fn();
@@ -61,7 +61,7 @@ describe("DotMatrixDocument (data-only overlay)", () => {
     expect(screen.getByText("POT-001")).toBeTruthy();
     expect(screen.getByText("Clay Diya Large")).toBeTruthy();
     expect(screen.getAllByText("690.00").length).toBeGreaterThan(0); // total / gross / line
-    expect(screen.getByText("490.00")).toBeTruthy(); // balance remaining
+    expect(screen.queryByText("490.00")).toBeNull(); // balance remaining intentionally blank in Dot Matrix
 
     // The print root exists so the print-CSS visibility override applies.
     expect(document.querySelector(".dm-print-root")).toBeTruthy();
@@ -80,3 +80,4 @@ describe("DotMatrixDocument (data-only overlay)", () => {
     expect(printSpy).not.toHaveBeenCalled();
   });
 });
+

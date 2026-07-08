@@ -368,7 +368,6 @@ export default function QuotationPrint() {
       },
       preparedBy: String(qRow.prepared_by || ""),
       deliveredBy: String(qRow.delivered_by || ""),
-      customerName: customer?.name || qRow.customer_name || "",
     };
     return <DotMatrixDocument data={dmData} docKindLabel="Quotation" onBack={() => window.history.back()} />;
   }

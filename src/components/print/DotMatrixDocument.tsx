@@ -170,7 +170,8 @@ function DotMatrixPage({
   const sigMap: Record<string, string> = {
     preparedBy: txt(data.preparedBy),
     deliveredBy: txt(data.deliveredBy),
-    customerName: txt(data.customerName || data.customer?.name),
+    // NOTE: customer name is intentionally NOT printed in the signature area.
+    // It only appears in the top customer-details block (CUSTOMER_FIELDS.name).
   };
 
   return (
@@ -349,7 +350,7 @@ export default function DotMatrixDocument({
               key={idx}
               rows={rows}
               data={data}
-              showDetails={idx === 0}
+              showDetails={true}
               showTotals={idx === pageCount - 1}
               showSignatures={idx === pageCount - 1}
             />
