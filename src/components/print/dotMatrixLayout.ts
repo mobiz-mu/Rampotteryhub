@@ -3,7 +3,6 @@
 // Absolute positions (in points, 1in = 72pt) for the RAM POTTERY pre-printed
 // continuous stationery. Real paper box is 612pt x 864pt (8.5in x 12in).
 //
-// Reworked from the physical printed test page + handwritten measurements.
 // Dot Matrix remains DATA-ONLY: values only, no boxes/labels/headers.
 //
 // Important:
@@ -19,34 +18,38 @@ export type Align = "left" | "right" | "center";
 
 export type FieldBox = {
   key: string;
-  left: number; // pt
-  top: number; // pt
-  width?: number; // pt
+  left: number;
+  top: number;
+  width?: number;
   align?: Align;
 };
 
-/** Document detail values - right customer/document block. */
+/**
+ * Document detail values - right customer/document block.
+ * Each row is positioned individually so one row can be adjusted later
+ * without moving the others.
+ */
 export const DOC_FIELDS: FieldBox[] = [
-  // Moved DOWN by 1cm only.
-  { key: "docNo", left: 397, top: 259.8, width: 175, align: "left" },
-  { key: "date", left: 397, top: 277.0, width: 175, align: "left" },
-  { key: "po", left: 397, top: 294.1, width: 175, align: "left" },
-  { key: "salesRep", left: 397, top: 311.2, width: 175, align: "left" },
-  { key: "salesRepCell", left: 397, top: 328.3, width: 175, align: "left" },
+  { key: "docNo", left: 397, top: 229.0, width: 175, align: "left" },
+  { key: "date", left: 397, top: 246.5, width: 175, align: "left" },
+  { key: "po", left: 397, top: 264.0, width: 175, align: "left" },
+  { key: "salesRep", left: 397, top: 281.5, width: 175, align: "left" },
+  { key: "salesRepCell", left: 397, top: 299.0, width: 175, align: "left" },
 ];
 
-
-/** Customer detail values - left customer block. */
+/**
+ * Customer detail values - left customer block.
+ * Kept left enough to start from the correct blank area, but each row
+ * remains separately adjustable.
+ */
 export const CUSTOMER_FIELDS: FieldBox[] = [
-  // Moved DOWN by 1cm and LEFT by 0.3cm.
-  { key: "name", left: 117.5, top: 259.8, width: 220, align: "left" },
-  { key: "address", left: 117.5, top: 277.0, width: 220, align: "left" },
-  { key: "cell", left: 117.5, top: 294.1, width: 220, align: "left" },
-  { key: "brn", left: 117.5, top: 311.2, width: 220, align: "left" },
-  { key: "vat_no", left: 117.5, top: 328.3, width: 220, align: "left" },
+  { key: "name", left: 117.5, top: 229.0, width: 230, align: "left" },
+  { key: "address", left: 117.5, top: 246.5, width: 230, align: "left" },
+  { key: "cell", left: 117.5, top: 264.0, width: 230, align: "left" },
+  { key: "brn", left: 117.5, top: 281.5, width: 230, align: "left" },
+  { key: "vat_no", left: 117.5, top: 299.0, width: 230, align: "left" },
 ];
 
-/** Item table column geometry. */
 export type ItemColumn = {
   key:
     | "sn"
@@ -64,21 +67,31 @@ export type ItemColumn = {
   align: Align;
 };
 
+/**
+ * Item table column geometry.
+ *
+ * This version avoids overlapping boxes.
+ * Short quantity columns are centered.
+ * Item Code and Description start from the left and clip if too long.
+ * Money columns remain right-aligned for clean amounts.
+ */
 export const ITEM_COLUMNS: ItemColumn[] = [
-  // Only horizontal positioning changed as requested.
-  { key: "sn", left: 37.8, width: 22, align: "center" },
-  { key: "item_code", left: 75, width: 42, align: "left" },
+  { key: "sn", left: 46, width: 20, align: "center" },
 
-  { key: "qty", left: 87.7, width: 26, align: "right" },
-  { key: "units_per_box", left: 116.7, width: 32, align: "right" },
-  { key: "total_qty", left: 159.8, width: 36, align: "right" },
+  // Left-aligned so long item codes start from the left and get clipped safely.
+  { key: "item_code", left: 68, width: 42, align: "left" },
 
-  { key: "description", left: 216.3, width: 104, align: "left" },
+  { key: "qty", left: 116, width: 25, align: "center" },
+  { key: "units_per_box", left: 145, width: 31, align: "center" },
+  { key: "total_qty", left: 178, width: 38, align: "center" },
 
-  { key: "unit_price_excl_vat", left: 318.8, width: 48, align: "right" },
-  { key: "vat", left: 371.8, width: 40, align: "right" },
-  { key: "unit_price_incl_vat", left: 416.8, width: 66, align: "right" },
-  { key: "total_amount_incl_vat", left: 477.8, width: 72, align: "right" },
+  // Description starts inside its printed column and clips before Unit Price.
+  { key: "description", left: 222, width: 104, align: "left" },
+
+  { key: "unit_price_excl_vat", left: 335, width: 47, align: "right" },
+  { key: "vat", left: 389, width: 38, align: "right" },
+  { key: "unit_price_incl_vat", left: 432, width: 64, align: "right" },
+  { key: "total_amount_incl_vat", left: 500, width: 72, align: "right" },
 ];
 
 /**
@@ -88,16 +101,15 @@ export const ITEM_COLUMNS: ItemColumn[] = [
  * The printed Balance Remaining box must remain blank.
  */
 export const TOTAL_FIELDS: FieldBox[] = [
-  // Moved DOWN by 0.5cm only.
-  { key: "subtotal", left: 408, top: 610.2, width: 130, align: "right" },
-  { key: "vat", left: 408, top: 631.2, width: 130, align: "right" },
-  { key: "total", left: 408, top: 652.2, width: 130, align: "right" },
-  { key: "previousBalance", left: 408, top: 673.2, width: 130, align: "right" },
-  { key: "grossTotal", left: 408, top: 694.2, width: 130, align: "right" },
-  { key: "amountPaid", left: 408, top: 715.2, width: 130, align: "right" },
+  { key: "subtotal", left: 408, top: 596, width: 130, align: "right" },
+  { key: "vat", left: 408, top: 617, width: 130, align: "right" },
+  { key: "total", left: 408, top: 638, width: 130, align: "right" },
+  { key: "previousBalance", left: 408, top: 659, width: 130, align: "right" },
+  { key: "grossTotal", left: 408, top: 680, width: 130, align: "right" },
+  { key: "amountPaid", left: 408, top: 701, width: 130, align: "right" },
 
-  // Do not print Balance Remaining.
-  // { key: "balanceRemaining", left: 408, top: 736.2, width: 130, align: "right" },
+  // Do not print Balance Remaining in Dot Matrix.
+  // { key: "balanceRemaining", left: 408, top: 722, width: 130, align: "right" },
 ];
 
 /**
@@ -106,8 +118,8 @@ export const TOTAL_FIELDS: FieldBox[] = [
  * Customer name is intentionally NOT printed at the bottom.
  */
 export const SIGNATURE_FIELDS: FieldBox[] = [
-  { key: "preparedBy", left: 148, top: 842, width: 145, align: "left" },
-  { key: "deliveredBy", left: 330, top: 842, width: 145, align: "left" },
+  { key: "preparedBy", left: 148, top: 807, width: 145, align: "left" },
+  { key: "deliveredBy", left: 330, top: 807, width: 145, align: "left" },
 ];
 
 /* =====================================================================
@@ -171,7 +183,6 @@ export const STATIC_LABELS: StaticLabel[] = [
   { text: "Customer name :", left: 458.5, top: 810.8, size: 8 },
 ];
 
-/** Frame boxes drawn only in full-template mode. */
 export const FULL_FRAMES = [
   { left: 64.8, top: 237.9, width: 482.2, height: 85.6 },
   { left: 64.8, top: 334.9, width: 482.2, height: 249.4 },

@@ -20,7 +20,7 @@ export type DotMatrixSettings = {
   fontSize: number; // pt
   lineHeight: number; // pt
 
-  /** Paper size in inches (continuous stationery default 9.18 x 12.61). */
+  /** Paper size in inches for RAM POTTERY continuous stationery: 8.5 x 12. */
   paperWidthIn: number;
   paperHeightIn: number;
 
