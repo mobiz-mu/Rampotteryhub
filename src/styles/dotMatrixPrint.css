@@ -118,7 +118,7 @@
 /* A positioned field (value or, in full mode, a static label). */
 .dm-field {
   position: absolute;
-  white-space: pre;
+  white-space: nowrap;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   font-family: "Courier New", Courier, monospace;

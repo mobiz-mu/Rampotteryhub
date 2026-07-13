@@ -47,7 +47,7 @@ export const DEFAULT_DOT_MATRIX_SETTINGS: DotMatrixSettings = {
   lineHeight: 12,
   paperWidthIn: 8.5,
   paperHeightIn: 12,
-  firstRowTop: 379,
+  firstRowTop: 382,
   rowHeight: 17,
   rowsPerPage: 12,
   showLogo: false,
