@@ -27,22 +27,23 @@ export type FieldBox = {
 
 /** Document detail values - right customer/document block. */
 export const DOC_FIELDS: FieldBox[] = [
-  // Kept slightly high to match the pre-printed document fields.
-  { key: "docNo", left: 397, top: 231.5, width: 175, align: "left" },
-  { key: "date", left: 397, top: 248.7, width: 175, align: "left" },
-  { key: "po", left: 397, top: 265.8, width: 175, align: "left" },
-  { key: "salesRep", left: 397, top: 282.9, width: 175, align: "left" },
-  { key: "salesRepCell", left: 397, top: 300.0, width: 175, align: "left" },
+  // Moved DOWN by 1cm only.
+  { key: "docNo", left: 397, top: 259.8, width: 175, align: "left" },
+  { key: "date", left: 397, top: 277.0, width: 175, align: "left" },
+  { key: "po", left: 397, top: 294.1, width: 175, align: "left" },
+  { key: "salesRep", left: 397, top: 311.2, width: 175, align: "left" },
+  { key: "salesRepCell", left: 397, top: 328.3, width: 175, align: "left" },
 ];
+
 
 /** Customer detail values - left customer block. */
 export const CUSTOMER_FIELDS: FieldBox[] = [
-  // Left value start aligned with the printed customer box.
-  { key: "name", left: 126, top: 231.5, width: 220, align: "left" },
-  { key: "address", left: 126, top: 248.7, width: 220, align: "left" },
-  { key: "cell", left: 126, top: 265.8, width: 220, align: "left" },
-  { key: "brn", left: 126, top: 282.9, width: 220, align: "left" },
-  { key: "vat_no", left: 126, top: 300.0, width: 220, align: "left" },
+  // Moved DOWN by 1cm and LEFT by 0.3cm.
+  { key: "name", left: 117.5, top: 259.8, width: 220, align: "left" },
+  { key: "address", left: 117.5, top: 277.0, width: 220, align: "left" },
+  { key: "cell", left: 117.5, top: 294.1, width: 220, align: "left" },
+  { key: "brn", left: 117.5, top: 311.2, width: 220, align: "left" },
+  { key: "vat_no", left: 117.5, top: 328.3, width: 220, align: "left" },
 ];
 
 /** Item table column geometry. */
@@ -64,40 +65,20 @@ export type ItemColumn = {
 };
 
 export const ITEM_COLUMNS: ItemColumn[] = [
-  /*
-    Column calibration from the marked paper:
-    SN ≈ 0.8cm
-    Item Code ≈ 1.4cm
-    Qty ≈ 1.0cm
-    Unit Per Box ≈ 1.2cm
-    Total Qty ≈ 1.5cm
-    Description ≈ 3.9cm
-    Unit Price Excl ≈ 1.7cm
-    VAT ≈ 1.4cm
-    Unit Price Incl ≈ 2.3cm
-    Total Amount ≈ 3.0cm
-
-    Values are placed inside each printed box with safe spacing.
-  */
-
-  { key: "sn", left: 52, width: 22, align: "center" },
+  // Only horizontal positioning changed as requested.
+  { key: "sn", left: 37.8, width: 22, align: "center" },
   { key: "item_code", left: 75, width: 42, align: "left" },
-  { key: "qty", left: 116, width: 26, align: "right" },
-  { key: "units_per_box", left: 145, width: 32, align: "right" },
 
-  // Pulled left to create clear space before Description.
-  { key: "total_qty", left: 174, width: 36, align: "right" },
+  { key: "qty", left: 87.7, width: 26, align: "right" },
+  { key: "units_per_box", left: 116.7, width: 32, align: "right" },
+  { key: "total_qty", left: 159.8, width: 36, align: "right" },
 
-  // Starts later than Total Qty, but is clipped before Unit Price.
-  { key: "description", left: 222, width: 104, align: "left" },
+  { key: "description", left: 216.3, width: 104, align: "left" },
 
-  // Price/VAT columns re-spaced so values no longer touch.
-  { key: "unit_price_excl_vat", left: 333, width: 48, align: "right" },
-  { key: "vat", left: 386, width: 40, align: "right" },
-  { key: "unit_price_incl_vat", left: 431, width: 66, align: "right" },
-
-  // Moved left so it stays inside the Total Amount box.
-  { key: "total_amount_incl_vat", left: 492, width: 72, align: "right" },
+  { key: "unit_price_excl_vat", left: 318.8, width: 48, align: "right" },
+  { key: "vat", left: 371.8, width: 40, align: "right" },
+  { key: "unit_price_incl_vat", left: 416.8, width: 66, align: "right" },
+  { key: "total_amount_incl_vat", left: 477.8, width: 72, align: "right" },
 ];
 
 /**
@@ -107,16 +88,16 @@ export const ITEM_COLUMNS: ItemColumn[] = [
  * The printed Balance Remaining box must remain blank.
  */
 export const TOTAL_FIELDS: FieldBox[] = [
-  // Moved left from previous version so values sit inside the amount boxes.
-  { key: "subtotal", left: 408, top: 596, width: 130, align: "right" },
-  { key: "vat", left: 408, top: 617, width: 130, align: "right" },
-  { key: "total", left: 408, top: 638, width: 130, align: "right" },
-  { key: "previousBalance", left: 408, top: 659, width: 130, align: "right" },
-  { key: "grossTotal", left: 408, top: 680, width: 130, align: "right" },
-  { key: "amountPaid", left: 408, top: 701, width: 130, align: "right" },
+  // Moved DOWN by 0.5cm only.
+  { key: "subtotal", left: 408, top: 610.2, width: 130, align: "right" },
+  { key: "vat", left: 408, top: 631.2, width: 130, align: "right" },
+  { key: "total", left: 408, top: 652.2, width: 130, align: "right" },
+  { key: "previousBalance", left: 408, top: 673.2, width: 130, align: "right" },
+  { key: "grossTotal", left: 408, top: 694.2, width: 130, align: "right" },
+  { key: "amountPaid", left: 408, top: 715.2, width: 130, align: "right" },
 
-  // Do not print this in Dot Matrix.
-  // { key: "balanceRemaining", left: 408, top: 722, width: 130, align: "right" },
+  // Do not print Balance Remaining.
+  // { key: "balanceRemaining", left: 408, top: 736.2, width: 130, align: "right" },
 ];
 
 /**
