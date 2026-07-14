@@ -77,24 +77,40 @@ export type ItemColumn = {
  */
 
 export const ITEM_COLUMNS: ItemColumn[] = [
-  // All item-table values are centered inside their own printed columns,
-  // except Description, which stays left-aligned.
-  // Whole item-table data moved 5pt LEFT.
-  { key: "sn", left: 41, width: 20, align: "center" },
+  // Item-table data moved left by the exact requested mm adjustments.
+  // 0.5mm = 1.42pt, 0.8mm = 2.27pt.
+  // All values remain centered except Description, which stays left-aligned.
 
-  { key: "item_code", left: 63, width: 42, align: "center" },
+  // Moved LEFT by 0.5mm
+  { key: "sn", left: 39.6, width: 20, align: "center" },
 
-  { key: "qty", left: 111, width: 25, align: "center" },
-  { key: "units_per_box", left: 140, width: 31, align: "center" },
-  { key: "total_qty", left: 173, width: 38, align: "center" },
+  // Moved LEFT by 0.5mm
+  { key: "item_code", left: 61.6, width: 42, align: "center" },
 
-  // Description must start from the left and continue left-to-right.
-  { key: "description", left: 217, width: 104, align: "left" },
+  // Moved LEFT by 0.8mm
+  { key: "qty", left: 108.7, width: 25, align: "center" },
 
-  { key: "unit_price_excl_vat", left: 330, width: 47, align: "center" },
-  { key: "vat", left: 384, width: 38, align: "center" },
-  { key: "unit_price_incl_vat", left: 427, width: 64, align: "center" },
-  { key: "total_amount_incl_vat", left: 495, width: 72, align: "center" },
+  // Moved LEFT by 0.8mm
+  { key: "units_per_box", left: 137.7, width: 31, align: "center" },
+
+  // Moved LEFT by 0.8mm
+  { key: "total_qty", left: 170.7, width: 38, align: "center" },
+
+  // Moved LEFT by 0.5mm
+  // Description remains left-aligned.
+  { key: "description", left: 215.6, width: 104, align: "left" },
+
+  // Moved LEFT by 0.8mm
+  { key: "unit_price_excl_vat", left: 327.7, width: 47, align: "center" },
+
+  // Moved LEFT by 0.8mm
+  { key: "vat", left: 381.7, width: 38, align: "center" },
+
+  // Moved LEFT by 0.8mm
+  { key: "unit_price_incl_vat", left: 424.7, width: 64, align: "center" },
+
+  // Moved LEFT by 0.8mm
+  { key: "total_amount_incl_vat", left: 492.7, width: 72, align: "center" },
 ];
 
 /**
