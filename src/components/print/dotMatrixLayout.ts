@@ -75,23 +75,26 @@ export type ItemColumn = {
  * Item Code and Description start from the left and clip if too long.
  * Money columns remain right-aligned for clean amounts.
  */
+
 export const ITEM_COLUMNS: ItemColumn[] = [
-  { key: "sn", left: 46, width: 20, align: "center" },
+  // All item-table values are centered inside their own printed columns,
+  // except Description, which stays left-aligned.
+  // Whole item-table data moved 5pt LEFT.
+  { key: "sn", left: 41, width: 20, align: "center" },
 
-  // Left-aligned so long item codes start from the left and get clipped safely.
-  { key: "item_code", left: 68, width: 42, align: "left" },
+  { key: "item_code", left: 63, width: 42, align: "center" },
 
-  { key: "qty", left: 116, width: 25, align: "center" },
-  { key: "units_per_box", left: 145, width: 31, align: "center" },
-  { key: "total_qty", left: 178, width: 38, align: "center" },
+  { key: "qty", left: 111, width: 25, align: "center" },
+  { key: "units_per_box", left: 140, width: 31, align: "center" },
+  { key: "total_qty", left: 173, width: 38, align: "center" },
 
-  // Description starts inside its printed column and clips before Unit Price.
-  { key: "description", left: 222, width: 104, align: "left" },
+  // Description must start from the left and continue left-to-right.
+  { key: "description", left: 217, width: 104, align: "left" },
 
-  { key: "unit_price_excl_vat", left: 335, width: 47, align: "right" },
-  { key: "vat", left: 389, width: 38, align: "right" },
-  { key: "unit_price_incl_vat", left: 432, width: 64, align: "right" },
-  { key: "total_amount_incl_vat", left: 500, width: 72, align: "right" },
+  { key: "unit_price_excl_vat", left: 330, width: 47, align: "center" },
+  { key: "vat", left: 384, width: 38, align: "center" },
+  { key: "unit_price_incl_vat", left: 427, width: 64, align: "center" },
+  { key: "total_amount_incl_vat", left: 495, width: 72, align: "center" },
 ];
 
 /**

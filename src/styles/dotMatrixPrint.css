@@ -139,7 +139,7 @@
    "Web: www.rampottery.mu" line (~186pt) and above "CUSTOMER DETAILS" (~233pt). */
 .dm-document-title {
   position: absolute;
-  top: 186pt; /* sits under the Web line (~177pt), above CUSTOMER DETAILS (~222pt) */
+  top: 180pt; /* sits under the Web line (~177pt), above CUSTOMER DETAILS (~222pt) */
   left: 50%;
   transform: translateX(-50%);
   width: 3in;
