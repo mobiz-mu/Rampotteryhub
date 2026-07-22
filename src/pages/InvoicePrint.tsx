@@ -1,4 +1,4 @@
-// src/pages/InvoicePrint.tsx
+﻿// src/pages/InvoicePrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -518,7 +518,7 @@ export default function InvoicePrint() {
               amount_paid: null,
               balance_remaining: null,
             }}
-            preparedBy="Manish"
+            preparedBy={inv.sales_rep || ""}
             deliveredBy=""
           />
         </div>
@@ -526,3 +526,4 @@ export default function InvoicePrint() {
     </div>
   );
 }
+

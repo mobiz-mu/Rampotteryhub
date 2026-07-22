@@ -1,4 +1,4 @@
-// src/pages/QuotationPrint.tsx
+﻿// src/pages/QuotationPrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -410,7 +410,7 @@ export default function QuotationPrint() {
         discount_percent: n2(qRow.discount_percent || 0),
         discount_amount: n2(qRow.discount_amount || 0),
       }}
-      preparedBy={String(qRow.prepared_by || "Manish")}
+      preparedBy={String(qRow.sales_rep || "")}
       deliveredBy={String(qRow.delivered_by || "")}
       logoSrc={LOGO_SRC}
     />
@@ -447,3 +447,5 @@ export default function QuotationPrint() {
     </div>
   );
 }
+
+

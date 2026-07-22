@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+﻿import React, { useMemo } from "react";
 import "@/styles/rpdoc.css";
 
 type Party = {
@@ -578,6 +578,9 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
   }, [count, docItems]);
 
   const { page1Items, middlePages, lastPageItems, totalPages, showFooterOnPage1 } = pagination;
+  
+  const resolvedPreparedBy = txt(salesRepName || preparedBy);
+  const resolvedDeliveredBy = txt(deliveredBy);
 
   const poLabel = variant === "QUOTATION" ? txt(purchaseOrderLabel) || "VALID UNTIL:" : "PO. No :";
 
@@ -704,7 +707,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
         </div>
 
         {showFooterOnPage1 ? (
-          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+          <FooterArea totals={totals} preparedBy={resolvedPreparedBy} deliveredBy={resolvedDeliveredBy} />
         ) : null}
       </div>
     </section>
@@ -736,7 +739,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
         </div>
 
         <div className="rpdoc-frame">
-          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+          <FooterArea totals={totals} preparedBy={resolvedPreparedBy} deliveredBy={resolvedDeliveredBy} />
         </div>
       </section>
     ) : !showFooterOnPage1 ? (
@@ -750,7 +753,7 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
             <ItemsTable items={lastPageItems} minRows={LAST_PAGE_ROWS} />
           </div>
 
-          <FooterArea totals={totals} preparedBy={txt(preparedBy)} deliveredBy={txt(deliveredBy)} />
+          <FooterArea totals={totals} preparedBy={resolvedPreparedBy} deliveredBy={resolvedDeliveredBy} />
         </div>
       </section>
     ) : null;
@@ -763,3 +766,4 @@ export default function RamPotteryDoc(props: RamPotteryDocProps) {
     </div>
   );
 }
+

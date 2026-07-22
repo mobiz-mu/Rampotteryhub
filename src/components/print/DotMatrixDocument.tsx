@@ -168,7 +168,7 @@ function DotMatrixPage({
     balanceRemaining: money(data.totals?.balanceRemaining),
   };
   const sigMap: Record<string, string> = {
-    preparedBy: txt(data.preparedBy),
+    preparedBy: txt(data.preparedBy || data.salesRep),
     deliveredBy: txt(data.deliveredBy),
     // NOTE: customer name is intentionally NOT printed in the signature area.
     // It only appears in the top customer-details block (CUSTOMER_FIELDS.name).

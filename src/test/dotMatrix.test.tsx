@@ -2,7 +2,7 @@
 import { render, screen, cleanup } from "@testing-library/react";
 import DotMatrixDocument from "@/components/print/DotMatrixDocument";
 
-// jsdom has no window.print â€” stub it so auto-print doesn't throw.
+// jsdom has no window.print — stub it so auto-print doesn't throw.
 beforeEach(() => {
   cleanup();
   window.print = vi.fn();
@@ -80,4 +80,5 @@ describe("DotMatrixDocument (data-only overlay)", () => {
     expect(printSpy).not.toHaveBeenCalled();
   });
 });
+
 
