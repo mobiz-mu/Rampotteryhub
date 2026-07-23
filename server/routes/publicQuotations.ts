@@ -2,6 +2,10 @@
 import { Router } from "express";
 import { supaAdmin } from "../supabaseAdmin.js";
 
+type RequireUser = (req: any, res: any) => Promise<any>;
+
+export default function publicQuotationsRouter(opts: { requireUser: RequireUser }) {
+const { requireUser } = opts;
 const r = Router();
 
 function isUuid(v: string) {
@@ -18,6 +22,9 @@ function nowIso() {
  */
 r.get("/quotation-link", async (req, res) => {
   try {
+    const actor = await requireUser(req, res);
+    if (!actor) return;
+
     const supabase = supaAdmin();
 
     const rawId = String(req.query.quotation_id || "").trim();
@@ -74,4 +81,5 @@ r.get("/quotation-link", async (req, res) => {
   }
 });
 
-export default r;
+return r;
+}

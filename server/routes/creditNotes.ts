@@ -2,7 +2,10 @@ import { Router } from "express";
 import { supaAdmin } from "../supabaseAdmin.js";
 import crypto from "crypto";
 
+type RequireUser = (req: any, res: any) => Promise<any>;
 
+export default function creditNotesRouter(opts: { requireUser: RequireUser }) {
+const { requireUser } = opts;
 const r = Router();
 
 const n2 = (v: any) => {
@@ -134,6 +137,9 @@ r.get("/:id", async (req, res) => {
 /** POST /api/credit-notes/create */
 r.post("/create", async (req, res) => {
   try {
+    const actor = await requireUser(req, res);
+    if (!actor) return;
+
     const supabase = supaAdmin();
 
     const body = req.body || {};
@@ -199,6 +205,9 @@ r.post("/create", async (req, res) => {
 /** POST /api/credit-notes/:id/void  (stock OUT reversal once) */
 r.post("/:id/void", async (req, res) => {
   try {
+    const actor = await requireUser(req, res);
+    if (!actor) return;
+
     const supabase = supaAdmin();
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ ok: false, error: "Invalid id" });
@@ -258,6 +267,9 @@ r.post("/:id/void", async (req, res) => {
 /** POST /api/credit-notes/:id/refund */
 r.post("/:id/refund", async (req, res) => {
   try {
+    const actor = await requireUser(req, res);
+    if (!actor) return;
+
     const supabase = supaAdmin();
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ ok: false, error: "Invalid id" });
@@ -285,6 +297,9 @@ r.post("/:id/refund", async (req, res) => {
 /** POST /api/credit-notes/:id/restore  (Undo VOID by adding IN movements) */
 r.post("/:id/restore", async (req, res) => {
   try {
+    const actor = await requireUser(req, res);
+    if (!actor) return;
+
     const supabase = supaAdmin();
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ ok: false, error: "Invalid id" });
@@ -350,6 +365,9 @@ r.post("/:id/restore", async (req, res) => {
  */
 r.post("/:id/public-link", async (req, res) => {
   try {
+    const actor = await requireUser(req, res);
+    if (!actor) return;
+
     const supabase = supaAdmin();
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ ok: false, error: "Invalid id" });
@@ -395,5 +413,5 @@ r.post("/:id/public-link", async (req, res) => {
   }
 });
 
-
-export default r;
+return r;
+}

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import RamPotteryDoc from "@/components/print/RamPotteryDoc";
 import DotMatrixDocument, { type DotMatrixDocData } from "@/components/print/DotMatrixDocument";
 import { supabase } from "@/integrations/supabase/client";
+import { usePrintBackNav, dotMatrixUrl, pdfUrl } from "@/lib/printNav";
+import { PublicPreviewToolbar, PublicLinkError } from "@/components/print/PublicPreviewChrome";
 
 import "@/styles/rpdoc.css";
 import "@/styles/print.css";
@@ -77,6 +79,8 @@ export default function CreditNotePrint() {
   const [sp] = useSearchParams();
   const publicToken = (sp.get("t") || "").trim();
   const isPublicMode = !!publicToken;
+
+  const goBack = usePrintBackNav("/credit-notes", isPublicMode);
 
   // Auth check (internal only)
   const [authChecked, setAuthChecked] = useState(false);
@@ -275,11 +279,6 @@ export default function CreditNotePrint() {
     });
   }, [items]);
 
-  function smartBack() {
-    if (window.history.length > 1) nav(-1);
-    else nav(`/credit-notes/${creditNoteId}`);
-  }
-
   async function doPrint() {
     if (printPreparing) return;
 
@@ -337,19 +336,12 @@ export default function CreditNotePrint() {
   }
 
   if (cnQ.isError || !cn) {
+    if (isPublicMode) return <PublicLinkError />;
     const errMsg = (cnQ.error as any)?.message || "";
     return (
       <div className="p-6 text-sm text-destructive">
         Credit note not found / invalid link.
-        <div className="mt-2 text-xs text-muted-foreground">
-          {isPublicMode ? (
-            <>
-              Public links must include a valid token (<b>?t=...</b>)
-            </>
-          ) : (
-            <>Please check the ID and your access.</>
-          )}
-        </div>
+        <div className="mt-2 text-xs text-muted-foreground">Please check the ID and your access.</div>
         {errMsg ? (
           <div className="mt-2 text-xs text-muted-foreground">
             <b>Error:</b> {errMsg}
@@ -388,7 +380,14 @@ export default function CreditNotePrint() {
       preparedBy: "",
       deliveredBy: "",
     };
-    return <DotMatrixDocument data={dmData} docKindLabel="Credit Note" onBack={() => window.history.back()} />;
+    return (
+      <DotMatrixDocument
+        data={dmData}
+        docKindLabel="Credit Note"
+        onBack={goBack.canGoBack ? goBack : undefined}
+        onSwitchToPdf={() => nav(pdfUrl(`/credit-notes/${creditNoteId}/print?${sp.toString()}`))}
+      />
+    );
   }
 
   const Doc = (
@@ -433,21 +432,37 @@ export default function CreditNotePrint() {
   return (
     <div className="print-shell p-4">
       {/* Toolbar */}
-      <div className="no-print flex items-center justify-between gap-3 mb-3">
-        <div className="text-sm text-muted-foreground">
-          Credit Note <b>{cnNo}</b>
-        </div>
+      {isPublicMode ? (
+        <PublicPreviewToolbar
+          docLabel={`Credit Note ${cnNo}`}
+          onSavePdf={doPrint}
+          onPrint={doPrint}
+          onClose={goBack.canGoBack ? goBack : undefined}
+        />
+      ) : (
+        <div className="no-print flex items-center justify-between gap-3 mb-3">
+          <div className="text-sm text-muted-foreground">
+            Credit Note <b>{cnNo}</b>
+          </div>
 
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={smartBack}>
-            Back
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={goBack}>
+              Back
+            </Button>
 
-          <Button onClick={doPrint} disabled={printPreparing}>
-            {printPreparing ? "Preparing…" : "Print / Save PDF"}
-          </Button>
+            <Button
+              variant="outline"
+              onClick={() => nav(dotMatrixUrl(`/credit-notes/${creditNoteId}/print?${sp.toString()}`))}
+            >
+              Dot Matrix
+            </Button>
+
+            <Button onClick={doPrint} disabled={printPreparing}>
+              {printPreparing ? "Preparing…" : "Print / Save PDF"}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Screen preview */}
       <div ref={screenRootRef} className="inv-screen">

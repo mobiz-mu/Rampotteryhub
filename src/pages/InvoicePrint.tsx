@@ -1,18 +1,17 @@
-﻿// src/pages/InvoicePrint.tsx
+// src/pages/InvoicePrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import html2pdf from "html2pdf.js";
 
 import { getInvoicePrintBundle } from "@/lib/invoices";
 import DotMatrixDocument, { type DotMatrixDocData } from "@/components/print/DotMatrixDocument";
 import RamPotteryDoc, { type RamPotteryDocItem } from "@/components/print/RamPotteryDoc";
 import { supabase } from "@/integrations/supabase/client";
+import { usePrintBackNav, dotMatrixUrl, pdfUrl } from "@/lib/printNav";
+import { PublicPreviewToolbar, PublicLinkError } from "@/components/print/PublicPreviewChrome";
 
 import "@/styles/rpdoc.css";
-
-const WA_PHONE = "2307788884";
 
 function isValidId(v: any) {
   const x = Number(v);
@@ -26,13 +25,6 @@ function n(v: any) {
 
 function r2(v: any) {
   return Math.round(n(v) * 100) / 100;
-}
-
-function rs(v: any) {
-  return `Rs ${n(v).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
 }
 
 function fmtDDMMYYYY(v: any) {
@@ -89,6 +81,8 @@ export default function InvoicePrint() {
   const embedMode = sp.get("embed") === "1";
   const publicToken = (sp.get("t") || "").trim();
   const isPublicMode = !!publicToken;
+
+  const goBack = usePrintBackNav("/invoices", isPublicMode);
 
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -225,40 +219,6 @@ export default function InvoicePrint() {
   };
 }, [docItems, inv]);
 
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "https://rampotteryhub.com";
-
-  const viewUrl = isPublicMode
-    ? `${origin}/invoices/${invoiceId}/print?t=${encodeURIComponent(publicToken)}`
-    : `${origin}/invoices/${invoiceId}/print`;
-
-  const waHref = useMemo(() => {
-    if (!inv || !isPublicMode) return "#";
-
-    const gross = n(inv.gross_total ?? inv.total_amount ?? inv.total_incl_vat);
-    const paid = n(inv.amount_paid);
-    const due = Number.isFinite(Number(inv.balance_remaining))
-      ? n(inv.balance_remaining)
-      : Math.max(0, gross - paid);
-
-    const msg = [
-      "Ram Pottery Ltd",
-      "",
-      "Invoice details:",
-      printCustomer.name ? `Customer: ${printCustomer.name}` : null,
-      `Invoice: ${inv.invoice_number || `#${inv.id}`}`,
-      `Invoice Amount: ${rs(gross)}`,
-      `Amount Paid: ${rs(paid)}`,
-      `Amount Due: ${rs(due)}`,
-      "",
-      `Invoice PDF: ${viewUrl}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    return `https://wa.me/${WA_PHONE}?text=${encodeURIComponent(msg)}`;
-  }, [inv, isPublicMode, printCustomer.name, viewUrl]);
-
   useEffect(() => {
     const after = () => {
       document.body.classList.remove("rp-printing");
@@ -355,6 +315,7 @@ export default function InvoicePrint() {
     await waitForImages(node);
 
     try {
+      const html2pdf = (await import("html2pdf.js")).default;
       await html2pdf()
         .set({
           filename: `Invoice-${inv.invoice_number || inv.id}.pdf`,
@@ -397,18 +358,13 @@ export default function InvoicePrint() {
   }
 
   if (invoiceQ.isError || !inv) {
+    if (isPublicMode) return <PublicLinkError />;
     return (
       <div className="p-6 text-sm text-destructive">
         Invoice not found / invalid link.
-        {isPublicMode ? (
-          <div className="mt-2 text-xs text-muted-foreground">
-            Public links must include a valid token (<b>?t=...</b>)
-          </div>
-        ) : (
-          <div className="mt-2 text-xs text-muted-foreground">
-            Please check invoice ID and your access.
-          </div>
-        )}
+        <div className="mt-2 text-xs text-muted-foreground">
+          Please check invoice ID and your access.
+        </div>
       </div>
     );
   }
@@ -443,38 +399,45 @@ export default function InvoicePrint() {
       preparedBy: inv.sales_rep || "",
       deliveredBy: "",
     };
-    return <DotMatrixDocument data={dmData} docKindLabel="Invoice" onBack={() => window.history.back()} />;
+    return (
+      <DotMatrixDocument
+        data={dmData}
+        docKindLabel="Invoice"
+        onBack={goBack.canGoBack ? goBack : undefined}
+        onSwitchToPdf={() => nav(pdfUrl(`/invoices/${invoiceId}/print?${sp.toString()}`))}
+      />
+    );
   }
 
   return (
     <div className={embedMode ? "print-shell" : "print-shell p-4"}>
-      {!embedMode ? (
+      {!embedMode && isPublicMode ? (
+        <PublicPreviewToolbar
+          docLabel={`Invoice ${inv.invoice_number || `#${inv.id}`}`}
+          onSavePdf={downloadPdfClient}
+          onPrint={doPrint}
+          onClose={goBack.canGoBack ? goBack : undefined}
+        />
+      ) : !embedMode ? (
         <div className="no-print mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-muted-foreground">
             Invoice {inv.invoice_number || `#${inv.id}`}
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (isPublicMode) nav("/auth");
-                else nav(-1);
-              }}
-            >
-              {isPublicMode ? "Close" : "Back"}
+            <Button variant="outline" onClick={goBack}>
+              Back
             </Button>
-
-            {isPublicMode ? (
-              <Button variant="outline" asChild>
-                <a href={waHref} target="_blank" rel="noreferrer">
-                  WhatsApp
-                </a>
-              </Button>
-            ) : null}
 
             <Button variant="outline" onClick={downloadPdfClient}>
               Download PDF
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => nav(dotMatrixUrl(`/invoices/${invoiceId}/print?${sp.toString()}`))}
+            >
+              Dot Matrix
             </Button>
 
             <Button onClick={doPrint} disabled={printPreparing}>

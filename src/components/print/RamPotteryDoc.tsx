@@ -1,4 +1,4 @@
-﻿import React, { useMemo } from "react";
+import React, { useMemo } from "react";
 import "@/styles/rpdoc.css";
 
 type Party = {

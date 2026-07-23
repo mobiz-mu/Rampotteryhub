@@ -1,15 +1,17 @@
-import React, { useMemo, useState, useEffect, useRef } from "react";
+import React, { useMemo, useState, useEffect, useRef, Suspense, lazy } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
 import type { Customer } from "@/types/customer";
 import { listCustomers, setCustomerActive } from "@/lib/customers";
 
-import CustomersReport from "@/components/customers/CustomersReport";
+// Lazy-loaded: pulls in jspdf/jspdf-autotable, only needed when the report modal opens.
+const CustomersReport = lazy(() => import("@/components/customers/CustomersReport"));
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 
 import {
@@ -224,14 +226,14 @@ function StatCard({
       : "border-slate-200/70 bg-white/90";
 
   return (
-    <Card className={`rounded-[24px] border p-4 shadow-[0_18px_44px_-30px_rgba(15,23,42,.22)] ${toneCls}`}>
-      <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+    <Card className={`rounded-xl border p-3 shadow-sm ${toneCls}`}>
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
           {icon}
         </div>
         <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
-          <div className="text-2xl font-extrabold tracking-tight text-slate-950">{value}</div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 truncate">{label}</div>
+          <div className="text-lg font-bold tracking-tight text-slate-950 truncate">{value}</div>
         </div>
       </div>
     </Card>
@@ -410,15 +412,15 @@ export default function Customers() {
 
       <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 space-y-4">
-          <div className="flex items-start gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[22px] border border-white/50 bg-white/85 shadow-sm backdrop-blur">
-              <Users className="h-7 w-7 text-primary" />
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/50 bg-white/85 shadow-sm backdrop-blur">
+              <Users className="h-5 w-5 text-primary" />
             </div>
 
             <div className="min-w-0">
-              <div className="text-4xl font-extrabold tracking-tight text-slate-950">Customers</div>
-              <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Executive customer register • stronger readability • premium spacing • better identity control
+              <div className="text-2xl font-bold tracking-tight text-slate-950">Customers</div>
+              <div className="mt-0.5 max-w-3xl text-sm text-muted-foreground">
+                Customer register — search, manage, and report on customer accounts.
               </div>
             </div>
           </div>
@@ -465,12 +467,12 @@ export default function Customers() {
         </div>
       </div>
 
-      <Card className="rounded-[28px] border-white/40 bg-white/88 p-5 shadow-[0_18px_48px_-28px_rgba(15,23,42,.18)] backdrop-blur">
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+      <Card className="rounded-2xl border-white/40 bg-white/88 p-4 shadow-sm backdrop-blur">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <Input
-              className="h-12 rounded-2xl border-slate-200 bg-white pl-11 pr-24 text-sm shadow-[0_10px_24px_-18px_rgba(15,23,42,.18)] focus-visible:ring-2 focus-visible:ring-primary/20"
+              className="h-10 rounded-xl border-slate-200 bg-white pl-11 pr-24 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-primary/20"
               placeholder="Search customer, code, BRN, VAT, phone, WhatsApp, address…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -504,12 +506,12 @@ export default function Customers() {
         </div>
       </Card>
 
-      <Card className="overflow-hidden rounded-[30px] border-white/40 bg-white/90 shadow-[0_22px_60px_-30px_rgba(15,23,42,.20)] backdrop-blur">
-        <div className="border-b border-slate-200/70 bg-white/94 px-5 py-4">
+      <Card className="overflow-hidden rounded-2xl border-white/40 bg-white/90 shadow-sm backdrop-blur">
+        <div className="border-b border-slate-200/70 bg-white/94 px-4 py-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="text-[28px] font-extrabold tracking-tight text-slate-950">Customer Register</div>
-              <div className="mt-1 text-sm text-muted-foreground">{showing}</div>
+              <div className="text-base font-bold tracking-tight text-slate-950">Customer Register</div>
+              <div className="mt-0.5 text-sm text-muted-foreground">{showing}</div>
             </div>
 
             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
@@ -531,9 +533,13 @@ export default function Customers() {
 
         <div className="max-h-[72vh] overflow-auto bg-gradient-to-b from-slate-50/45 to-white px-4 py-3 sm:px-5">
           {customersQ.isLoading ? (
-            <div className="rounded-[24px] border bg-white p-8 text-sm text-muted-foreground">Loading customers…</div>
+            <div className="space-y-2.5">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-20 w-full rounded-xl" />
+              ))}
+            </div>
           ) : paginated.length === 0 ? (
-            <div className="rounded-[24px] border bg-white p-10 text-center">
+            <div className="rounded-xl border bg-white p-10 text-center">
               <div className="text-base font-bold text-slate-800">No customers found</div>
               <div className="mt-1 text-sm text-slate-500">Try another keyword or clear the search.</div>
             </div>
@@ -550,27 +556,27 @@ export default function Customers() {
                 return (
                   <div
                     key={c.id}
-                    className="group rounded-[22px] border border-slate-200/90 bg-white px-4 py-3.5 shadow-[0_14px_34px_-28px_rgba(15,23,42,.18)] transition-all duration-200 hover:-translate-y-[1px] hover:shadow-[0_18px_44px_-26px_rgba(15,23,42,.22)]"
+                    className="group rounded-xl border border-slate-200/90 bg-white px-4 py-3 shadow-sm transition-shadow hover:shadow-md"
                   >
                     <div className="grid gap-4 xl:grid-cols-[1.8fr_1.05fr_.75fr_.78fr_.95fr_.55fr_190px] xl:items-center">
                       <div className="min-w-0">
                         <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Customer</div>
                         <div className="flex items-start gap-3">
-                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[20px] bg-slate-100 text-base font-extrabold text-slate-700 ring-1 ring-slate-200">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700 ring-1 ring-slate-200">
                             {initials(c.name)}
                           </div>
 
                           <div className="min-w-0">
-                            <div className="truncate text-[20px] font-extrabold tracking-tight text-slate-950">
+                            <div className="truncate text-sm font-bold tracking-tight text-slate-950">
                               {c.name || "-"}
                             </div>
 
                             {(c as any).client_name ? (
-                              <div className="mt-1 text-[15px] text-slate-500">
+                              <div className="mt-0.5 text-xs text-slate-500 truncate">
                                 Client: <span className="font-medium text-slate-700">{String((c as any).client_name)}</span>
                               </div>
                             ) : (
-                              <div className="mt-1 text-[15px] text-slate-400">No client alias</div>
+                              <div className="mt-0.5 text-xs text-slate-400">No client alias</div>
                             )}
 
                             <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
@@ -594,7 +600,7 @@ export default function Customers() {
                         <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400 xl:hidden">Address</div>
                         <div className="flex items-start gap-2">
                           <MapPin className="mt-[2px] h-4 w-4 shrink-0 text-slate-400" />
-                          <div className="break-words text-[15px] leading-6 text-slate-700">{c.address || "-"}</div>
+                          <div className="break-words text-xs leading-5 text-slate-700">{c.address || "-"}</div>
                         </div>
                         <div className="mt-2 text-[12px] text-slate-400 break-all" title={identityKey}>
                           Key: {identityKey}
@@ -718,7 +724,11 @@ export default function Customers() {
         </div>
       </Card>
 
-      <CustomersReport open={reportOpen} onOpenChange={setReportOpen} customers={rows} />
+      {reportOpen ? (
+        <Suspense fallback={null}>
+          <CustomersReport open={reportOpen} onOpenChange={setReportOpen} customers={rows} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

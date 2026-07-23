@@ -64,6 +64,8 @@ export type DotMatrixDocumentProps = {
   autoPrint?: boolean;
   /** Back button handler (screen only). */
   onBack?: () => void;
+  /** When provided, shows a "Print PDF" button (screen only) to switch to the PDF/A4 view. */
+  onSwitchToPdf?: () => void;
 };
 
 /* ---------- helpers ---------- */
@@ -168,7 +170,7 @@ function DotMatrixPage({
     balanceRemaining: money(data.totals?.balanceRemaining),
   };
   const sigMap: Record<string, string> = {
-    preparedBy: txt(data.preparedBy || data.salesRep),
+    preparedBy: txt(data.salesRep || data.preparedBy),
     deliveredBy: txt(data.deliveredBy),
     // NOTE: customer name is intentionally NOT printed in the signature area.
     // It only appears in the top customer-details block (CUSTOMER_FIELDS.name).
@@ -243,16 +245,18 @@ function DotMatrixPage({
   );
 }
 
-/* ---------- main ---------- */
-export default function DotMatrixDocument({
-  data,
-  docKindLabel = "Document",
-  autoPrint = true,
-  onBack,
-}: DotMatrixDocumentProps) {
-  const printedRef = useRef(false);
-  const rafRef = useRef<number | undefined>(undefined);
-
+/* ---------- pages for one document (reused by bulk print) ---------- */
+/**
+ * Renders just the `.dot-matrix-page` element(s) for one document's data —
+ * no toolbar, no `dm-print-root`/`dm-screen-wrap` wrapper, no auto-print.
+ * `DotMatrixDocument` renders exactly one of these inside its own wrapper;
+ * bulk print pages render several inside ONE shared wrapper so the existing
+ * `.dot-matrix-page { break-after: page }` CSS paginates them correctly
+ * (each `DotMatrixDocument` has its own `dm-print-root`, and stacking several
+ * of those would make their `position: absolute` print rule overlap them on
+ * the same physical page instead of one page per document).
+ */
+export function DotMatrixPages({ data }: { data: DotMatrixDocData }) {
   const pages: RamPotteryDocItem[][] = useMemo(() => {
     const perPage = Math.max(1, Math.floor(CFG.rowsPerPage));
     const out: RamPotteryDocItem[][] = [];
@@ -263,6 +267,43 @@ export default function DotMatrixDocument({
   }, [data.items]);
 
   const pageCount = pages.length;
+  const hasData = !!(data.docNo || (data.items && data.items.length));
+
+  if (!hasData) {
+    return (
+      <div className="dm-no-print" style={{ color: "#b91c1c", fontSize: 13 }}>
+        No document data to print.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {pages.map((rows, idx) => (
+        <DotMatrixPage
+          key={idx}
+          rows={rows}
+          data={data}
+          showDetails={true}
+          showTotals={idx === pageCount - 1}
+          showSignatures={idx === pageCount - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+/* ---------- main ---------- */
+export default function DotMatrixDocument({
+  data,
+  docKindLabel = "Document",
+  autoPrint = true,
+  onBack,
+  onSwitchToPdf,
+}: DotMatrixDocumentProps) {
+  const printedRef = useRef(false);
+  const rafRef = useRef<number | undefined>(undefined);
+
   const hasData = !!(data.docNo || (data.items && data.items.length));
 
   // Auto-open the print dialog once the data-only layout has actually painted.
@@ -320,6 +361,22 @@ export default function DotMatrixDocument({
                 Back
               </button>
             ) : null}
+            {onSwitchToPdf ? (
+              <button
+                onClick={onSwitchToPdf}
+                style={{
+                  background: "#fff",
+                  color: "#0f172a",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Print PDF
+              </button>
+            ) : null}
             <button
               onClick={() => window.print()}
               style={{
@@ -340,22 +397,7 @@ export default function DotMatrixDocument({
         {/* Fixed @page size for continuous stationery (overrides any A4 @page). */}
         <style>{`@page { size: ${CFG.paperWidthIn}in ${CFG.paperHeightIn}in; margin: 0; }`}</style>
 
-        {!hasData ? (
-          <div className="dm-no-print" style={{ color: "#b91c1c", fontSize: 13 }}>
-            No document data to print.
-          </div>
-        ) : (
-          pages.map((rows, idx) => (
-            <DotMatrixPage
-              key={idx}
-              rows={rows}
-              data={data}
-              showDetails={true}
-              showTotals={idx === pageCount - 1}
-              showSignatures={idx === pageCount - 1}
-            />
-          ))
-        )}
+        <DotMatrixPages data={data} />
       </div>
     </div>
   );

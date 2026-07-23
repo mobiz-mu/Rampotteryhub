@@ -17,7 +17,7 @@ function isLocalhostHost(hostname: string) {
 /**
  * apiFetch()
  * - ✅ Production (Vercel): forces same-origin requests so /api/* rewrites work
- * - ✅ Local dev: optional VITE_API_BASE_URL (ex: http://localhost:3001) OR just use Vite proxy
+ * - ✅ Local dev: optional VITE_API_URL override (ex: http://localhost:3001) OR just use Vite proxy
  * - Sends cookies (credentials: include) for session-based auth (kept as-is)
  */
 export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
@@ -27,7 +27,7 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
 
   // Decide base URL:
   // - Production: always same-origin (base = "")
-  // - Localhost: allow VITE_API_BASE_URL if you want, otherwise same-origin (/api -> Vite proxy)
+  // - Localhost: allow VITE_API_URL if you want, otherwise same-origin (/api -> Vite proxy)
   let base = "";
 
   if (typeof window !== "undefined") {
@@ -36,7 +36,7 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
 
     // Only allow env base on localhost (dev). Never in prod.
     if (isLocal) {
-      base = import.meta.env.VITE_API_BASE_URL || "";
+      base = import.meta.env.VITE_API_URL || "";
     } else {
       base = "";
     }

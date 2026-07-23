@@ -8,6 +8,7 @@ import "@/styles/InvoiceCreate.css"; // ✅ reuse same exact CSS/theme as Invoic
 import RamPotteryDoc from "@/components/print/RamPotteryDoc";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { rankCustomers, rankProducts } from "@/lib/searchRank";
 
 /* =========================================================
    CreditNoteCreate — CLEAN REWORK (no duplicates)
@@ -367,27 +368,11 @@ export default function CreditNoteCreate() {
   }, [invoiceId, invoicesForCustomer]);
 
   const filteredCustomers = useMemo(() => {
-    const t = customerSearchTerm.trim().toLowerCase();
-    if (!t) return customers;
-    return customers.filter((c) => {
-      const name = String(c.name || "").toLowerCase();
-      const phone = String(c.phone || "").toLowerCase();
-      const code = String(c.customer_code || "").toLowerCase();
-      const addr = String(c.address || "").toLowerCase();
-      return name.includes(t) || phone.includes(t) || code.includes(t) || addr.includes(t);
-    });
+    return rankCustomers(customers, customerSearchTerm);
   }, [customers, customerSearchTerm]);
 
   const filteredProducts = useMemo(() => {
-    const t = productSearchTerm.trim().toLowerCase();
-    if (!t) return products;
-    return products.filter((p) => {
-      const code = String(p.item_code || "").toLowerCase();
-      const sku = String(p.sku || "").toLowerCase();
-      const name = String(p.name || "").toLowerCase();
-      const desc = String(p.description || "").toLowerCase();
-      return code.includes(t) || sku.includes(t) || name.includes(t) || desc.includes(t);
-    });
+    return rankProducts(products, productSearchTerm);
   }, [products, productSearchTerm]);
 
   // printed name

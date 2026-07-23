@@ -24,5 +24,8 @@ dist-ssr
 *.sw?
 
 .env
+.env.local
 dist-server/
+.vercel/
+.claude/
 

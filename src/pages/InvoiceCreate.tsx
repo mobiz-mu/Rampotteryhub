@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
 import { listCustomers, listProducts, getInvoiceById, createInvoice } from "@/lib/invoices";
+import { rankCustomers, rankProducts } from "@/lib/searchRank";
 
 /* =========================================================
    Types
@@ -211,88 +212,11 @@ function productLabel(p?: { item_code?: string | null; sku?: string | null; name
   return ref || name || "";
 }
 
-function compactSearch(v: any) {
-  return String(v ?? "").toLowerCase().replace(/\s+/g, "").trim();
-}
-
-function codeAliases(v: any) {
-  const raw = String(v ?? "").trim();
-  if (!raw) return [];
-
-  const set = new Set<string>();
-  set.add(raw);
-  set.add(raw.toUpperCase());
-  set.add(raw.replace(/\s+/g, ""));
-  set.add(raw.toUpperCase().replace(/\s+/g, ""));
-
-  // Only for pure numeric codes: let 3 also match 03 / 003
-  if (/^\d+$/.test(raw)) {
-    const n = String(Number(raw));
-    set.add(n);
-    set.add(n.padStart(2, "0"));
-    set.add(n.padStart(3, "0"));
-  }
-
-  return Array.from(set);
-}
-
-function productMatchesQuery(p: ProductRow, term: string) {
-  const q = compactSearch(term);
-  if (!q) return true;
-
-  const refs = codeAliases(productRef(p)).map(compactSearch);
-  const sku = compactSearch(p.sku);
-  const name = compactSearch(p.name);
-  const desc = compactSearch(p.description);
-
-  return (
-    refs.some((x) => x.includes(q)) ||
-    sku.includes(q) ||
-    name.includes(q) ||
-    desc.includes(q)
-  );
-}
-
 function compareTextAsc(a: any, b: any) {
   return String(a ?? "").localeCompare(String(b ?? ""), undefined, {
     numeric: true,
     sensitivity: "base",
   });
-}
-
-function customerSearchScore(c: CustomerRow, term: string) {
-  const q = compactSearch(term);
-  if (!q) return 0;
-
-  const rawName = String(c.name || "").trim();
-  const name = compactSearch(rawName);
-  const words = rawName
-    .toLowerCase()
-    .split(/\s+/)
-    .map((w) => compactSearch(w))
-    .filter(Boolean);
-
-  const code = compactSearch(c.customer_code);
-  const phone = compactSearch(c.phone);
-  const addr = compactSearch(c.address);
-
-  if (name === q) return 3000;
-  if (words.some((w) => w === q)) return 2800;
-  if (name.startsWith(q)) return 2600;
-  if (words.some((w) => w.startsWith(q))) return 2400;
-
-  if (code === q) return 2200;
-  if (code.startsWith(q)) return 2000;
-
-  if (phone.startsWith(q)) return 1600;
-  if (addr.startsWith(q)) return 1400;
-
-  if (name.includes(q)) return 1200;
-  if (code.includes(q)) return 1000;
-  if (phone.includes(q)) return 900;
-  if (addr.includes(q)) return 800;
-
-  return 0;
 }
 
 function productSortKey(p: ProductRow) {
@@ -560,26 +484,11 @@ const sortedProducts = useMemo(() => {
 const customer = useMemo(() => customers.find((c) => c.id === customerId) || null, [customers, customerId]);
 
 const filteredCustomers = useMemo(() => {
-  const t = customerSearchTerm.trim();
-  if (!t) return sortedCustomers;
-
-  return sortedCustomers
-    .map((c) => ({
-      row: c,
-      score: customerSearchScore(c, t),
-    }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return compareTextAsc(a.row.name, b.row.name);
-    })
-    .map((x) => x.row);
+  return rankCustomers(sortedCustomers, customerSearchTerm);
 }, [sortedCustomers, customerSearchTerm]);
 
 const filteredProducts = useMemo(() => {
-  const t = productSearchTerm.trim();
-  if (!t) return sortedProducts;
-  return sortedProducts.filter((p) => productMatchesQuery(p, t));
+  return rankProducts(sortedProducts, productSearchTerm);
 }, [sortedProducts, productSearchTerm]);
 
   /* =========================

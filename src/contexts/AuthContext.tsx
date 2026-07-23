@@ -81,11 +81,11 @@ function isAbortLikeError(error: any) {
   );
 }
 
-async function fetchRpMe(userId: string, signal?: AbortSignal) {
+async function fetchRpMe(accessToken: string, signal?: AbortSignal) {
   const res = await fetch("/api/auth/me", {
     method: "GET",
     credentials: "include",
-    headers: { "x-rp-user": userId },
+    headers: { authorization: `Bearer ${accessToken}` },
     signal,
   });
 
@@ -188,7 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       try {
-        if (!user?.id) {
+        if (!user?.id || !session?.access_token) {
           if (alive) {
             setProfile(null);
             setProfileError(null);
@@ -202,7 +202,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfileError(null);
         }
 
-        const me = await fetchRpMe(user.id, controller.signal);
+        const me = await fetchRpMe(session.access_token, controller.signal);
 
         if (!alive) return;
 
@@ -235,7 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       alive = false;
       controller.abort();
     };
-  }, [user?.id]);
+  }, [user?.id, session?.access_token]);
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({

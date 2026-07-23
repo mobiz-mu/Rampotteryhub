@@ -2,7 +2,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import html2pdf from "html2pdf.js";
 import { toast } from "sonner";
 
 import "@/styles/reports.css";
@@ -1767,6 +1766,7 @@ export default function Reports() {
 
     try {
       toast.message("Generating PDF…");
+      const html2pdf = (await import("html2pdf.js")).default;
       await (html2pdf() as any).set(opt).from(clone).save();
       toast.success("PDF downloaded");
     } catch (e: any) {

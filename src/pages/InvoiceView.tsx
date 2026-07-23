@@ -23,6 +23,7 @@ import { listInvoiceItems, insertInvoiceItem, deleteInvoiceItem } from "@/lib/in
 import { listCustomers } from "@/lib/customers";
 import { listProducts } from "@/lib/products";
 import { round2 } from "@/lib/invoiceTotals";
+import { getAccessToken } from "@/lib/rpFetch";
 
 import type { Invoice } from "@/types/invoice";
 import type { Product } from "@/types/product";
@@ -132,14 +133,10 @@ function originNow() {
 async function postJson(url: string, body?: any) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  // Attach the authenticated staff header that the Express API requires
-  // for protected routes (e.g. /api/invoices/:id/public-link).
-  try {
-    const rpUser = localStorage.getItem("rp_user");
-    if (rpUser) headers["x-rp-user"] = rpUser;
-  } catch {
-    // localStorage may be unavailable in some contexts; ignore.
-  }
+  // Attach the verified session token that the Express API requires for
+  // protected routes (e.g. /api/invoices/:id/public-link).
+  const token = await getAccessToken();
+  if (token) headers["authorization"] = `Bearer ${token}`;
 
   const res = await fetch(url, {
     method: "POST",

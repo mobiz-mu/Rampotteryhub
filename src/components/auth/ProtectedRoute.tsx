@@ -114,12 +114,22 @@ export function ProtectedRoute({
     );
   }
 
-  if (allowRoles?.length && !allowRoles.includes(role)) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  if (requirePerm && !can(requirePerm)) {
-    return <Navigate to="/dashboard" replace />;
+  if ((allowRoles?.length && !allowRoles.includes(role)) || (requirePerm && !can(requirePerm))) {
+    return (
+      <FullPageMessage
+        title="Access denied"
+        message="You don't have permission to view this page. If you believe this is a mistake, contact your administrator."
+        extra={
+          <button
+            type="button"
+            className="h-10 px-4 rounded-md border bg-background hover:bg-muted/40 text-sm"
+            onClick={() => (window.location.href = "/dashboard")}
+          >
+            Back to Dashboard
+          </button>
+        }
+      />
+    );
   }
 
   return <>{children}</>;

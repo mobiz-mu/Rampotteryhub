@@ -51,13 +51,15 @@ export default defineConfig(({ mode }) => {
             if (id.includes("@supabase/supabase-js")) return "supabase";
             if (id.includes("@tanstack/react-query")) return "react-query";
             if (id.includes("exceljs")) return "exceljs";
-            if (
-              id.includes("html2pdf.js") ||
-              id.includes("html2canvas") ||
-              id.includes("jspdf") ||
-              id.includes("jspdf-autotable")
-            ) {
-              return "print";
+            // Split into two lazy chunks: html2pdf/html2canvas (invoice/quotation/
+            // credit-note PDF export) and jspdf/jspdf-autotable (customers report
+            // export) are triggered by different features, so a user who only
+            // downloads an invoice PDF never fetches the jsPDF table renderer.
+            if (id.includes("html2pdf.js") || id.includes("html2canvas")) {
+              return "pdf-html";
+            }
+            if (id.includes("jspdf-autotable") || id.includes("jspdf")) {
+              return "pdf-table";
             }
             if (id.includes("recharts")) return "charts";
             if (id.includes("@radix-ui/")) return "radix";

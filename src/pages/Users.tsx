@@ -18,6 +18,7 @@ import {
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { getAccessToken } from "@/lib/rpFetch";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 /* =========================
@@ -249,6 +251,7 @@ function apiUrl(path: string) {
 
 async function safeGetJson<T>(url: string, rpUserHeader?: string): Promise<T> {
   const rp = s(rpUserHeader) || s(getRpUserHeaderFromStorage());
+  const token = await getAccessToken();
 
   let res: Response;
   try {
@@ -256,6 +259,7 @@ async function safeGetJson<T>(url: string, rpUserHeader?: string): Promise<T> {
       method: "GET",
       headers: {
         ...(rp ? { "x-rp-user": rp } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
     });
   } catch (err: any) {
@@ -267,6 +271,7 @@ async function safeGetJson<T>(url: string, rpUserHeader?: string): Promise<T> {
 
 async function safePostJson<T>(url: string, payload: any, rpUserHeader?: string): Promise<T> {
   const rp = s(rpUserHeader) || s(getRpUserHeaderFromStorage());
+  const token = await getAccessToken();
 
   let res: Response;
   try {
@@ -275,6 +280,7 @@ async function safePostJson<T>(url: string, payload: any, rpUserHeader?: string)
       headers: {
         "content-type": "application/json",
         ...(rp ? { "x-rp-user": rp } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(payload),
     });
@@ -870,7 +876,11 @@ export default function Users() {
             </div>
            </div>
           ) : loading ? (
-            <div className="text-center py-10 text-muted-foreground">Loading users…</div>
+            <div className="space-y-2 py-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 w-full rounded-xl" />
+              ))}
+            </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-12">
               <Shield className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
@@ -886,6 +896,7 @@ export default function Users() {
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Permissions</TableHead>
                     <TableHead>Joined</TableHead>
                     <TableHead className="w-[56px]" />
                   </TableRow>
@@ -932,6 +943,12 @@ export default function Users() {
                           >
                             {u.is_active ? "Active" : "Inactive"}
                           </span>
+                        </TableCell>
+
+                        <TableCell className="text-muted-foreground text-xs">
+                          {u.role === "admin"
+                            ? "All (Admin)"
+                            : `${ALL_PERMISSION_KEYS.filter((k) => !!u.permissions?.[k]).length}/${ALL_PERMISSION_KEYS.length} granted`}
                         </TableCell>
 
                         <TableCell className="text-muted-foreground">

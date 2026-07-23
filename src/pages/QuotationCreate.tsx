@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { listCustomers } from "@/lib/customers";
 import { listProducts } from "@/lib/invoices";
 import { createQuotationFull, getQuotation, getQuotationItems } from "@/lib/quotations";
+import { rankCustomers, rankProducts } from "@/lib/searchRank";
 
 /* =========================
    Types
@@ -551,21 +552,11 @@ export default function QuotationCreate() {
 
   /* ===== Search dialogs ===== */
   const filteredCustomers = useMemo(() => {
-    const t = custSearch.trim().toLowerCase();
-    if (!t) return customers;
-    return customers.filter((c) => {
-      const hay = `${c.name || ""} ${c.phone || ""} ${c.customer_code || ""} ${c.address || ""}`.toLowerCase();
-      return hay.includes(t);
-    });
+    return rankCustomers(customers, custSearch);
   }, [customers, custSearch]);
 
   const filteredProducts = useMemo(() => {
-    const t = prodSearch.trim().toLowerCase();
-    if (!t) return products;
-    return products.filter((p) => {
-      const hay = `${p.item_code || ""} ${p.sku || ""} ${p.name || ""} ${p.description || ""}`.toLowerCase();
-      return hay.includes(t);
-    });
+    return rankProducts(products, prodSearch);
   }, [products, prodSearch]);
 
   function openCustomerSearch() {

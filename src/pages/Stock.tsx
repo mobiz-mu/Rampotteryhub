@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 
 // NOTE: Excel (.xlsx) import/export is handled via the maintained `exceljs`
@@ -549,14 +550,14 @@ function Stat({
       : "border-slate-200 bg-white/85";
 
   return (
-    <Card className={`rounded-[20px] border p-3 shadow-[0_16px_40px_-28px_rgba(0,0,0,.22)] ${ring}`}>
-      <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+    <Card className={`rounded-xl border p-3 shadow-sm ${ring}`}>
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-slate-200">
           {icon}
         </div>
         <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
-          <div className="text-2xl font-extrabold tracking-tight text-slate-950">{value}</div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500 truncate">{label}</div>
+          <div className="text-lg font-bold tracking-tight text-slate-950 truncate">{value}</div>
         </div>
       </div>
     </Card>
@@ -1261,7 +1262,7 @@ export default function Stock() {
 
       return (
         <div
-          className={`group rounded-[20px] border bg-white px-3.5 py-3 shadow-[0_14px_36px_-26px_rgba(15,23,42,.22)] transition-all duration-200 hover:-translate-y-[1px] hover:shadow-[0_18px_42px_-24px_rgba(15,23,42,.26)] ${
+          className={`group rounded-xl border bg-white px-3.5 py-2.5 shadow-sm transition-shadow hover:shadow-md ${
             r.low ? "border-amber-300/70 ring-1 ring-amber-500/15" : "border-slate-200/85"
           }`}
           onDoubleClick={() => openEdit(p)}
@@ -1285,7 +1286,7 @@ export default function Stock() {
 
             <div className="min-w-0">
               <SectionLabel>Description</SectionLabel>
-              <div className="truncate text-base font-extrabold tracking-tight text-slate-950">{p.name}</div>
+              <div className="truncate text-sm font-bold tracking-tight text-slate-950">{p.name}</div>
               {p.description ? <div className="mt-1 line-clamp-1 text-sm text-slate-500">{p.description}</div> : null}
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                 <span className="rounded-full bg-slate-100 px-2.5 py-0.5 font-semibold text-slate-700">Type: {r.stock.unit}</span>
@@ -1319,7 +1320,7 @@ export default function Stock() {
 
             <div className="min-w-0 xl:text-right">
               <SectionLabel>Stock</SectionLabel>
-              <div className="truncate text-base font-extrabold text-slate-950 sm:text-[18px]">{r.stock.primary}</div>
+              <div className="truncate text-sm font-bold text-slate-950 sm:text-base">{r.stock.primary}</div>
               <div className="mt-0.5 text-xs text-slate-500">{r.stock.secondary}</div>
               {r.reorder ? (
                 <div className="mt-1 text-xs text-slate-500">
@@ -1333,7 +1334,7 @@ export default function Stock() {
 
             <div className="min-w-0 xl:text-right">
               <SectionLabel>Price</SectionLabel>
-              <div className="truncate text-base font-extrabold text-slate-950 sm:text-[18px]">
+              <div className="truncate text-sm font-bold text-slate-950 sm:text-base">
                 Rs {money(p.selling_price)} <span className="text-xs font-semibold text-slate-500">/ {r.priceUnit}</span>
               </div>
               <div className="mt-0.5 text-xs text-slate-500">
@@ -1404,14 +1405,14 @@ export default function Stock() {
       {/* HEADER */}
       <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 space-y-4">
-          <div className="flex items-start gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[22px] border border-white/40 bg-white/75 shadow-sm backdrop-blur">
-              <Package className="h-7 w-7 text-primary" />
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/40 bg-white/75 shadow-sm backdrop-blur">
+              <Package className="h-5 w-5 text-primary" />
             </div>
             <div className="min-w-0">
-              <div className="text-3xl font-extrabold tracking-tight text-slate-950 sm:text-4xl">Stock Register</div>
-              <div className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Premium inventory dashboard • smoother native scrolling • compact aligned register cards • same backend logic
+              <div className="text-2xl font-bold tracking-tight text-slate-950">Stock Register</div>
+              <div className="mt-0.5 max-w-3xl text-sm text-muted-foreground">
+                Inventory register — search, track stock levels, and manage products.
               </div>
             </div>
           </div>
@@ -1460,7 +1461,7 @@ export default function Stock() {
             Export CSV
           </Button>
 
-          <Button className="h-12 rounded-2xl gradient-primary px-5 shadow-glow text-primary-foreground" onClick={openNew}>
+          <Button className="h-10 rounded-xl gradient-primary px-5 shadow-glow text-primary-foreground" onClick={openNew}>
             <Plus className="mr-2 h-4 w-4" />
             New Product
           </Button>
@@ -1468,12 +1469,12 @@ export default function Stock() {
       </div>
 
       {/* FILTERS */}
-      <Card className="rounded-[24px] border-white/35 bg-white/82 p-4 shadow-[0_18px_48px_-28px_rgba(0,0,0,.24)] backdrop-blur">
+      <Card className="rounded-2xl border-white/35 bg-white/82 p-4 shadow-sm backdrop-blur">
         <div className="grid gap-4 xl:grid-cols-[1.25fr_.9fr_auto] xl:items-center">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <Input
-            className="h-12 rounded-2xl border-slate-200 bg-white pl-11 pr-24 text-sm shadow-[0_10px_28px_-18px_rgba(15,23,42,.22)] focus-visible:ring-2 focus-visible:ring-primary/20"  
+            className="h-10 rounded-xl border-slate-200 bg-white pl-11 pr-24 text-sm shadow-sm focus-visible:ring-2 focus-visible:ring-primary/20"
             placeholder="Search by item code, SKU, name, description…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -1490,7 +1491,7 @@ export default function Stock() {
            </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="flex items-center justify-between rounded-[24px] border bg-white px-4 py-3 shadow-sm">
+            <div className="flex items-center justify-between rounded-xl border bg-white px-4 py-2.5 shadow-sm">
               <div className="min-w-0">
                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Low Stock Only</div>
                 <div className="text-xs text-slate-500">Show items at or below reorder</div>
@@ -1498,7 +1499,7 @@ export default function Stock() {
               <Switch checked={lowOnly} onCheckedChange={(v) => setLowOnly(!!v)} />
             </div>
 
-            <div className="flex items-center justify-between rounded-[24px] border bg-white px-4 py-3 shadow-sm">
+            <div className="flex items-center justify-between rounded-xl border bg-white px-4 py-2.5 shadow-sm">
               <div className="min-w-0">
                 <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Active Only</div>
                 <div className="text-xs text-slate-500">Hide inactive products</div>
@@ -1569,11 +1570,11 @@ export default function Stock() {
       </Card>
 
       {/* REGISTER */}
-      <Card className="overflow-hidden rounded-[30px] border-white/35 bg-white/84 shadow-[0_22px_60px_-30px_rgba(0,0,0,.28)] backdrop-blur">
-        <div className="sticky top-0 z-20 border-b border-slate-200/70 bg-white/92 px-5 py-4 backdrop-blur">
+      <Card className="overflow-hidden rounded-2xl border-white/35 bg-white/84 shadow-sm backdrop-blur">
+        <div className="sticky top-0 z-20 border-b border-slate-200/70 bg-white/92 px-4 py-3 backdrop-blur">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="text-[30px] font-extrabold tracking-tight text-slate-950">Stock Register</div>
+              <div className="text-base font-bold tracking-tight text-slate-950">Stock Register</div>
               <div className="text-sm text-muted-foreground">
                 {productsQ.isLoading ? "Loading…" : `${rows.length} product(s)`}
                 {needLinks && linksQ.isFetching ? " • syncing categories…" : ""}
@@ -1581,11 +1582,11 @@ export default function Stock() {
             </div>
 
             <div className="flex items-center gap-2">
-              <Button variant="outline" className="h-11 rounded-2xl" onClick={scrollToTop}>
+              <Button variant="outline" size="sm" className="rounded-xl" onClick={scrollToTop}>
                 <ChevronUp className="mr-1 h-4 w-4" />
                 Top
               </Button>
-              <Button variant="outline" className="h-11 rounded-2xl" onClick={scrollToBottom}>
+              <Button variant="outline" size="sm" className="rounded-xl" onClick={scrollToBottom}>
                 <ChevronDown className="mr-1 h-4 w-4" />
                 Bottom
               </Button>
@@ -1604,9 +1605,13 @@ export default function Stock() {
 
         <div ref={listRef} className="h-[62vh] overflow-auto bg-gradient-to-b from-slate-50/45 to-white px-4 py-4 sm:px-5">
           {productsQ.isLoading ? (
-            <div className="rounded-[24px] border bg-white p-8 text-sm text-muted-foreground">Loading stock items…</div>
+            <div className="space-y-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-16 w-full rounded-xl" />
+              ))}
+            </div>
           ) : rendered.length === 0 ? (
-            <div className="rounded-[24px] border bg-white p-10 text-center">
+            <div className="rounded-xl border bg-white p-10 text-center">
               <div className="text-base font-bold text-slate-800">No items found</div>
               <div className="mt-1 text-sm text-slate-500">Try clearing filters or searching another keyword.</div>
             </div>

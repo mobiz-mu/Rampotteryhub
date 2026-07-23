@@ -1,4 +1,4 @@
-// src/pages/Invoices.tsx
+﻿// src/pages/Invoices.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -365,11 +365,8 @@ export default function Invoices() {
 
 async function fixOldInvoiceTotals() {
   try {
-    console.log("Starting backfill...");
 
     const res = await backfillAllInvoiceHeaderTotals();
-
-    console.log("BACKFILL RESULT:", res);
 
     if (!res) {
       console.error("No response from backfill");
@@ -712,7 +709,7 @@ async function fixOldInvoiceTotals() {
     toast.success(`${matched.length} invoice(s) selected`);
   }
 
-function printSelected() {
+function printSelected(format: "pdf" | "dot-matrix" = "pdf") {
   const selected = selectedIds
     .map((id) => Number(id))
     .filter((id) => Number.isFinite(id) && id > 0);
@@ -722,8 +719,11 @@ function printSelected() {
     return;
   }
 
+  const qs = new URLSearchParams({ ids: selected.join(",") });
+  if (format === "dot-matrix") qs.set("format", "dot-matrix");
+
   const win = window.open(
-    `/invoices/bulk-print?ids=${selected.join(",")}`,
+    `/invoices/bulk-print?${qs.toString()}`,
     "_blank",
     "noopener,noreferrer"
   );
@@ -1144,14 +1144,21 @@ function printSelected() {
             Match Numbers
           </Button>
 
-          <Button
-            onClick={printSelected}
-            className="gradient-primary shadow-glow text-primary-foreground"
-            disabled={!selectedIds.length}
-          >
-            <Printer className="mr-2 h-4 w-4" />
-            Print Selected
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                className="gradient-primary shadow-glow text-primary-foreground"
+                disabled={!selectedIds.length}
+              >
+                <Printer className="mr-2 h-4 w-4" />
+                Print Selected
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => printSelected("pdf")}>Print PDF</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => printSelected("dot-matrix")}>Dot Matrix</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </Card>
 
@@ -1584,3 +1591,5 @@ function printSelected() {
     </div>
   );
 }
+
+

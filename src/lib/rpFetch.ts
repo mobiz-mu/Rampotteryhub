@@ -1,10 +1,17 @@
 // src/lib/rpFetch.ts
+import { supabase } from "@/integrations/supabase/client";
+
+/** Current Supabase session access token, if any — the server verifies this. */
+export async function getAccessToken(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data?.session?.access_token || null;
+}
+
 export async function rpFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const headers = new Headers(init.headers || {});
 
-  // attach rp_user to every API call
-  const raw = localStorage.getItem("rp_user");
-  if (raw) headers.set("x-rp-user", raw);
+  const token = await getAccessToken();
+  if (token) headers.set("authorization", `Bearer ${token}`);
 
   // JSON convenience
   if (!headers.has("content-type") && init.body) {

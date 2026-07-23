@@ -27,31 +27,50 @@ function round2(n: number) {
 
 export type CreditPaymentStatus = "UNPAID" | "PARTIALLY_PAID" | "PAID";
 
+/** Invoices older than this (days, unpaid balance) mark a customer "Overdue". Matches the
+ * "0-30 = good" boundary already used on the Aging Report (src/pages/AgingReport.tsx). */
+const OVERDUE_AFTER_DAYS = 30;
+
 export type CreditInvoiceRow = {
   id: number;
   invoice_number: string;
   customer_id: number;
   customer_name: string;
   customer_code: string | null;
+  customer_phone: string | null;
   invoice_date: string | null;
   total: number;
-  paid: number;
+  paid: number; // real invoice_payments amount only (credit notes are NOT folded in here)
+  credits: number; // credits_applied — credit notes deducted from this invoice
   balance: number;
   status: string; // raw DB status (ISSUED / PARTIALLY_PAID / PAID ...)
   pay_status: CreditPaymentStatus; // normalized for the Credits page
+  age_days: number; // days since invoice_date
 };
 
 export type CreditCustomerSummary = {
   customer_id: number;
   customer_name: string;
   customer_code: string | null;
+  customer_phone: string | null;
   invoices: CreditInvoiceRow[];
   due_count: number; // # of invoices with balance > 0
-  total_invoiced: number; // sum of invoice totals (open invoices)
-  total_paid: number; // sum of amount paid (open invoices)
-  balance_due: number; // sum of outstanding balances
+  total_invoiced: number; // sum of invoice totals (open invoices) — "Total Amount Purchased"
+  total_paid: number; // sum of real payments only (open invoices) — "Total Amount Paid"
+  total_credit_notes: number; // sum of credits_applied (open invoices)
+  balance_due: number; // sum of outstanding balances, sourced from the DB (never recomputed here)
   pay_status: CreditPaymentStatus; // overall status for the customer
+  is_overdue: boolean; // has an open invoice older than OVERDUE_AFTER_DAYS
 };
+
+function daysSince(dateStr: any): number {
+  const s = String(dateStr || "").trim();
+  if (!s) return 0;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return 0;
+  const ms = Date.now() - d.getTime();
+  return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
+}
 
 /** Normalize a raw invoice row into total / paid / balance / status. */
 function normalizeInvoice(r: any): CreditInvoiceRow {
@@ -78,12 +97,15 @@ function normalizeInvoice(r: any): CreditInvoiceRow {
     customer_id: Number(r.customer_id),
     customer_name: r?.customers?.name ?? r?.customer_name ?? "—",
     customer_code: r?.customers?.customer_code ?? r?.customer_code ?? null,
+    customer_phone: r?.customers?.phone ?? r?.customer_phone ?? null,
     invoice_date: r.invoice_date ?? null,
     total,
-    paid: round2(paid + credits),
+    paid,
+    credits,
     balance,
     status: String(r.status ?? ""),
     pay_status,
+    age_days: daysSince(r.invoice_date),
   };
 }
 
@@ -101,7 +123,7 @@ export async function listCreditInvoices(): Promise<CreditInvoiceRow[]> {
       id, invoice_number, customer_id, invoice_date, status,
       total_amount, gross_total, total_incl_vat,
       amount_paid, credits_applied, balance_remaining, balance_due,
-      customers:customer_id ( id, name, customer_code )
+      customers:customer_id ( id, name, customer_code, phone )
       `
     )
     .not("status", "in", "(DRAFT,VOID)")
@@ -125,27 +147,34 @@ export function buildCustomerSummaries(invoices: CreditInvoiceRow[]): CreditCust
         customer_id: inv.customer_id,
         customer_name: inv.customer_name,
         customer_code: inv.customer_code,
+        customer_phone: inv.customer_phone,
         invoices: [],
         due_count: 0,
         total_invoiced: 0,
         total_paid: 0,
+        total_credit_notes: 0,
         balance_due: 0,
         pay_status: "PAID",
+        is_overdue: false,
       };
       byCustomer.set(inv.customer_id, s);
     }
     s.invoices.push(inv);
     s.total_invoiced = round2(s.total_invoiced + inv.total);
     s.total_paid = round2(s.total_paid + inv.paid);
+    s.total_credit_notes = round2(s.total_credit_notes + inv.credits);
     s.balance_due = round2(s.balance_due + inv.balance);
-    if (inv.balance > 0.009) s.due_count += 1;
+    if (inv.balance > 0.009) {
+      s.due_count += 1;
+      if (inv.age_days > OVERDUE_AFTER_DAYS) s.is_overdue = true;
+    }
   }
 
   for (const s of byCustomer.values()) {
     // Sort each customer's invoices oldest-first for the detail view.
     s.invoices.sort((a, b) => String(a.invoice_date).localeCompare(String(b.invoice_date)) || a.id - b.id);
     if (s.balance_due <= 0.009) s.pay_status = "PAID";
-    else if (s.total_paid > 0.009) s.pay_status = "PARTIALLY_PAID";
+    else if (s.total_paid + s.total_credit_notes > 0.009) s.pay_status = "PARTIALLY_PAID";
     else s.pay_status = "UNPAID";
   }
 
@@ -261,4 +290,34 @@ export async function applyCustomerPayment(input: ApplyPaymentInput): Promise<Al
 /** Per-invoice payment history (reuses the payments lib). */
 export async function getInvoicePaymentHistory(invoiceId: number) {
   return listPayments(invoiceId);
+}
+
+export type CustomerCreditNoteRow = {
+  id: number;
+  credit_note_number: string | null;
+  credit_note_date: string | null;
+  total_amount: number;
+  reason: string | null;
+  status: string;
+};
+
+/** All ISSUED credit notes for a customer (internal admin "View" only — never
+ * rendered as individual rows in the printable summary report). */
+export async function getCustomerCreditNotes(customerId: number): Promise<CustomerCreditNoteRow[]> {
+  const { data, error } = await supabase
+    .from("credit_notes")
+    .select("id,credit_note_number,credit_note_date,total_amount,reason,status")
+    .eq("customer_id", customerId)
+    .eq("status", "ISSUED")
+    .order("credit_note_date", { ascending: false });
+
+  if (error) throw error;
+  return (data || []).map((r: any) => ({
+    id: Number(r.id),
+    credit_note_number: r.credit_note_number ?? null,
+    credit_note_date: r.credit_note_date ?? null,
+    total_amount: round2(n2(r.total_amount)),
+    reason: r.reason ?? null,
+    status: String(r.status ?? ""),
+  }));
 }

@@ -21,14 +21,6 @@ import creditNotesRouter from "./routes/creditNotes.js";
 /* =========================
    Types
 ========================= */
-type RpUserHeader = {
-  id?: number | string;
-  user_id?: string;
-  username?: string;
-  role?: string;
-  name?: string;
-};
-
 type RpUserDb = {
   id: number;
   user_id: string | null;
@@ -43,79 +35,37 @@ type RpUserDb = {
    Auth (REAL) — validate rp_users
 ========================= */
 
-function looksLikeUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
-
-function parseUserHeader(raw: string | null): RpUserHeader | null {
+function parseBearerToken(raw: string | null): string | null {
   if (!raw) return null;
-  const txt = String(raw).trim();
-  if (!txt) return null;
-
-  // JSON header
-  if (txt.startsWith("{") && txt.endsWith("}")) {
-    try {
-      return JSON.parse(txt);
-    } catch {
-      return null;
-    }
-  }
-
-  // plain UUID
-  if (looksLikeUuid(txt)) {
-    return { user_id: txt };
-  }
-
-  // plain username
-  return { username: txt };
+  const m = /^Bearer\s+(.+)$/i.exec(String(raw).trim());
+  return m ? m[1].trim() : null;
 }
 
+/**
+ * Resolves the calling user from a verified Supabase access token (Authorization:
+ * Bearer <jwt>), never from the client-suppliable `x-rp-user` header alone. Prior
+ * behavior trusted the raw header value as the identity claim, which let anyone
+ * impersonate any user by setting the header — the token is now verified against
+ * Supabase auth first, and rp_users is looked up by that verified id only.
+ */
 async function resolveUser(req: express.Request): Promise<RpUserDb | null> {
-  const header = parseUserHeader(String(req.headers["x-rp-user"] || ""));
-  if (!header) return null;
+  const token = parseBearerToken(String(req.headers["authorization"] || ""));
+  if (!token) return null;
 
   const supabase = supaAdmin();
 
-  // 1) Prefer numeric id (rp_users.id)
-  if (header.id && Number.isFinite(Number(header.id))) {
-    const { data, error } = await supabase
-      .from("rp_users")
-      .select("id,user_id,username,role,is_active,permissions")
-      .eq("id", Number(header.id))
-      .eq("is_active", true)
-      .single();
+  const { data: authData, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !authData?.user?.id) return null;
 
-    if (error || !data) return null;
-    return data as RpUserDb;
-  }
+  const { data, error } = await supabase
+    .from("rp_users")
+    .select("id,user_id,username,role,is_active,permissions")
+    .eq("user_id", authData.user.id)
+    .eq("is_active", true)
+    .single();
 
-  // 2) Prefer UUID user_id (auth.users.id)
-  if (header.user_id) {
-    const { data, error } = await supabase
-      .from("rp_users")
-      .select("id,user_id,username,role,is_active,permissions")
-      .eq("user_id", String(header.user_id))
-      .eq("is_active", true)
-      .single();
-
-    if (error || !data) return null;
-    return data as RpUserDb;
-  }
-
-  // 3) Fallback username
-  if (header.username) {
-    const { data, error } = await supabase
-      .from("rp_users")
-      .select("id,user_id,username,role,is_active,permissions")
-      .eq("username", String(header.username))
-      .eq("is_active", true)
-      .single();
-
-    if (error || !data) return null;
-    return data as RpUserDb;
-  }
-
-  return null;
+  if (error || !data) return null;
+  return data as RpUserDb;
 }
 
 
@@ -129,7 +79,7 @@ async function requireUser(req: express.Request, res: express.Response) {
   if (!user) {
     return res.status(401).json({
       ok: false,
-      error: "Unauthorized - missing or invalid x-rp-user header",
+      error: "Unauthorized - missing or invalid session token",
     });
   }
 
@@ -142,7 +92,7 @@ async function requireAdmin(req: express.Request, res: express.Response) {
   if (!user) {
     return res.status(401).json({
       ok: false,
-      error: "Unauthorized - missing or invalid x-rp-user header",
+      error: "Unauthorized - missing or invalid session token",
     });
   }
 
@@ -274,12 +224,11 @@ app.use(
 })
 );
 
+const isProd = process.env.NODE_ENV === "production";
+
 app.use((req, _res, next) => {
-  if (req.url.startsWith("/api")) {
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  if (!isProd && req.url.startsWith("/api")) {
     console.log("API CALL:", req.method, req.url);
-    console.log("x-rp-user header =", req.headers["x-rp-user"]);
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   }
   next();
 });
@@ -308,12 +257,22 @@ app.use(
 
 // Quotations
 app.use("/api/quotations", quotationsRouter);
-app.use("/api/public", publicQuotations);
+app.use(
+  "/api/public",
+  publicQuotations({
+    requireUser,
+  })
+);
 app.use("/api/public", publicQuotationPrint);
 
 // Credit notes  (GET /, GET /:id, POST /create, /:id/void, /:id/refund,
 //                /:id/restore, /:id/public-link)
-app.use("/api/credit-notes", creditNotesRouter);
+app.use(
+  "/api/credit-notes",
+  creditNotesRouter({
+    requireUser,
+  })
+);
 
 app.use("/api/reports/summary", summaryReportsRouter);
 

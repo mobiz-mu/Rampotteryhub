@@ -11,6 +11,7 @@
 import React, { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import {
   Search,
   Users,
@@ -21,6 +22,7 @@ import {
   Eye,
   Plus,
   Loader2,
+  FileText,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
@@ -29,7 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -60,6 +62,7 @@ import {
   previewAllocation,
   applyCustomerPayment,
   getInvoicePaymentHistory,
+  getCustomerCreditNotes,
   type CreditCustomerSummary,
   type CreditInvoiceRow,
   type CreditPaymentStatus,
@@ -83,10 +86,18 @@ const PAYMENT_METHODS: { value: string; label: string }[] = [
   { value: "OTHER", label: "Other" },
 ];
 
-/** Credits page only ever deals with outstanding balances. */
-type StatusFilter = "ALL" | "UNPAID" | "PARTIALLY_PAID";
+/** Credits page defaults to outstanding balances; fully paid customers can be shown on request. */
+type StatusFilter = "ALL" | "UNPAID" | "PARTIALLY_PAID" | "PAID";
 
-function statusBadge(status: CreditPaymentStatus) {
+function statusBadge(status: CreditPaymentStatus, isOverdue?: boolean) {
+  if (status !== "PAID" && isOverdue) {
+    return (
+      <Badge variant="outline" className="rounded-full bg-red-100 text-red-700 border-red-200">
+        Overdue
+      </Badge>
+    );
+  }
+
   const map: Record<CreditPaymentStatus, string> = {
     PAID: "bg-emerald-100 text-emerald-700 border-emerald-200",
     PARTIALLY_PAID: "bg-amber-100 text-amber-700 border-amber-200",
@@ -95,7 +106,7 @@ function statusBadge(status: CreditPaymentStatus) {
   const label: Record<CreditPaymentStatus, string> = {
     PAID: "Paid",
     PARTIALLY_PAID: "Partially Paid",
-    UNPAID: "Unpaid",
+    UNPAID: "Due",
   };
   return <Badge variant="outline" className={`rounded-full ${map[status]}`}>{label[status]}</Badge>;
 }
@@ -140,12 +151,14 @@ function SummaryCard({
 ========================= */
 export default function Credits() {
   const qc = useQueryClient();
+  const nav = useNavigate();
 
   const [customerQuery, setCustomerQuery] = useState("");
   const [invoiceQuery, setInvoiceQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [showFullyPaid, setShowFullyPaid] = useState(false);
 
   const [detailCustomer, setDetailCustomer] = useState<CreditCustomerSummary | null>(null);
   const [payCustomer, setPayCustomer] = useState<CreditCustomerSummary | null>(null);
@@ -162,15 +175,16 @@ export default function Credits() {
   const filteredInvoices = useMemo(() => {
     const invQ = invoiceQuery.trim().toLowerCase();
     return allInvoices.filter((inv) => {
-      // Credits page is outstanding-only: never show fully paid invoices.
-      if (inv.pay_status === "PAID" || inv.balance <= 0.009) return false;
+      // Credits page defaults to outstanding-only; fully paid invoices can be
+      // surfaced on request via the "Show fully paid" toggle.
+      if (!showFullyPaid && (inv.pay_status === "PAID" || inv.balance <= 0.009)) return false;
       if (status !== "ALL" && inv.pay_status !== status) return false;
       if (invQ && !inv.invoice_number.toLowerCase().includes(invQ)) return false;
       if (dateFrom && String(inv.invoice_date || "") < dateFrom) return false;
       if (dateTo && String(inv.invoice_date || "") > dateTo) return false;
       return true;
     });
-  }, [allInvoices, status, invoiceQuery, dateFrom, dateTo]);
+  }, [allInvoices, status, invoiceQuery, dateFrom, dateTo, showFullyPaid]);
 
   const summaries = useMemo(() => {
     const list = buildCustomerSummaries(filteredInvoices);
@@ -179,7 +193,8 @@ export default function Credits() {
     return list.filter(
       (s) =>
         s.customer_name.toLowerCase().includes(cq) ||
-        String(s.customer_code || "").toLowerCase().includes(cq)
+        String(s.customer_code || "").toLowerCase().includes(cq) ||
+        String(s.customer_phone || "").toLowerCase().includes(cq)
     );
   }, [filteredInvoices, customerQuery]);
 
@@ -187,6 +202,7 @@ export default function Credits() {
   const totals = useMemo(() => {
     let customersWithDue = 0;
     let totalDue = 0; // original total of invoices still carrying a balance
+    let totalPaid = 0; // total paid across all shown invoices
     let partiallyPaidOutstanding = 0; // remaining balance on partially-paid invoices
     let unpaidInvoices = 0; // count of fully-unpaid invoices
     let outstanding = 0;
@@ -195,11 +211,12 @@ export default function Credits() {
       outstanding += s.balance_due;
       for (const inv of s.invoices) {
         if (inv.balance > 0.009) totalDue += inv.total;
+        totalPaid += inv.paid;
         if (inv.pay_status === "PARTIALLY_PAID") partiallyPaidOutstanding += inv.balance;
         if (inv.pay_status === "UNPAID") unpaidInvoices += 1;
       }
     }
-    return { customersWithDue, totalDue, partiallyPaidOutstanding, unpaidInvoices, outstanding };
+    return { customersWithDue, totalDue, totalPaid, partiallyPaidOutstanding, unpaidInvoices, outstanding };
   }, [summaries]);
 
   function refresh() {
@@ -231,36 +248,30 @@ export default function Credits() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <SummaryCard
           icon={Users}
-          label="Customers With Due"
+          label="Total Customers With Due"
           value={String(totals.customersWithDue)}
           accent="bg-indigo-100 text-indigo-700"
         />
         <SummaryCard
           icon={Receipt}
-          label="Total Due Amount"
+          label="Total Amount Due"
           value={rs(totals.totalDue)}
           accent="bg-sky-100 text-sky-700"
         />
         <SummaryCard
           icon={CreditCard}
-          label="Partially Paid Amount"
-          value={rs(totals.partiallyPaidOutstanding)}
-          accent="bg-amber-100 text-amber-700"
+          label="Total Amount Paid"
+          value={rs(totals.totalPaid)}
+          accent="bg-emerald-100 text-emerald-700"
         />
         <SummaryCard
           icon={CircleDollarSign}
-          label="Total Outstanding"
+          label="Total Balance Due"
           value={rs(totals.outstanding)}
           accent="bg-rose-100 text-rose-700"
-        />
-        <SummaryCard
-          icon={Receipt}
-          label="Unpaid Invoices"
-          value={String(totals.unpaidInvoices)}
-          accent="bg-slate-100 text-slate-700"
         />
       </div>
 
@@ -271,7 +282,7 @@ export default function Credits() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               className="pl-9 rounded-xl"
-              placeholder="Search customer…"
+              placeholder="Search customer, phone or code…"
               value={customerQuery}
               onChange={(e) => setCustomerQuery(e.target.value)}
             />
@@ -291,8 +302,9 @@ export default function Credits() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">All statuses</SelectItem>
-              <SelectItem value="UNPAID">Unpaid</SelectItem>
+              <SelectItem value="UNPAID">Due</SelectItem>
               <SelectItem value="PARTIALLY_PAID">Partially Paid</SelectItem>
+              {showFullyPaid ? <SelectItem value="PAID">Paid</SelectItem> : null}
             </SelectContent>
           </Select>
           <Input
@@ -310,33 +322,50 @@ export default function Credits() {
             aria-label="To date"
           />
         </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Switch
+            id="show-fully-paid"
+            checked={showFullyPaid}
+            onCheckedChange={(v) => {
+              setShowFullyPaid(v);
+              if (!v && status === "PAID") setStatus("ALL");
+            }}
+          />
+          <Label htmlFor="show-fully-paid" className="text-sm text-muted-foreground cursor-pointer">
+            Show fully paid customers
+          </Label>
+        </div>
       </Card>
 
       {/* Customer list */}
       <Card className="rounded-2xl border shadow-sm overflow-hidden">
         {invoicesQ.isLoading ? (
-          <div className="p-10 text-center text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin inline mr-2" />
-            Loading customers…
+          <div className="p-4 space-y-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full rounded-xl" />
+            ))}
           </div>
         ) : invoicesQ.isError ? (
           <div className="p-10 text-center text-rose-600">
             Failed to load. {(invoicesQ.error as any)?.message || ""}
           </div>
         ) : summaries.length === 0 ? (
-          <div className="p-10 text-center text-muted-foreground">No matching customers.</div>
+          <div className="p-10 text-center text-muted-foreground">
+            {allInvoices.length === 0
+              ? "No invoices found yet."
+              : "No customers match your search or filters."}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Customer</TableHead>
-                  <TableHead className="text-center">Due Invoices</TableHead>
-                  <TableHead className="text-right">Total Invoiced</TableHead>
-                  <TableHead className="text-right">Paid</TableHead>
-                  <TableHead className="text-right">Balance Due</TableHead>
+                  <TableHead>Customer Name</TableHead>
+                  <TableHead className="text-right">Total Amount Purchased</TableHead>
+                  <TableHead className="text-right">Total Amount Paid</TableHead>
+                  <TableHead className="text-right">Total Amount Due</TableHead>
                   <TableHead className="text-center">Status</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -344,15 +373,16 @@ export default function Credits() {
                   <TableRow key={s.customer_id} className="hover:bg-muted/40">
                     <TableCell>
                       <div className="font-medium">{s.customer_name}</div>
-                      {s.customer_code ? (
-                        <div className="text-xs text-muted-foreground">{s.customer_code}</div>
+                      {s.customer_code || s.customer_phone ? (
+                        <div className="text-xs text-muted-foreground">
+                          {[s.customer_code, s.customer_phone].filter(Boolean).join(" · ")}
+                        </div>
                       ) : null}
                     </TableCell>
-                    <TableCell className="text-center">{s.due_count}</TableCell>
                     <TableCell className="text-right">{rs(s.total_invoiced)}</TableCell>
                     <TableCell className="text-right text-emerald-700">{rs(s.total_paid)}</TableCell>
                     <TableCell className="text-right font-semibold">{rs(s.balance_due)}</TableCell>
-                    <TableCell className="text-center">{statusBadge(s.pay_status)}</TableCell>
+                    <TableCell className="text-center">{statusBadge(s.pay_status, s.is_overdue)}</TableCell>
                     <TableCell className="text-right">
                       <div className="inline-flex gap-2">
                         <Button
@@ -362,6 +392,14 @@ export default function Credits() {
                           onClick={() => setDetailCustomer(s)}
                         >
                           <Eye className="h-4 w-4 mr-1" /> View
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="rounded-lg"
+                          onClick={() => nav(`/statement/print?customerId=${s.customer_id}&mode=summary`)}
+                        >
+                          <FileText className="h-4 w-4 mr-1" /> Report
                         </Button>
                         <Button
                           size="sm"
@@ -417,6 +455,13 @@ function CustomerDetailDialog({
   onPay: (s: CreditCustomerSummary) => void;
 }) {
   const open = !!summary;
+  const nav = useNavigate();
+
+  const creditNotesQ = useQuery({
+    queryKey: ["credit-customer-notes", summary?.customer_id],
+    queryFn: () => getCustomerCreditNotes(summary!.customer_id),
+    enabled: open && !!summary?.customer_id,
+  });
 
   return (
     <Dialog open={open} onOpenChange={(o) => (!o ? onClose() : null)}>
@@ -428,10 +473,11 @@ function CustomerDetailDialog({
               <DialogDescription>
                 {summary.customer_code ? `${summary.customer_code} · ` : ""}
                 Balance due {rs(summary.balance_due)} across {summary.due_count} invoice(s)
+                {summary.total_credit_notes > 0.009 ? ` · Credit notes ${rs(summary.total_credit_notes)}` : ""}
               </DialogDescription>
             </DialogHeader>
 
-            <div className="max-h-[55vh] overflow-y-auto rounded-xl border">
+            <div className="max-h-[40vh] overflow-y-auto rounded-xl border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -451,9 +497,41 @@ function CustomerDetailDialog({
               </Table>
             </div>
 
+            {/* Credit notes — internal view only, never shown in the printable report */}
+            <div>
+              <div className="text-xs font-medium text-muted-foreground mb-1">Credit Notes</div>
+              <div className="max-h-[20vh] overflow-y-auto rounded-xl border">
+                {creditNotesQ.isLoading ? (
+                  <div className="p-3 text-xs text-muted-foreground">Loading…</div>
+                ) : !creditNotesQ.data || creditNotesQ.data.length === 0 ? (
+                  <div className="p-3 text-xs text-muted-foreground">No credit notes issued.</div>
+                ) : (
+                  <Table>
+                    <TableBody>
+                      {creditNotesQ.data.map((cn) => (
+                        <TableRow key={cn.id}>
+                          <TableCell className="text-xs font-medium">{cn.credit_note_number || `#${cn.id}`}</TableCell>
+                          <TableCell className="text-xs">{fmtDate(cn.credit_note_date)}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{cn.reason || "—"}</TableCell>
+                          <TableCell className="text-xs text-right font-medium">{rs(cn.total_amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            </div>
+
             <DialogFooter>
               <Button variant="outline" className="rounded-xl" onClick={onClose}>
                 Close
+              </Button>
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => nav(`/statement/print?customerId=${summary.customer_id}&mode=summary`)}
+              >
+                <FileText className="h-4 w-4 mr-1" /> Report
               </Button>
               <Button
                 className="rounded-xl"
@@ -534,25 +612,16 @@ function AddPaymentDialog({
   const today = new Date().toISOString().slice(0, 10);
 
   const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState(today);
   const [method, setMethod] = useState("CASH");
-  const [reference, setReference] = useState("");
-  const [note, setNote] = useState("");
-  const [autoAllocate, setAutoAllocate] = useState(true);
-  const [singleInvoiceId, setSingleInvoiceId] = useState<string>("");
+  const [remarks, setRemarks] = useState("");
 
   // Reset the form whenever a new customer is opened.
   React.useEffect(() => {
     if (summary) {
       setAmount("");
-      setPaymentDate(today);
       setMethod("CASH");
-      setReference("");
-      setNote("");
-      setAutoAllocate(true);
-      setSingleInvoiceId("");
+      setRemarks("");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary?.customer_id]);
 
   const openInvoices = useMemo(
@@ -562,19 +631,16 @@ function AddPaymentDialog({
 
   const amountNum = Number(amount || 0);
 
-  const targetInvoices = useMemo(() => {
-    if (autoAllocate) return openInvoices;
-    return openInvoices.filter((i) => String(i.id) === singleInvoiceId);
-  }, [autoAllocate, openInvoices, singleInvoiceId]);
-
+  // Always auto-allocate oldest-invoice-first — the page's core value prop and
+  // simplest, safest default for a fast Amount / Mode / Remarks payment form.
   const targetDue = useMemo(
-    () => Math.round(targetInvoices.reduce((s, i) => s + i.balance, 0) * 100) / 100,
-    [targetInvoices]
+    () => Math.round(openInvoices.reduce((s, i) => s + i.balance, 0) * 100) / 100,
+    [openInvoices]
   );
 
   const preview = useMemo(
-    () => previewAllocation(targetInvoices, amountNum),
-    [targetInvoices, amountNum]
+    () => previewAllocation(openInvoices, amountNum),
+    [openInvoices, amountNum]
   );
 
   const overpay = amountNum > targetDue + 0.009;
@@ -585,12 +651,11 @@ function AddPaymentDialog({
       applyCustomerPayment({
         customerId: summary!.customer_id,
         amount: amountNum,
-        paymentDate,
+        paymentDate: today,
         method,
-        reference: reference || null,
-        note: note || null,
-        autoAllocate,
-        singleInvoiceId: autoAllocate ? undefined : Number(singleInvoiceId),
+        reference: null,
+        note: remarks || null,
+        autoAllocate: true,
       }),
     onSuccess: (lines) => {
       toast.success(
@@ -599,6 +664,7 @@ function AddPaymentDialog({
         )}`
       );
       qc.invalidateQueries({ queryKey: ["credit-inv-history"] });
+      qc.invalidateQueries({ queryKey: ["credit-customer-notes"] });
       onDone();
     },
     onError: (e: any) => toast.error(e?.message || "Failed to apply payment"),
@@ -607,7 +673,6 @@ function AddPaymentDialog({
   function submit() {
     if (!summary) return;
     if (amountNum <= 0) return toast.error("Enter a payment amount greater than 0");
-    if (!autoAllocate && !singleInvoiceId) return toast.error("Select an invoice to pay");
     if (overpay) return toast.error("Amount exceeds the outstanding balance (overpayment blocked)");
     payMut.mutate();
   }
@@ -625,97 +690,46 @@ function AddPaymentDialog({
             </DialogHeader>
 
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs">Payment amount</Label>
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    className="rounded-xl"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="0.00"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">Payment date</Label>
-                  <Input
-                    type="date"
-                    className="rounded-xl"
-                    value={paymentDate}
-                    onChange={(e) => setPaymentDate(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs">Method</Label>
-                  <Select value={method} onValueChange={setMethod}>
-                    <SelectTrigger className="rounded-xl">
-                      <SelectValue placeholder="Select method" />
-                    </SelectTrigger>
-                    <SelectContent className="z-[100]" position="popper">
-                      {PAYMENT_METHODS.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs">Reference / note</Label>
-                  <Input
-                    className="rounded-xl"
-                    value={reference}
-                    onChange={(e) => setReference(e.target.value)}
-                    placeholder="Txn ref (optional)"
-                  />
-                </div>
-              </div>
-
               <div>
-                <Label className="text-xs">Note (optional)</Label>
+                <Label className="text-xs">Amount</Label>
                 <Input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
                   className="rounded-xl"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Internal note"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0.00"
+                  autoFocus
                 />
               </div>
 
-              <Separator />
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-medium">Auto-allocate (oldest first)</div>
-                  <div className="text-xs text-muted-foreground">
-                    Distribute across open invoices automatically
-                  </div>
-                </div>
-                <Switch checked={autoAllocate} onCheckedChange={setAutoAllocate} />
+              <div>
+                <Label className="text-xs">Mode of Payment</Label>
+                <Select value={method} onValueChange={setMethod}>
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue placeholder="Select mode" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[100]" position="popper">
+                    {PAYMENT_METHODS.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
-              {!autoAllocate && (
-                <div>
-                  <Label className="text-xs">Apply to invoice</Label>
-                  <Select value={singleInvoiceId} onValueChange={setSingleInvoiceId}>
-                    <SelectTrigger className="rounded-xl">
-                      <SelectValue placeholder="Select invoice…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {openInvoices.map((i) => (
-                        <SelectItem key={i.id} value={String(i.id)}>
-                          {i.invoice_number} — bal {rs(i.balance)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+              <div>
+                <Label className="text-xs">Remarks (optional)</Label>
+                <Input
+                  className="rounded-xl"
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  placeholder="e.g. transaction reference, note"
+                />
+              </div>
 
               {/* Allocation preview */}
               <div className="rounded-xl border bg-muted/30 p-3 text-sm">

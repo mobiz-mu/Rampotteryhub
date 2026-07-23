@@ -1,4 +1,4 @@
-﻿// src/pages/QuotationPrint.tsx
+// src/pages/QuotationPrint.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -8,6 +8,8 @@ import RamPotteryDoc from "@/components/print/RamPotteryDoc";
 import DotMatrixDocument, { type DotMatrixDocData } from "@/components/print/DotMatrixDocument";
 import { supabase } from "@/integrations/supabase/client";
 import { getQuotationPrintBundle } from "@/lib/quotations";
+import { usePrintBackNav, dotMatrixUrl, pdfUrl } from "@/lib/printNav";
+import { PublicPreviewToolbar, PublicLinkError } from "@/components/print/PublicPreviewChrome";
 
 import "@/styles/rpdoc.css";
 import "@/styles/print.css";
@@ -107,6 +109,8 @@ export default function QuotationPrint() {
   const [sp] = useSearchParams();
   const publicToken = (sp.get("t") || "").trim();
   const isPublicMode = !!publicToken;
+
+  const goBack = usePrintBackNav("/quotations", isPublicMode);
 
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -253,11 +257,6 @@ export default function QuotationPrint() {
     });
   }, [items]);
 
-  function smartBack() {
-    if (window.history.length > 1) nav(-1);
-    else nav(`/quotations/${quotationId}`);
-  }
-
   async function doPrint() {
     if (printPreparing) return;
 
@@ -318,19 +317,12 @@ export default function QuotationPrint() {
   }
 
   if (bundleQ.isError || !qRow) {
+    if (isPublicMode) return <PublicLinkError />;
     const errMsg = (bundleQ.error as any)?.message || "";
     return (
       <div className="p-6 text-sm text-destructive">
         Quotation not found / invalid link.
-        <div className="mt-2 text-xs text-muted-foreground">
-          {isPublicMode ? (
-            <>
-              Public links must include a valid token (<b>?t=...</b>)
-            </>
-          ) : (
-            <>Please check quotation ID and your access.</>
-          )}
-        </div>
+        <div className="mt-2 text-xs text-muted-foreground">Please check quotation ID and your access.</div>
         {errMsg ? (
           <div className="mt-2 text-xs text-muted-foreground">
             <b>Error:</b> {errMsg}
@@ -369,7 +361,14 @@ export default function QuotationPrint() {
       preparedBy: String(qRow.prepared_by || ""),
       deliveredBy: String(qRow.delivered_by || ""),
     };
-    return <DotMatrixDocument data={dmData} docKindLabel="Quotation" onBack={() => window.history.back()} />;
+    return (
+      <DotMatrixDocument
+        data={dmData}
+        docKindLabel="Quotation"
+        onBack={goBack.canGoBack ? goBack : undefined}
+        onSwitchToPdf={() => nav(pdfUrl(`/quotations/${quotationId}/print?${sp.toString()}`))}
+      />
+    );
   }
 
   const Doc = (
@@ -419,21 +418,37 @@ export default function QuotationPrint() {
   return (
     <div className="print-shell p-4">
       {/* Screen toolbar */}
-      <div className="no-print flex items-center justify-between gap-3 mb-3">
-        <div className="text-sm text-muted-foreground">
-          Quotation <b>{quoteNo}</b>
-        </div>
+      {isPublicMode ? (
+        <PublicPreviewToolbar
+          docLabel={`Quotation ${quoteNo}`}
+          onSavePdf={doPrint}
+          onPrint={doPrint}
+          onClose={goBack.canGoBack ? goBack : undefined}
+        />
+      ) : (
+        <div className="no-print flex items-center justify-between gap-3 mb-3">
+          <div className="text-sm text-muted-foreground">
+            Quotation <b>{quoteNo}</b>
+          </div>
 
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={smartBack}>
-            Back
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={goBack}>
+              Back
+            </Button>
 
-          <Button onClick={doPrint} disabled={printPreparing}>
-            {printPreparing ? "Preparing…" : "Print / Save PDF"}
-          </Button>
+            <Button
+              variant="outline"
+              onClick={() => nav(dotMatrixUrl(`/quotations/${quotationId}/print?${sp.toString()}`))}
+            >
+              Dot Matrix
+            </Button>
+
+            <Button onClick={doPrint} disabled={printPreparing}>
+              {printPreparing ? "Preparing…" : "Print / Save PDF"}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ✅ SCREEN PREVIEW (visible) */}
       <div ref={screenRootRef} className="inv-screen">

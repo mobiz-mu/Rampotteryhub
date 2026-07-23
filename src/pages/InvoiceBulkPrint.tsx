@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { getInvoicePrintBundle } from "@/lib/invoices";
 import RamPotteryDoc, { type RamPotteryDocItem } from "@/components/print/RamPotteryDoc";
+import { DotMatrixPages, type DotMatrixDocData } from "@/components/print/DotMatrixDocument";
+import { usePrintBackNav, dotMatrixUrl, pdfUrl } from "@/lib/printNav";
 import "@/styles/rpdoc.css";
+import "@/styles/dotMatrixPrint.css";
 
 function parseIds(raw: string) {
   return Array.from(
@@ -97,9 +100,11 @@ function mapItems(items: any[]): RamPotteryDocItem[] {
 
 export default function InvoiceBulkPrint() {
   const nav = useNavigate();
+  const goBack = usePrintBackNav("/invoices");
   const [sp] = useSearchParams();
 
   const ids = useMemo(() => parseIds(sp.get("ids") || ""), [sp]);
+  const isDotMatrix = (sp.get("format") || "").trim().toLowerCase() === "dot-matrix";
 
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -178,6 +183,108 @@ export default function InvoiceBulkPrint() {
     return <div className="p-6 text-sm text-red-600">Failed to load invoices for bulk print.</div>;
   }
 
+  if (isDotMatrix) {
+    return (
+      <div className="dm-print-root">
+        <div className="dm-screen-wrap">
+          <div
+            className="dm-toolbar dm-no-print"
+            style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+          >
+            <strong style={{ fontSize: 14 }}>
+              Dot Matrix Bulk Print — {bulkQ.data.length} invoice{bulkQ.data.length > 1 ? "s" : ""}
+            </strong>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => {
+                  if (window.opener) window.close();
+                  else goBack();
+                }}
+                style={{
+                  background: "#fff",
+                  color: "#0f172a",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Back
+              </button>
+              <button
+                onClick={() => nav(pdfUrl(`/invoices/bulk-print?${sp.toString()}`))}
+                style={{
+                  background: "#fff",
+                  color: "#0f172a",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Print PDF
+              </button>
+              <button
+                onClick={() => window.print()}
+                style={{
+                  background: "#0f172a",
+                  color: "#fff",
+                  border: 0,
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                Print
+              </button>
+            </div>
+          </div>
+
+          <style>{`@page { size: 8.5in 12in; margin: 0; }`}</style>
+
+          {bulkQ.data.map((bundle: any, idx: number) => {
+            const inv = bundle?.invoice || {};
+            const customer = bundle?.customer || inv?.customers || inv?.customer || null;
+            const items = mapItems(bundle?.items || []);
+
+            const dmData: DotMatrixDocData = {
+              docType: "INVOICE",
+              docNo: inv.invoice_number || `#${inv.id}`,
+              date: fmtDDMMYYYY(inv.invoice_date),
+              po: inv.purchase_order_no || "",
+              salesRep: inv.sales_rep || "",
+              salesRepCell: inv.sales_rep_phone || "",
+              customer: {
+                name: txt(customer?.name || customer?.customer_name),
+                address: txt(customer?.address),
+                cell: txt(customer?.phone || customer?.whatsapp),
+                brn: txt(customer?.brn),
+                vat_no: txt(customer?.vat_no || customer?.vat),
+              },
+              items,
+              totals: {
+                subtotal: r2(inv?.subtotal),
+                vat: r2(inv?.vat_amount),
+                total: r2(inv?.total_amount),
+                previousBalance: r2(inv?.previous_balance || 0),
+                grossTotal: r2((r2(inv?.total_amount) || 0) + (r2(inv?.previous_balance) || 0)),
+                amountPaid: inv.amount_paid ?? null,
+                balanceRemaining: null,
+              },
+              preparedBy: inv.sales_rep || "",
+              deliveredBy: "",
+            };
+
+            return <DotMatrixPages key={inv?.id || idx} data={dmData} />;
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="print-shell p-4">
       <style>{`
@@ -247,10 +354,17 @@ export default function InvoiceBulkPrint() {
             variant="outline"
             onClick={() => {
               if (window.opener) window.close();
-              else nav(-1);
+              else goBack();
             }}
           >
             Back
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => nav(dotMatrixUrl(`/invoices/bulk-print?${sp.toString()}`))}
+          >
+            Dot Matrix
           </Button>
 
           <Button onClick={doPrint} disabled={printPreparing}>
@@ -306,7 +420,7 @@ export default function InvoiceBulkPrint() {
                     amount_paid: null,
                     balance_remaining: null,
                   }}
-                  preparedBy="Manish"
+                  preparedBy={inv.sales_rep || ""}
                   deliveredBy=""
                 />
               </div>
